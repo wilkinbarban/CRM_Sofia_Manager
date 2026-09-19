@@ -1,18 +1,19 @@
 'use client'
 
 import React, { useState, useEffect, useRef } from 'react'
-import { User, Tag, FileText, MapPin, Plus, X, Save, Loader2, Star, ShoppingCart, Package } from 'lucide-react'
+import { User, Tag, FileText, MapPin, Plus, X, Save, Loader2, Star, ShoppingCart, Package, Sparkles } from 'lucide-react'
 import { atualizarClienteCrm } from '@/app/actions/clientes'
 import { Cliente } from './ConversationsQueue'
 import OperatorCartPanel from './OperatorCartPanel'
 import OperatorClientOrdersList from './OperatorClientOrdersList'
+import OperatorClientFactsPanel from './OperatorClientFactsPanel'
 
 interface ClientCrmPanelProps {
   cliente: Cliente | null
   onClienteUpdated?: (clienteId: string, updatedData: Partial<Cliente>) => void
 }
 
-type ClientPanelTab = 'carrinho' | 'pedidos' | 'crm'
+type ClientPanelTab = 'carrinho' | 'pedidos' | 'crm' | 'fatos'
 
 export default function ClientCrmPanel({
   cliente,
@@ -23,6 +24,7 @@ export default function ClientCrmPanel({
     carrinho: null,
     pedidos: null,
     crm: null,
+    fatos: null,
   })
   const [endereco, setEndereco] = useState('')
   const [notas, setNotas] = useState('')
@@ -105,7 +107,7 @@ export default function ClientCrmPanel({
   }
 
   const handleTabKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>, currentTab: ClientPanelTab) => {
-    const tabs: ClientPanelTab[] = ['carrinho', 'pedidos', 'crm']
+    const tabs: ClientPanelTab[] = ['carrinho', 'pedidos', 'crm', 'fatos']
     const currentIndex = tabs.indexOf(currentTab)
     let nextTab: ClientPanelTab | null = null
 
@@ -138,7 +140,7 @@ export default function ClientCrmPanel({
 
       {/* Carrinho e pedidos formam o fluxo principal; CRM é informação de apoio. */}
       <div
-        className="grid grid-cols-[1fr_1fr_auto] gap-1.5 border-b border-zinc-800 bg-zinc-900/60 p-2 shrink-0"
+        className="grid grid-cols-[1fr_1fr_auto_auto] gap-1.5 border-b border-zinc-800 bg-zinc-900/60 p-2 shrink-0"
         role="tablist"
         aria-label="Áreas do atendimento ao cliente"
       >
@@ -199,6 +201,26 @@ export default function ClientCrmPanel({
           <User className="h-3.5 w-3.5" />
           <span>CRM</span>
         </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveTab('fatos')}
+          onKeyDown={(event) => handleTabKeyDown(event, 'fatos')}
+          ref={(element) => { tabRefs.current.fatos = element }}
+          role="tab"
+          aria-selected={activeTab === 'fatos'}
+          tabIndex={activeTab === 'fatos' ? 0 : -1}
+          aria-label="Fatos do cliente (memória)"
+          className={`flex min-h-11 items-center justify-center gap-1.5 rounded-xl border px-3 text-[11px] font-semibold transition-all cursor-pointer ${
+            activeTab === 'fatos'
+              ? 'border-zinc-600 bg-zinc-700 text-zinc-100'
+              : 'border-zinc-800 bg-zinc-950/40 text-zinc-500 hover:border-zinc-700 hover:bg-zinc-800/70 hover:text-zinc-300'
+          }`}
+          title="Fatos lembrados sobre o cliente (memória da Sofia)"
+        >
+          <Sparkles className="h-3.5 w-3.5" />
+          <span>Fatos</span>
+        </button>
       </div>
 
       {/* Conteúdo da Aba Selecionada */}
@@ -216,7 +238,7 @@ export default function ClientCrmPanel({
             clienteNome={cliente.nome}
           />
         </div>
-      ) : (
+      ) : activeTab === 'crm' ? (
         <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
           {/* Conteúdo do CRM */}
           <div className="flex-1 overflow-y-auto p-6 space-y-6">
@@ -375,6 +397,13 @@ export default function ClientCrmPanel({
           Salvar Alterações
         </button>
       </div>
+        </div>
+      ) : (
+        <div className="flex-1 min-h-0 overflow-hidden">
+          <OperatorClientFactsPanel
+            clienteId={cliente.id}
+            clienteNome={cliente.nome}
+          />
         </div>
       )}
     </aside>
