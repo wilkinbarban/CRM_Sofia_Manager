@@ -1511,3 +1511,47 @@ The operator gate (`FUNCOES_OPERADOR_AUTORIZADAS`, `AuthorizedOperatorCheck`, `v
 | Follow-up | Slice 9 (operator facts panel, tasks 36-39) |
 | Rollback | Revert this commit; no UI consumes the actions yet |
 | Verification | Focused + seven regression suites + memory/Sofia suites, root `tsc`, repository ESLint; CI re-runs all of it |
+
+## Slice 9 — Operator facts panel and `fatos` tab (tasks 36-39)
+
+### Delivery ledger (this run)
+
+- **Files:** NEW `apps/web/src/components/operator/OperatorClientFactsPanel.tsx` (314), `apps/web/src/components/operator/ClientCrmPanel.tsx` (+34/−5), NEW `tests/unit/operator-client-facts-panel.test.tsx` (445), `tests/components/operator/ClientCrmPanel.test.tsx` (+10/−2). **810 changed lines** → `size:exception` (below).
+- **Evidence observed by the parent:** focused 18/18, focused pair 21/21; eight-suite operator set 38/38; root `tsc` clean; repository ESLint clean.
+- **Independent read-only verification** confirmed the behaviour and the six mutation kills, and found five repairs that were made before publication (the correction `.trim()` and the empty-value guard were unfalsifiable; a four-way disjunction stood in for the state label; the header count was unasserted; the isolation guard would miss a relative or barrel Supabase import) plus one documentation error of the parent's, corrected below.
+
+### What the slice delivers
+
+A client panel that lists every fact state (`pendente`, `aprovado`, `rejeitado`, `substituido`) with `tipo`, `chave`, `valor`, `origem`, `confianca` (rendered only for `origem = 'ia'`) and the originating conversation, with approve/reject and an inline correction form wired to the slice-8 actions, plus loading, empty and refusal states. A fourth `fatos` tab joins the operator's `carrinho`/`pedidos`/`crm` tablist with the same ref, `role`, `aria-selected` and roving `tabIndex` pattern.
+
+### TDD Cycle Evidence
+
+- **RED:** unresolved component import, `Test Files 1 failed (1)`, `Tests no tests`.
+- **GREEN:** 18/18 focused, 21/21 with the keyboard test, 38/38 across the operator set, `tsc` and ESLint clean.
+- **TRIANGULATE:** six mutations with one killed case each, plus the negative paths (refusal without rows, a failed result that still carries `data` rendering nothing, a failed review keeping the list without refetching, and the lazy mount that does not call the facts action while the other tabs are open).
+- **REFACTOR:** source-level isolation guard, no duplicated formatting helper, first three tabs byte-identical apart from the import and the new neighbour.
+
+### Deviations and known limits
+
+1. **The operator surface is NOT behind `SOFIA_CUSTOMER_MEMORY_ENABLED`** (this corrects an earlier claim of the parent's). The flag gates extraction and prompt injection only, in `customer-memory-extraction.ts` and `ai/openrouter.ts`. Listing and reviewing facts is authorized by `verificarOperadorAutorizado()` plus the RPCs' own role check, so an authorized operator can list and review facts with the flag at `false`, when the table can only hold rows written by an operator, an import or a manual insert. Tasks 36-39 do not ask for a memory-flag gate on the operator surface; if the product wants one, it is a separate decision.
+2. **`observacao` rows are visible to the operator by design**, and the panel header counts them. Verified independently that there is no leak path: `buscar_fatos_para_prompt` (prompt), `meus_fatos_cliente` (customer read) and the customer write paths all exclude or refuse `tipo = 'observacao'`, and `revisar_fato_cliente` cannot change a fact's `tipo`.
+3. **Residual design-level risk, not this slice's**: the only barrier keeping an internal note out of the prompt is its `tipo` label — a note typed into a normal `tipo` and approved by an operator is injected as labeled data. This is the residual risk already accepted in design §6.3.
+4. **The isolation guard is textual.** Regexes over two files; a barrel or relative-path Supabase import would still be caught after this revision (any `supabase` occurrence is forbidden), but a runtime-built table name would not.
+5. **No database exercise.** The panel is never run against the real RPC; the DB guarantees remain the pgTAP suite's.
+
+### Size exception (parent decision, declared for review)
+
+**810 changed lines**, of which 457 are tests. The panel and its suite carry the whole operator review surface — four states, five fields, three review actions, three non-happy states, the tablist integration and a source-level isolation guard — and every guarantee is a falsifiable case, so the size is structural rather than padded.
+
+### Chain context (chained-pr / work-unit-commits contract)
+
+| Field | Value |
+| --- | --- |
+| Strategy | Feature Branch Chain — slice 9 of 10; slices 1-8 are in `main` |
+| Tracker | Issue #165 |
+| Position | 9 of 10 |
+| Base | `main` |
+| Dependency | Slice 8 (the actions the panel calls) |
+| Follow-up | Slice 10 (client facts section, tasks 40-43) |
+| Rollback | Revert this commit; the panel and its tab disappear, no other surface depends on them |
+| Verification | Focused pair + eight-suite operator set, root `tsc`, repository ESLint; CI re-runs all of it |

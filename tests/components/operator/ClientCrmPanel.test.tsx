@@ -7,6 +7,13 @@ vi.mock('@/app/actions/clientes', () => ({
   atualizarClienteCrm: vi.fn(),
 }))
 
+// A quarta aba monta o painel de fatos nas navegações por teclado: sem este mock o teste executaria
+// a cadeia real da action (gate de operador -> createClient -> cookies) dentro do jsdom.
+vi.mock('@/app/actions/fatos-cliente', () => ({
+  listarFatosCliente: vi.fn().mockResolvedValue({ success: true, data: [] }),
+  revisarFatoCliente: vi.fn(),
+}))
+
 vi.mock('@/components/operator/OperatorCartPanel', () => ({
   default: () => <div data-testid="cart-panel">Cart content</div>,
 }))
@@ -53,6 +60,7 @@ describe('ClientCrmPanel workflow hierarchy', () => {
     const cartTab = screen.getByRole('tab', { name: /Carrinho/i })
     const ordersTab = screen.getByRole('tab', { name: /Pedidos/i })
     const crmTab = screen.getByRole('tab', { name: /Dados do cliente/i })
+    const fatosTab = screen.getByRole('tab', { name: 'Fatos do cliente (memória)' })
 
     cartTab.focus()
     fireEvent.keyDown(cartTab, { key: 'ArrowRight' })
@@ -60,12 +68,12 @@ describe('ClientCrmPanel workflow hierarchy', () => {
     expect(ordersTab).toHaveAttribute('aria-selected', 'true')
 
     fireEvent.keyDown(ordersTab, { key: 'End' })
-    expect(crmTab).toHaveFocus()
+    expect(fatosTab).toHaveFocus()
 
     fireEvent.keyDown(crmTab, { key: 'Home' })
     expect(cartTab).toHaveFocus()
 
     fireEvent.keyDown(cartTab, { key: 'ArrowLeft' })
-    expect(crmTab).toHaveFocus()
+    expect(fatosTab).toHaveFocus()
   })
 })
