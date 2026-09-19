@@ -16,8 +16,8 @@ import {
   obterSofiaGlobalStatusConfig,
   salvarSofiaGlobalChannelConfig,
 } from '@/lib/config/sistema'
+import { verificarOperadorAutorizado } from '@/lib/auth/operador'
 
-const FUNCOES_OPERADOR_AUTORIZADAS = ['admin', 'supervisor', 'vendedor']
 const FUNCOES_SOFIA_GLOBAL_GESTAO = ['admin', 'supervisor']
 
 export type { SofiaChannelAvailability } from '@/lib/config/sistema'
@@ -41,42 +41,6 @@ export type SofiaAtendimentoStatus = {
     message: string | null
   }
 }
-
-type AuthorizedOperatorCheck =
-  | { authorized: true; supabase: Awaited<ReturnType<typeof createClient>>; user: { id: string }; perfil: { funcao: string; ativo: boolean } }
-  | { authorized: false; error: string }
-
-async function verificarOperadorAutorizado(): Promise<AuthorizedOperatorCheck> {
-  const supabase = await createClient()
-
-  const { data: { user }, error: authError } = await supabase.auth.getUser()
-
-  if (authError || !user) {
-    return { authorized: false, error: 'ACESSO_NEGADO_NAO_AUTENTICADO' }
-  }
-
-  const { data: perfil, error: perfilError } = await supabase
-    .from('perfis')
-    .select('funcao, ativo')
-    .eq('id', user.id)
-    .single()
-
-  if (perfilError || !perfil) {
-    return { authorized: false, error: 'PERFIL_NAO_ENCONTRADO' }
-  }
-
-  if (!perfil.ativo) {
-    return { authorized: false, error: 'PERFIL_INATIVO' }
-  }
-
-  if (!FUNCOES_OPERADOR_AUTORIZADAS.includes(perfil.funcao)) {
-    return { authorized: false, error: 'ACESSO_NEGADO_PERMISSAO_INSUFICIENTE' }
-  }
-
-  return { authorized: true, supabase, user: { id: user.id }, perfil }
-}
-
-
 
 function podeGerenciarSofiaGlobal(funcao: string): boolean {
   return FUNCOES_SOFIA_GLOBAL_GESTAO.includes(funcao)

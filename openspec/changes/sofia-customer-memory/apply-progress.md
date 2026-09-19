@@ -1469,3 +1469,45 @@ a byte-exact region, so each one costs a literal.
 | Follow-up | Slice 8 (operator authorization move and review actions, tasks 32-35) |
 | Rollback | Revert this commit; with the gate closed the prompt returns to the pre-change bytes |
 | Verification | Focused + regression + pipeline-consumer suites, root `tsc`, `npm run lint`; CI re-runs all of it |
+
+## Slice 8 — Operator authorization move and review actions (tasks 32-35)
+
+### Delivery ledger (this run)
+
+- **Files:** NEW `apps/web/src/lib/auth/operador.ts` (37), NEW `apps/web/src/app/actions/fatos-cliente.ts` (96), `apps/web/src/app/actions/atendimento.ts` (+1/−37), NEW `tests/unit/sofia-customer-memory-actions.test.ts` (325). **496 changed lines** (production 171) → `size:exception` (below).
+- **Evidence observed by the parent:** focused 29/29; 23/23 across the seven suites that import `@/app/actions/atendimento`; 139/139 for the memory and Sofia suites; root `tsc` clean; repository ESLint clean.
+- **Independent read-only verification** confirmed the move is byte-identical, the wire contract is pinned, and the refusal-before-RPC cases cannot pass a pre-authorization call. It also found four small evidence defects (a tautological mapping assertion, a missing leak assertion in the `revisar` twin, a multi-line-return hole in the "no raw client in a return" check, and a dead call recorder in the transport cases) plus one comment nit; all five were repaired in the same commit before publication.
+
+### What the slice delivers
+
+The operator gate (`FUNCOES_OPERADOR_AUTORIZADAS`, `AuthorizedOperatorCheck`, `verificarOperadorAutorizado`) moves verbatim into `lib/auth/operador.ts` so a `'use server'` module no longer exports the helper, and `atendimento.ts` imports it with its three call sites untouched. A new `'use server'` module exposes `listarFatosCliente(clienteId)` and `revisarFatoCliente(fatoId, decisao, valor = null)`: operator check first, then the RPC, returning the repository's `{ success, data | error }` shape.
+
+### TDD Cycle Evidence
+
+- **RED:** module absent (`Failed to resolve import "@/app/actions/fatos-cliente"`), then against an ungated stub that relayed `error.message` (`Tests 18 failed | 11 passed (29)`).
+- **GREEN:** 29/29 focused; 23/23 and 139/139 in the regression sets; `tsc` and the repository ESLint clean.
+- **TRIANGULATE:** five mutations, each killed by its own cases (role list, limit constant, error relay, table access, non-serializable export).
+- **REFACTOR:** source-level assertions over real module text for the table-access, export-shape and token boundaries.
+
+### Deviations and known limits
+
+1. **Error granularity is coarse.** `tokenDeErroDaRpc` maps `42501` to `ACESSO_NEGADO_PERMISSAO_INSUFICIENTE` and collapses everything else (including `P0002` and `22023`) to `ERRO_INTERNO`, so "fact not found" and "invalid decision" reach the operator as an internal fault. Task 35 requires only that no token beyond the session vocabulary leaks, and this is stricter than `atualizarClienteCrm` (which interpolates raw messages) but coarser than `pedidos.ts` (which maps domain tokens). Finer tokens are a product call for the panel slice, not a defect of this one.
+2. **`p_estados: null` is deliberate.** The RPC's own default is `null` (all four states, `20260918020000_fatos_cliente_rpcs.sql`), and the task lists `p_estados` as an argument, so the action passes it explicitly rather than omitting it.
+3. **The action suite asserts the client boundary, not the database.** That the database really raises `42501`/`22023`/`P0002`, enforces the operator gate and returns only approved non-`observacao` facts is proven by the Slice 3 pgTAP suite.
+4. **No UI consumes these actions yet**; the panel arrives in Slice 9.
+
+### Size exception (parent decision, declared for review)
+
+**496 changed lines**, of which 325 are the new test file. Production is 171 lines, inside the ~200 forecast; the overage is the mandated evidence — four unauthorized scenarios × two actions, three SQLSTATEs × two actions, transport cases, source-level boundary checks and the verbatim-move control. Trimming it to reach the number would delete evidence, so the exception is declared instead of the tests being compressed.
+### Chain context (chained-pr / work-unit-commits contract)
+
+| Field | Value |
+| --- | --- |
+| Strategy | Feature Branch Chain — slice 8 of 10; slices 1-7 are in `main` |
+| Tracker | Issue #165 |
+| Position | 8 of 10 |
+| Base | `main` |
+| Dependency | Slices 1-6 (the operator RPCs this surface calls) |
+| Follow-up | Slice 9 (operator facts panel, tasks 36-39) |
+| Rollback | Revert this commit; no UI consumes the actions yet |
+| Verification | Focused + seven regression suites + memory/Sofia suites, root `tsc`, repository ESLint; CI re-runs all of it |
