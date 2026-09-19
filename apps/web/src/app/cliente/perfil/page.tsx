@@ -4,6 +4,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { z } from 'zod'
 import { createClient } from '@/lib/supabase/client'
+import ClientFactsSection from '@/components/cliente/ClientFactsSection'
 import { 
   User, Mail, Home, Phone, Lock, Loader2, 
   Save, CheckCircle2, AlertCircle, X, KeyRound, RefreshCw 
@@ -38,6 +39,9 @@ export default function PerfilPage() {
   const [userId, setUserId] = useState<string | null>(null)
   const [email, setEmail] = useState('')
   const [originalTelefone, setOriginalTelefone] = useState('')
+  // Sem registro em `clientes` nao existe proprietario de fatos: a secao nao chega a montar, e o
+  // gate de verificacao de telefone continua sendo exatamente o mesmo (push para verificar-telefone).
+  const [possuiCadastro, setPossuiCadastro] = useState(false)
 
   // Form Fields
   const [nome, setNome] = useState('')
@@ -133,7 +137,9 @@ export default function PerfilPage() {
           setTelefone(formattedPhone)
           setOriginalTelefone(formattedPhone)
           setEndereco(cliente.endereco || '')
+          setPossuiCadastro(true)
         } else {
+          setPossuiCadastro(false)
           // If no client record exists, redirect to verify phone page
           push('/cliente/verificar-telefone')
         }
@@ -552,6 +558,8 @@ export default function PerfilPage() {
             </button>
           </form>
         </div>
+
+        {possuiCadastro && <ClientFactsSection />}
       </div>
 
       {/* OTP VALIDATION MODAL */}

@@ -1555,3 +1555,49 @@ A client panel that lists every fact state (`pendente`, `aprovado`, `rejeitado`,
 | Follow-up | Slice 10 (client facts section, tasks 40-43) |
 | Rollback | Revert this commit; the panel and its tab disappear, no other surface depends on them |
 | Verification | Focused pair + eight-suite operator set, root `tsc`, repository ESLint; CI re-runs all of it |
+
+
+## Slice 10 — Client facts section in `/cliente/perfil` (tasks 40-43)
+
+### Delivery ledger (this run)
+
+- **Files:** NEW `apps/web/src/components/cliente/ClientFactsSection.tsx` (284), `apps/web/src/app/cliente/perfil/page.tsx` (+8/−0), `tests/unit/cliente/perfil.test.tsx` (+313/−1). **606 changed lines** → `size:exception` (below).
+- **Evidence observed by the parent:** focused 13/13; `tests/unit/cliente/` 32/32; root `tsc` clean; repository ESLint clean; `npm run build` **was run locally on 2026-09-19** and exited 0 with `/cliente/perfil` in the printed route table (3924 MB free / 5014 MB available before, 2526 MB free / 4762 MB available after), so the production bundle is verified locally and CI's own build step runs the same command.
+- **Independent read-only verification** confirmed the page diff is `+8/−0` with the gate, the OTP flow and the form byte-identical; confirmed three of the nine mutation kills from the assertion code; and required two repairs made in this revision.
+
+### What the slice delivers
+
+A client-facing section on `/cliente/perfil` that lists the customer's own approved facts, marks a corrected fact as the customer's own statement, removes a refused fact on the next render, and renders loading, empty and error states without ever echoing a database token. It reads `meus_fatos_cliente` and writes through `corrigir_meu_fato_cliente` and `recusar_meu_fato_cliente` with the browser client, sending no customer identifier at all.
+
+### TDD Cycle Evidence
+
+- **RED:** unresolved import, then a per-case RED against a `return null` stub (`Tests 9 failed | 4 passed (13)`).
+- **GREEN:** `Tests 13 passed (13)` focused, 32/32 for the client area, `tsc` and ESLint clean.
+- **TRIANGULATE:** the page-level gate, the payload key-set, the exact RPC name set, the negative paths and the post-write re-read.
+- **REFACTOR:** no table read anywhere in the component, a defensive `observacao` filter, and the corrected/refused state driven by a server re-read.
+
+### Deviations and known limits
+
+1. **Cross-customer isolation is not this slice's proof.** The client sends no customer id and performs no table read; the ownership check lives in the RPC (`clientes.usuario_id = auth.uid()` plus `42501 SOFIA_FATO_NAO_AUTORIZADO`) and is covered by the change's pgTAP suite. The unit mock never returns that error, so no client-side test exercises a foreign `fato_id`.
+2. **`possuiCadastro` means "has a `clientes` row", not "phone verified"** — it reuses the pre-existing `if (cliente)` semantics of the page, and the verification gate, the OTP flow and the form are untouched. Recorded so no future consumer reads that boolean as verification.
+3. **The `observacao` filter is defence in depth.** The server projection already excludes `observacao`; the client filter is the only render gate for such a row, so it earns its place, but against the real backend it is currently decorative.
+4. **The non-leak guarantee rests on the `document.body.textContent` regexes**, not on `toHaveTextContent`, which is substring-based; a component that appended raw error text after the constant would still satisfy the latter.
+5. **The re-read failure path is untested**: if the post-write re-read fails, the section replaces the list with the read-error state. That is the conservative choice (the client cannot know the new state) and it is recorded rather than silently accepted.
+6. **Production bundle verified locally on 2026-09-19**: `npm run build` exited 0 with `/cliente/perfil` in the printed route table (3924 MB free / 5014 MB available before the build, 2526 MB free / 4762 MB available after it, above the 2500 MB gate). CI's `Build production bundle` step still runs the same command as the independent check.
+
+### Size exception (parent decision, declared for review)
+
+**606 changed lines** against the ~120 forecast and the 400-line budget, with 52% of it the mandated test evidence: exact RPC payload assertions, the payload key-set proof, the negative paths, the non-leak proofs and the post-write re-read. Trimming it would delete evidence rather than code.
+
+### Chain context (chained-pr / work-unit-commits contract)
+
+| Field | Value |
+| --- | --- |
+| Strategy | Feature Branch Chain — slice 10 of 10, the final slice of the change; slices 1-9 are in `main` |
+| Tracker | Issue #165 |
+| Position | 10 of 10 |
+| Base | `main` |
+| Dependency | Slices 1-3 (the owner RPCs) |
+| Follow-up | None: the change is complete at 43/43 tasks; verify and archive phases remain |
+| Rollback | Revert this commit; the section disappears and the page's existing behaviour is untouched |
+| Verification | Focused + client-area suites, root `tsc`, repository ESLint, CI's build and service-backed suites |
