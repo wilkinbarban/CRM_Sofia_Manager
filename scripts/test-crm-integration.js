@@ -96,9 +96,9 @@ function setSessionCookies(session) {
 async function runTests() {
   logSection('Starting CRM, Sales, and Google Calendar Integration Tests (Épica 6)');
 
-  const testOperatorEmail = `op_${Date.now()}@asados.com`;
-  const testAdminEmail = `admin_${Date.now()}@asados.com`;
-  const testClientEmail = `client_${Date.now()}@asados.com`;
+  const testOperatorEmail = `op_${Date.now()}@crmsofiamanager.com.br`;
+  const testAdminEmail = `admin_${Date.now()}@crmsofiamanager.com.br`;
+  const testClientEmail = `client_${Date.now()}@crmsofiamanager.com.br`;
   const testPassword = 'Password123!';
 
   let operatorUser = null;
@@ -388,7 +388,7 @@ async function runTests() {
     secondPedido = secondOrderRes.data;
 
     // Force API Call to run but fail with invalid credentials (not placeholder, so it doesn't trigger mock mode)
-    process.env.GOOGLE_CLIENT_EMAIL = 'invalid-email-format-not-mock@asados.com';
+    process.env.GOOGLE_CLIENT_EMAIL = 'invalid-email-format-not-mock@crmsofiamanager.com.br';
     process.env.GOOGLE_PRIVATE_KEY = 'invalid-key-data-not-mock';
     process.env.GOOGLE_CALENDAR_ID = 'invalid-calendar-id-not-mock';
 

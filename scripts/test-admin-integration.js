@@ -19,7 +19,7 @@ process.env.SUPABASE_SERVICE_ROLE_KEY = SERVICE_ROLE_KEY;
 
 // Force Calendar action to see mock credentials if not set in .env
 if (!process.env.GOOGLE_CLIENT_EMAIL) {
-  process.env.GOOGLE_CLIENT_EMAIL = 'placeholder-email@asados.com';
+  process.env.GOOGLE_CLIENT_EMAIL = 'placeholder-email@crmsofiamanager.com.br';
 }
 if (!process.env.GOOGLE_PRIVATE_KEY) {
   process.env.GOOGLE_PRIVATE_KEY = 'placeholder-key';
@@ -134,12 +134,12 @@ async function runTests() {
   const timestamp = Date.now();
 
   const emails = {
-    admin1: `test_ad1_${timestamp}@asados.com`,
-    admin2: `test_ad2_${timestamp}@asados.com`,
-    supervisor: `test_sup_${timestamp}@asados.com`,
-    vendedor: `test_vend_${timestamp}@asados.com`,
-    cliente: `test_cli_${timestamp}@asados.com`,
-    inactiveAdmin: `test_inad_${timestamp}@asados.com`
+    admin1: `test_ad1_${timestamp}@crmsofiamanager.com.br`,
+    admin2: `test_ad2_${timestamp}@crmsofiamanager.com.br`,
+    supervisor: `test_sup_${timestamp}@crmsofiamanager.com.br`,
+    vendedor: `test_vend_${timestamp}@crmsofiamanager.com.br`,
+    cliente: `test_cli_${timestamp}@crmsofiamanager.com.br`,
+    inactiveAdmin: `test_inad_${timestamp}@crmsofiamanager.com.br`
   };
 
   const users = {};
@@ -566,7 +566,7 @@ async function runTests() {
       const detailsStr = JSON.stringify(log.detalhes);
       // Scan for any client name, email, or telephone in details
       if (
-        detailsStr.includes('@asados.com') ||
+        detailsStr.includes('@crmsofiamanager.com.br') ||
         detailsStr.includes('55419') ||
         detailsStr.includes('Sofia Resposta') ||
         detailsStr.includes('Atendente Humano') ||

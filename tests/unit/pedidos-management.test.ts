@@ -29,7 +29,7 @@ vi.mock('@/lib/calendar/google', () => ({
 }))
 
 describe('Gestão de Pedidos - Server Actions (TDD)', () => {
-  const mockUser = { id: 'user-op-1', email: 'atendente@asados.com' }
+  const mockUser = { id: 'user-op-1', email: 'atendente@crmsofiamanager.com.br' }
   const mockPerfil = { id: 'user-op-1', funcao: 'vendedor', ativo: true }
 
   beforeEach(() => {
@@ -406,7 +406,7 @@ describe('Gestão de Pedidos - Server Actions (TDD)', () => {
 })
 
 describe('emissão de comprovante de venda', () => {
-  const mockUser = { id: 'user-op-1', email: 'atendente@asados.com' }
+  const mockUser = { id: 'user-op-1', email: 'atendente@crmsofiamanager.com.br' }
   const mockPerfil = { id: 'user-op-1', funcao: 'vendedor', ativo: true }
 
   it('emite e reemite o mesmo snapshot pelo RPC autoritativo', async () => {

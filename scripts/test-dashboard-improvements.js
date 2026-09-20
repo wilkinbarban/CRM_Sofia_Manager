@@ -103,9 +103,9 @@ async function runTests() {
   const timestamp = Date.now();
 
   const emails = {
-    callerAdmin: `test_cld_${timestamp}@asados.com`,
-    otherAdmin: `test_oad_${timestamp}@asados.com`,
-    targetUser: `test_tgt_${timestamp}@asados.com`
+    callerAdmin: `test_cld_${timestamp}@crmsofiamanager.com.br`,
+    otherAdmin: `test_oad_${timestamp}@crmsofiamanager.com.br`,
+    targetUser: `test_tgt_${timestamp}@crmsofiamanager.com.br`
   };
 
   const users = {};

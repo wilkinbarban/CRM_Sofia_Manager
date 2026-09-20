@@ -11,7 +11,7 @@ describe('Operator Actions: Auto-Cooldown de Sofia ao Enviar Mensagem', () => {
     mockServerSupabase = {
       auth: {
         getUser: vi.fn().mockResolvedValue({
-          data: { user: { id: 'operador-id-1', email: 'vendedor@asados.com' } },
+          data: { user: { id: 'operador-id-1', email: 'vendedor@crmsofiamanager.com.br' } },
           error: null,
         }),
       },

@@ -70,7 +70,7 @@ test.describe('E2E: Client Phone-First Authentication Flow', () => {
     await page.goto('/login')
     await page.getByRole('button', { name: /Equipe \/ Operador/i }).click()
 
-    await page.getByLabel(/E-mail Corporativo/i).fill('admin@asados.com')
+    await page.getByLabel(/E-mail Corporativo/i).fill('admin@crmsofiamanager.com.br')
     await page.getByLabel(/Senha/i).fill('SenhaAdmin123')
     await page.getByRole('button', { name: /Entrar na Conta/i }).click()
 
@@ -82,7 +82,7 @@ test.describe('E2E: Client Phone-First Authentication Flow', () => {
     await page.goto('/login')
     await page.getByRole('button', { name: /Equipe \/ Operador/i }).click()
 
-    await page.getByLabel(/E-mail Corporativo/i).fill('supervisor@asados.com')
+    await page.getByLabel(/E-mail Corporativo/i).fill('supervisor@crmsofiamanager.com.br')
     await page.getByLabel(/Senha/i).fill('SenhaSupervisor123')
     await page.getByRole('button', { name: /Entrar na Conta/i }).click()
 
@@ -94,7 +94,7 @@ test.describe('E2E: Client Phone-First Authentication Flow', () => {
     await page.goto('/login')
     await page.getByRole('button', { name: /Equipe \/ Operador/i }).click()
 
-    await page.getByLabel(/E-mail Corporativo/i).fill('vendedor@asados.com')
+    await page.getByLabel(/E-mail Corporativo/i).fill('vendedor@crmsofiamanager.com.br')
     await page.getByLabel(/Senha/i).fill('SenhaVendedor123')
     await page.getByRole('button', { name: /Entrar na Conta/i }).click()
 

@@ -97,7 +97,7 @@ async function runTests() {
   mockAdmin.resetMock();
 
   const timestamp = Date.now();
-  const testEmail = `test_admin_ep9_${timestamp}@asados.com`;
+  const testEmail = `test_admin_ep9_${timestamp}@crmsofiamanager.com.br`;
   const testPassword = 'Password123!';
   let testUser;
   let testSession;

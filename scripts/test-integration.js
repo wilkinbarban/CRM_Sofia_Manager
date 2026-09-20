@@ -59,8 +59,8 @@ function getAuthCookies(session) {
 async function runTests() {
   logSection('Starting Integration Test Suite (Sofia CRM - Épica 1)');
   
-  const testUserAEmail = `test_usera_${Date.now()}@asados.com`;
-  const testUserBEmail = `test_userb_${Date.now()}@asados.com`;
+  const testUserAEmail = `test_usera_${Date.now()}@crmsofiamanager.com.br`;
+  const testUserBEmail = `test_userb_${Date.now()}@crmsofiamanager.com.br`;
   const testPassword = 'Password123!';
   
   let userASession = null;
