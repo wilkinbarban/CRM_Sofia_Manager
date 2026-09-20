@@ -15,14 +15,14 @@ Este documento especifica a correção do redirecionamento de confirmação de e
 ## 2. Requisitos de Configuração Externa (Supabase)
 
 ### 2.1 Supabase Dashboard — Site URL
-*   **REQ-EMAIL-001**: O projeto no Supabase Cloud MUST ter sua `Site URL` configurada como `https://casadeasados.duckdns.org`.
+*   **REQ-EMAIL-001**: O projeto no Supabase Cloud MUST ter sua `Site URL` configurada como `https://crmsofiamanager.duckdns.org`.
     *   **Local:** Supabase Dashboard → Authentication → URL Configuration → Site URL
     *   **Valor anterior:** `http://localhost:3000`
-    *   **Valor alvo:** `https://casadeasados.duckdns.org`
+    *   **Valor alvo:** `https://crmsofiamanager.duckdns.org`
     *   **Impacto:** Todos os links de confirmação gerados usarão esta URL como base para a variável de template `{{ .ConfirmationURL }}`.
 
 ### 2.2 Supabase Dashboard — Redirect URLs
-*   **REQ-EMAIL-002**: O projeto no Supabase Cloud MUST incluir `https://casadeasados.duckdns.org/**` na lista de URLs de redirecionamento permitidas (Redirect URLs).
+*   **REQ-EMAIL-002**: O projeto no Supabase Cloud MUST incluir `https://crmsofiamanager.duckdns.org/**` na lista de URLs de redirecionamento permitidas (Redirect URLs).
     *   **Local:** Supabase Dashboard → Authentication → URL Configuration → Redirect URLs
 
 ### 2.3 Supabase Dashboard — Template de E-mail de Confirmação
@@ -76,7 +76,7 @@ Este documento especifica a correção do redirecionamento de confirmação de e
 ## 5. Cenários de Aceitação (Gherkin - Given/When/Then)
 
 ### Cenário 1: Redirecionamento correto do link de e-mail
-*   **Given** que a `Site URL` do Supabase está configurada como `https://casadeasados.duckdns.org`,
+*   **Given** que a `Site URL` do Supabase está configurada como `https://crmsofiamanager.duckdns.org`,
 *   **And** as URLs de redirecionamento contêm o padrão coringa para o domínio de produção,
 *   **When** um novo cliente se cadastra com um e-mail válido,
 *   **Then** o link de ativação no e-mail enviado MUST usar o domínio de produção como base e não o localhost.

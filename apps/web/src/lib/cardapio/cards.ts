@@ -191,7 +191,7 @@ export function obterCartaoCombo(identificador: number | string): CartaoCombo | 
  * Formata o catálogo com todos os cartões de combos em texto estruturado
  */
 /* eslint-disable-next-line @typescript-eslint/no-unused-vars */
-export function gerarCatalogoTextoCompleto(appUrl = 'https://casadeasados.duckdns.org'): string {
+export function gerarCatalogoTextoCompleto(appUrl = 'https://crmsofiamanager.duckdns.org'): string {
   const cabecalho = [
     '🍖 *CASA DE ASSADOS BRASA & SABOR — CARDÁPIO DE COMBOS FAMILIARES* 🔥',
     '_O verdadeiro sabor do domingo na mesa da sua família!_',

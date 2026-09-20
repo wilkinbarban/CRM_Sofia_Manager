@@ -77,7 +77,7 @@ export function selectOfficialTelegramCombos<T extends ProdutoCardapio>(products
 
 export function buildTelegramCatalogCard(
   product: ProdutoCardapio,
-  baseUrl = 'https://casadeasados.duckdns.org',
+  baseUrl = 'https://crmsofiamanager.duckdns.org',
 ) {
   return {
     photo: normalizeTelegramPhotoUrl(product.url_imagem, baseUrl),

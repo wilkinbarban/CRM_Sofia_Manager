@@ -163,7 +163,7 @@ describe('AdminDashboard — Gestão de Usuários, Métricas, Logs e Comprovante
     fireEvent.change(screen.getByPlaceholderText('Ex: Carlos Oliveira'), {
       target: { value: 'Mariana Souza' },
     })
-    fireEvent.change(screen.getByPlaceholderText('carlos@casadeasados.com.br'), {
+    fireEvent.change(screen.getByPlaceholderText('carlos@crmsofiamanager.com.br'), {
       target: { value: 'mariana@asados.com' },
     })
     fireEvent.change(screen.getByPlaceholderText('Mínimo 6 dígitos'), {

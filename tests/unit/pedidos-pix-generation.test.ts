@@ -179,7 +179,7 @@ describe('PIX Payment & Customer Receipt Actions', () => {
   it('enviarComprovantePagamentoCliente rejects a proof without durable order authority', async () => {
     const res = await enviarComprovantePagamentoCliente('pedido-pix-test-1234', {
       texto: 'Comprovante Nubank transferido às 14:30',
-      urlComprovante: 'https://storage.casadeasados.duckdns.org/comprovante.jpg',
+      urlComprovante: 'https://storage.crmsofiamanager.duckdns.org/comprovante.jpg',
     })
 
     expect(res).toEqual({ success: false, error: 'COMPROVANTE_INDISPONIVEL' })

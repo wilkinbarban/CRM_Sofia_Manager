@@ -395,7 +395,7 @@ describe('E2E Integration: Cardápio Interativo, Carrinho Persistente, Webhooks 
             nome: 'Combo 1 - O Clássico Brasa & Sabor',
             descricao: 'Frango + Farofa + Maionese',
             precoCentavos: 6990,
-            urlImagem: 'https://casadeasados.duckdns.org/combo1.jpg',
+            urlImagem: 'https://crmsofiamanager.duckdns.org/combo1.jpg',
           },
         ],
       })

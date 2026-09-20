@@ -21,7 +21,7 @@ describe('Evolution media download boundary', () => {
     vi.stubGlobal('fetch', fetchMock)
     await expect(downloadEvolutionPdf(input)).resolves.toEqual({ ok: true, bytes: PDF, mimeType: 'application/pdf' })
     expect(fetchMock).toHaveBeenCalledWith('https://evolution.test/chat/getBase64FromMediaMessage/main%20instance', expect.objectContaining({
-      method: 'POST', redirect: 'error', headers: { apikey: 'secret', 'Content-Type': 'application/json', Origin: 'https://casadeasados.duckdns.org' },
+      method: 'POST', redirect: 'error', headers: { apikey: 'secret', 'Content-Type': 'application/json', Origin: 'https://crmsofiamanager.duckdns.org' },
       body: JSON.stringify({ message: input.message, convertToMp4: false }),
     }))
   })

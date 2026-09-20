@@ -20,7 +20,7 @@ Este documento especifica os requisitos técnicos e funcionais para a integraç�
     *   Nome do container: `evolution-api`
     *   Mapeamento de portas: `8080:8080`
     *   Volume persistente: `evolution_store:/evolution/store`
-*   **REQ-EVO-002**: O serviço `evolution-api` MUST ser configurado com as variáveis de ambiente necessárias para autenticação e escuta, usando a chave `EVOLUTION_API_KEY` do arquivo `.env` para a variável `AUTHENTICATION_API_KEY`, e `https://casadeasados.duckdns.org/evolution` para a variável `SERVER_URL`.
+*   **REQ-EVO-002**: O serviço `evolution-api` MUST ser configurado com as variáveis de ambiente necessárias para autenticação e escuta, usando a chave `EVOLUTION_API_KEY` do arquivo `.env` para a variável `AUTHENTICATION_API_KEY`, e `https://crmsofiamanager.duckdns.org/evolution` para a variável `SERVER_URL`.
 *   **REQ-EVO-003**: Um volume nomeado `evolution_store` MUST ser declarado no bloco `volumes:` do Docker Compose para persistência de sessões e dados.
 
 ---

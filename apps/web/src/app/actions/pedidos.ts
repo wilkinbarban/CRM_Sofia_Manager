@@ -1419,7 +1419,7 @@ export async function gerarCobrancaPixPedido(pedidoId: string) {
       }
     }
 
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://casadeasados.duckdns.org'
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://crmsofiamanager.duckdns.org'
     const notificationUrl = `${appUrl}/api/webhooks/mercadopago`
     const clienteNome = clienteDono?.nome || 'Cliente'
     const nomes = clienteNome.trim().split(' ')
@@ -1429,7 +1429,7 @@ export async function gerarCobrancaPixPedido(pedidoId: string) {
     const isTestToken = token.startsWith('TEST-')
     const payerEmail = isTestToken
       ? 'test_user_payer@testuser.com'
-      : `cliente_${pedidoId.slice(0, 8)}@casadeasados.duckdns.org`
+      : `cliente_${pedidoId.slice(0, 8)}@crmsofiamanager.duckdns.org`
 
     const payload = {
       transaction_amount: valorReais,

@@ -15,11 +15,11 @@ The command succeeds only when the application, Supabase, Evolution API, both Po
 
 | Traffic | Route |
 |---|---|
-| Browser → application | `https://casadeasados.duckdns.org` |
+| Browser → application | `https://crmsofiamanager.duckdns.org` |
 | Browser → Supabase data plane | Same-origin `/auth/v1`, `/rest/v1`, `/storage/v1`, `/realtime/v1`, and `/functions/v1` |
 | Application → Supabase | `http://api-gw:8000` on `asados-supabase-private` |
 | Application → Evolution API | `http://evolution-api:8080` on `asados-app-private` |
-| Evolution API → webhook | `https://casadeasados.duckdns.org/api/webhooks/evolution` with the dedicated secret |
+| Evolution API → webhook | `https://crmsofiamanager.duckdns.org/api/webhooks/evolution` with the dedicated secret |
 
 ## Security boundary
 
@@ -33,8 +33,8 @@ The command succeeds only when the application, Supabase, Evolution API, both Po
 
 | Variable | Production value or purpose |
 |---|---|
-| `NEXT_PUBLIC_APP_URL` | `https://casadeasados.duckdns.org` |
-| `NEXT_PUBLIC_SUPABASE_URL` | `https://casadeasados.duckdns.org` |
+| `NEXT_PUBLIC_APP_URL` | `https://crmsofiamanager.duckdns.org` |
+| `NEXT_PUBLIC_SUPABASE_URL` | `https://crmsofiamanager.duckdns.org` |
 | `SUPABASE_INTERNAL_URL` | `http://api-gw:8000` |
 | `EVOLUTION_API_URL` | `http://evolution-api:8080` |
 | `EVOLUTION_WEBHOOK_SECRET` | Dedicated server-side secret; never committed |
