@@ -31,8 +31,27 @@ Validate renewal without changing the live certificate:
 ```bash
 cd /home/wilkin/proyectos/Portafolio
 docker compose --profile ssl run --rm certbot renew \
-  --cert-name casadeasados.duckdns.org --dry-run
+  --cert-name crmsofiamanager.duckdns.org --dry-run
 ```
+
+## DuckDNS record lifetime
+
+DuckDNS deletes a record that receives no update for 30 days, and nothing on this host keeps
+`crmsofiamanager.duckdns.org` alive: the crontab contains only the certificate renewal job and
+there is no DuckDNS systemd timer. That is how the previous record disappeared, and with it the
+name the live certificate had been issued for.
+
+Before a promotion, confirm the record still resolves to this host's public IP:
+
+```bash
+resolved="$(getent ahostsv4 crmsofiamanager.duckdns.org | awk 'NR == 1 { print $1 }')"
+public="$(curl --fail --silent --show-error https://api.ipify.org)"
+printf 'record=%s public=%s\n' "$resolved" "$public"
+test -n "$resolved" && test "$resolved" = "$public"
+```
+
+Both values must agree before the ingress or the certificate is changed. An update must be sent to
+DuckDNS at least once every 30 days to keep the record registered.
 
 ## Verification
 
@@ -51,11 +70,11 @@ docker compose up -d --force-recreate web
 sleep 12
 
 curl --fail --silent --show-error --output /dev/null \
-  https://casadeasados.duckdns.org/
+  https://crmsofiamanager.duckdns.org/
 curl --fail --silent --show-error \
-  https://casadeasados.duckdns.org/api/health/live
+  https://crmsofiamanager.duckdns.org/api/health/live
 curl --fail --silent --show-error \
-  https://casadeasados.duckdns.org/api/health/ready
+  https://crmsofiamanager.duckdns.org/api/health/ready
 
 test "$ingress_started_at" = \
   "$(docker inspect portfolio-nginx --format '{{.State.StartedAt}}')"

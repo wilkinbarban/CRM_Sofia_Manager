@@ -10,6 +10,25 @@ preflight="$root/scripts/workspace-preflight.sh"
 health_timeout="${ASADOS_WEB_HEALTH_TIMEOUT_SECONDS:-180}"
 scheduler_health_timeout="${ASADOS_SOFIA_SCHEDULER_HEALTH_TIMEOUT_SECONDS:-180}"
 
+# The running stack does not necessarily use the historical `asados` Compose project name.
+# `docker compose` only recognises its own containers when the project name matches, so
+# resolve it from the running Web container and let the operator override it explicitly.
+resolve_compose_project() {
+  local detected
+  if [[ -n "${ASADOS_COMPOSE_PROJECT:-}" ]]; then
+    printf '%s\n' "$ASADOS_COMPOSE_PROJECT"
+    return 0
+  fi
+  detected="$(docker inspect asados-web --format '{{index .Config.Labels "com.docker.compose.project"}}' 2>/dev/null || true)"
+  if [[ -n "$detected" ]]; then
+    printf '%s\n' "$detected"
+    return 0
+  fi
+  printf '%s\n' 'asados'
+}
+
+compose_project="$(resolve_compose_project)"
+
 usage() {
   printf '%s\n' \
     "Usage: $0 deploy <local-immutable-image-ref>" \
@@ -51,7 +70,7 @@ wait_sofia_scheduler_healthy() {
 }
 
 recreate_sofia_scheduler() {
-  docker compose -f "$root/docker-compose.yml" --project-directory "$root" --project-name asados \
+  docker compose -f "$root/docker-compose.yml" --project-directory "$root" --project-name "$compose_project" \
     up -d --no-deps --force-recreate sofia-inbound-batch-maintenance
   wait_sofia_scheduler_healthy
 }
@@ -77,10 +96,10 @@ recreate_and_verify() {
     SOFIA_INBOUND_BATCH_EVOLUTION_ENQUEUE_ENABLED=false \
     SOFIA_CUSTOMER_MEMORY_ENABLED=false \
     ASADOS_WEB_IMAGE="$ref" docker compose -f "$root/docker-compose.yml" \
-      --project-directory "$root" --project-name asados up -d --no-deps --force-recreate web
+      --project-directory "$root" --project-name "$compose_project" up -d --no-deps --force-recreate web
   else
     ASADOS_WEB_IMAGE="$ref" docker compose -f "$root/docker-compose.yml" \
-      --project-directory "$root" --project-name asados up -d --no-deps --force-recreate web
+      --project-directory "$root" --project-name "$compose_project" up -d --no-deps --force-recreate web
   fi
   wait_healthy
   if [[ "$close_operational_gates" == true ]]; then

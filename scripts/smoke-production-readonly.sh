@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 set +x
 
-public_origin="${ASADOS_PUBLIC_ORIGIN:-https://casadeasados.duckdns.org}"
+public_origin="${ASADOS_PUBLIC_ORIGIN:-https://crmsofiamanager.duckdns.org}"
 direct_origin="${ASADOS_DIRECT_ORIGIN:-http://127.0.0.1:3020}"
 expected_image="${ASADOS_EXPECTED_IMAGE_ID:-}"
 

@@ -16,8 +16,8 @@ services:
     environment:
       - PORT=3000
       - NODE_ENV=production
-      - NEXT_PUBLIC_APP_URL=https://casadeasados.duckdns.org
-      - NEXT_PUBLIC_SUPABASE_URL=https://casadeasados.duckdns.org
+      - NEXT_PUBLIC_APP_URL=https://crmsofiamanager.duckdns.org
+      - NEXT_PUBLIC_SUPABASE_URL=https://crmsofiamanager.duckdns.org
       - SUPABASE_INTERNAL_URL=http://api-gw:8000
       # Payment-proof operational gates are process-startup-only and closed by default.
       - PAYMENT_PROOF_CANONICAL_INGEST_ENABLED=${PAYMENT_PROOF_CANONICAL_INGEST_ENABLED:-false}
@@ -199,7 +199,7 @@ services:
       - NPM_CONFIG_UPDATE_NOTIFIER=false
       - PRISMA_HIDE_UPDATE_MESSAGE=true
       - SERVER_URL=http://evolution-api:8080
-      - CORS_ORIGIN=https://casadeasados.duckdns.org
+      - CORS_ORIGIN=https://crmsofiamanager.duckdns.org
       - CORS_METHODS=GET,POST,PUT,DELETE,OPTIONS
       - CORS_CREDENTIALS=true
       - AUTHENTICATION_TYPE=apikey
@@ -235,7 +235,7 @@ services:
     volumes:
       - evolution_store:/evolution/store
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/',{headers:{Origin:'https://casadeasados.duckdns.org'}}).then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/',{headers:{Origin:'https://crmsofiamanager.duckdns.org'}}).then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
       interval: 10s
       timeout: 5s
       retries: 12
