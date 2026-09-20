@@ -51,4 +51,6 @@ The Evolution webhook accepts payloads up to 10 MiB. The limit is `client_max_bo
 docker exec portfolio-nginx nginx -T
 ```
 
-Changing this limit is an ingress change in that project. The deploy smoke does not cover the behaviour today, and nothing in this repository asserts it.
+Changing this limit is an ingress change in that project. The deploy smoke asserts the behaviour: after promotion it runs `scripts/verify-webhook-ingress-limit.sh` against the public origin, which declares an 11 MiB `Content-Length` for `/api/webhooks/evolution` and sends no body, and requires HTTP 413 together with a zero-byte upload. Nothing is ever uploaded, in either outcome: the probe has no body to send, so the ingress is exercised through its own size check on the declared length and the check cannot mutate production. A non-413 answer, a nonzero upload, or a request that stalls until the timeout fails the smoke and the promotion is rolled back.
+
+What that check does not cover: it asserts the 413 on an oversized declared length, not the exact 10 MiB boundary and not the `location =` scoping that keeps the limit off the generic application routes; because it drives that size check without sending a real payload, it does not exercise how the application handles an oversized body the ingress accepted. CI cannot assert the external ingress, since the live assertion only happens at deploy time against the public domain.

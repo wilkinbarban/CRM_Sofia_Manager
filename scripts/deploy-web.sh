@@ -6,7 +6,9 @@ umask 077
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 state_root="${ASADOS_DEPLOY_STATE_ROOT:-/var/lib/asados/deploy}"
 smoke="$root/scripts/smoke-production-readonly.sh"
+ingress_limit_probe="$root/scripts/verify-webhook-ingress-limit.sh"
 preflight="$root/scripts/workspace-preflight.sh"
+public_origin="${ASADOS_PUBLIC_ORIGIN:-https://crmsofiamanager.duckdns.org}"
 health_timeout="${ASADOS_WEB_HEALTH_TIMEOUT_SECONDS:-180}"
 scheduler_health_timeout="${ASADOS_SOFIA_SCHEDULER_HEALTH_TIMEOUT_SECONDS:-180}"
 
@@ -108,6 +110,10 @@ recreate_and_verify() {
     recreate_sofia_scheduler
   fi
   ASADOS_EXPECTED_IMAGE_ID="$expected_id" "$smoke"
+  # The public ingress must reject an oversized Evolution webhook payload with 413.
+  # The probe declares its Content-Length, so the ingress answers before the body is
+  # uploaded and nothing reaches the application. A non-413 result fails the smoke.
+  "$ingress_limit_probe" "$public_origin"
 }
 
 write_state() {
