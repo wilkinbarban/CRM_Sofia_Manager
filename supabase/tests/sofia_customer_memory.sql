@@ -13,8 +13,14 @@ select not to_regprocedure('public.registrar_fato_cliente(uuid,text,text,text,te
 \if :apply_fatos_cliente_rpcs
 \ir ../migrations/20260918020000_fatos_cliente_rpcs.sql
 \endif
+-- O guarda procura os code points de U+2028/U+2029 no texto da constraint: quando eles ja
+-- estao declarados (cadeia completa aplicada pelo harness local) nada e reaplicado.
+select position('\u2028' in (select pg_catalog.pg_get_constraintdef(c.oid) from pg_catalog.pg_constraint c where c.conrelid='public.fatos_cliente'::regclass and c.conname='ck_fatos_cliente_valor_controle')) = 0 as apply_fatos_cliente_separadores \gset
+\if :apply_fatos_cliente_separadores
+\ir ../migrations/20260920010000_fatos_cliente_valor_separadores.sql
+\endif
 begin;
-select plan(222);
+select plan(227);
 set role postgres;
 
 insert into public.clientes(id,nome,telefone) values
@@ -82,6 +88,10 @@ select throws_ok($$insert into public.fatos_cliente(cliente_id,tipo,chave,valor,
 select throws_ok($$insert into public.fatos_cliente(cliente_id,tipo,chave,valor,origem,estado) values('f1000000-0000-4000-8000-000000000001','preferencia','valor_controle','ao ponto'||chr(7),'cliente','pendente')$$,'23514',null,'a C0 control character inside a value is rejected');
 select throws_ok($$insert into public.fatos_cliente(cliente_id,tipo,chave,valor,origem,estado) values('f1000000-0000-4000-8000-000000000001','preferencia','valor_invisivel','ao ponto'||chr(8203),'cliente','pendente')$$,'23514',null,'a zero width character inside a value is rejected');
 select throws_ok($$insert into public.fatos_cliente(cliente_id,tipo,chave,valor,origem,estado) values('f1000000-0000-4000-8000-000000000001','preferencia','valor_bidi','ao ponto'||chr(8236),'cliente','pendente')$$,'23514',null,'a bidirectional override inside a value is rejected');
+-- U+2028/U+2029 sao categoria `separator`, nao `control`: `[[:cntrl:]]` nao os alcanca, e
+-- nenhum dos dois pode abrir uma linha nova no bloco do prompt.
+select throws_ok($$insert into public.fatos_cliente(cliente_id,tipo,chave,valor,origem,estado) values('f1000000-0000-4000-8000-000000000001','preferencia','valor_separador_linha','ao ponto'||chr(8232)||'sem cebola','cliente','pendente')$$,'23514',null,'a Unicode LINE SEPARATOR (U+2028) inside a value is rejected by the explicit separator class');
+select throws_ok($$insert into public.fatos_cliente(cliente_id,tipo,chave,valor,origem,estado) values('f1000000-0000-4000-8000-000000000001','preferencia','valor_separador_paragrafo','ao ponto'||chr(8233)||'sem cebola','cliente','pendente')$$,'23514',null,'a Unicode PARAGRAPH SEPARATOR (U+2029) inside a value is rejected by the explicit separator class');
 
 -- Matriz de aprovacao: o limite 0.85 vive na constraint, importado nao e confiavel e
 -- restricao_alimentar nunca se auto-aprova.
@@ -370,6 +380,7 @@ select throws_ok(format($$select * from public.revisar_fato_cliente(%L,'corrigir
 select throws_ok(format($$select * from public.revisar_fato_cliente(%L,'aprovar','valor indevido')$$,:'r1_id'),'22023','SOFIA_FATO_ENTRADA_INVALIDA','approving with a value is invalid input');
 select throws_ok(format($$select * from public.revisar_fato_cliente(%L,'arquivar')$$,:'r1_id'),'22023','SOFIA_FATO_ENTRADA_INVALIDA','an unknown decision is invalid input');
 select throws_ok(format($$select * from public.revisar_fato_cliente(%L,'corrigir',' espaco')$$,:'r1_id'),'22023','SOFIA_FATO_ENTRADA_INVALIDA','an untrimmed corrected value is invalid input');
+select throws_ok(format($$select * from public.revisar_fato_cliente(%L,'corrigir','ao ponto'||chr(8232)||'sem cebola')$$,:'r3_id'),'22023','SOFIA_FATO_ENTRADA_INVALIDA','a corrected value with U+2028 is refused as typed invalid input, not as a constraint violation');
 select throws_ok(format($$select * from public.revisar_fato_cliente(%L,'aprovar')$$,:'r4_id'),'22023','SOFIA_FATO_NAO_REVISAVEL','a rejected fact is terminal history');
 select throws_ok(format($$select * from public.revisar_fato_cliente(%L,'rejeitar')$$,:'r5_id'),'22023','SOFIA_FATO_NAO_REVISAVEL','a superseded fact is terminal history');
 select throws_ok(format($$select * from public.revisar_fato_cliente(%L,'aprovar')$$,'f1000000-0000-4000-8000-0000000000ff'),'P0002','SOFIA_FATO_NAO_ENCONTRADO','an unknown fact is not found for review');
@@ -384,6 +395,7 @@ select is(:'r6_estado'::text,'rejeitado','a refusal through the review function 
 select ok((select f.origem='operador' and f.confianca is null and f.origem_conversa_id='f2000000-0000-4000-8000-000000000005' from public.fatos_cliente f where f.id=:'r6_id'::uuid),'the reviewed refusal produces the same row shape the writer-level refusal assertions expect');
 select is((select count(*)::integer from public.fatos_cliente f where f.chave='revisar_recusa' and f.estado='substituido'),0,'the reviewed refusal supersedes nothing');
 select is((select count(*)::integer from public.fatos_cliente f where f.chave='revisar_recusa' and f.estado='rejeitado'),1,'the reviewed refusal retains exactly one rejected row');
+select is((select count(*)::integer from public.fatos_cliente f where f.valor like '%'||chr(8232)||'%' or f.valor like '%'||chr(8233)||'%'),0,'no stored fact value carries a Unicode line or paragraph separator');
 
 -- Retificacao LGPD: atualizacao no lugar, sem substituicao, e recusas de posse e de observacao.
 set local role authenticated;
@@ -391,6 +403,7 @@ select set_config('request.jwt.claim.sub','',true);
 select throws_ok(format($$select * from public.corrigir_meu_fato_cliente(%L,'x')$$,:'f1_id'),'42501','SOFIA_FATO_NAO_AUTENTICADO','an anonymous caller cannot correct a fact');
 select set_config('request.jwt.claim.sub','f3000000-0000-4000-8000-000000000002',true);
 select throws_ok(format($$select * from public.corrigir_meu_fato_cliente(%L,' ')$$,:'f1_id'),'22023','SOFIA_FATO_ENTRADA_INVALIDA','an untrimmed correction is invalid input');
+select throws_ok(format($$select * from public.corrigir_meu_fato_cliente(%L,'Rua Nova'||chr(8233)||', 20')$$,:'f1_id'),'22023','SOFIA_FATO_ENTRADA_INVALIDA','an owner correction with U+2029 is refused as typed invalid input');
 select (select f.valor||'|'||f.estado||'|'||f.origem from public.corrigir_meu_fato_cliente(:'f1_id'::uuid,'Rua Nova, 20') f) as correcao_a \gset
 select (select f.valor from public.corrigir_meu_fato_cliente(:'f2_id'::uuid,'bem passado mesmo') f) as correcao_b \gset
 select throws_ok(format($$select * from public.corrigir_meu_fato_cliente(%L,'x')$$,:'f3_id'),'42501','SOFIA_FATO_NAO_EXPOSTO','an internal observacao is never exposed to correction');

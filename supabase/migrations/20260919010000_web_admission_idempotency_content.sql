@@ -47,6 +47,18 @@ begin
   if not found then
     raise exception using errcode = '22023', message = 'SOFIA_BATCH_BINDING_INVALID';
   end if;
+  -- O caminho de navegador que este RPC substitui era filtrado por RLS, que proibia inserir
+  -- em conversa fechada (`conversas.status <> 'fechada'`); o service_role nao passa por RLS,
+  -- entao a recusa precisa ser explicita aqui. `fechada` e o unico estado terminal do enum
+  -- `public.status_conversa`, e a checagem corre sob a mesma trava `for update` que fixa a
+  -- conversa, de modo que o encerramento concorrente nao pode escapar entre a recusa e o
+  -- insert. A recusa vem antes da repeticao de chave: uma conversa encerrada nao admite.
+  perform 1 from public.conversas c
+    where c.id = p_conversa_id and c.cliente_id = p_cliente_id
+      and c.status = 'fechada'::public.status_conversa for update;
+  if found then
+    raise exception using errcode = '22023', message = 'SOFIA_BATCH_CONVERSA_FECHADA';
+  end if;
   v_admitted_at := pg_catalog.clock_timestamp();
 
   select m.id into v_message_id from public.mensagens m where m.external_id = v_external_id;
