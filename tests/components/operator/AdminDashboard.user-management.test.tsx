@@ -33,7 +33,7 @@ vi.mock('@/app/actions/admin', () => ({
     usuario: {
       id: 'new-user-123',
       nome: 'Mariana Souza',
-      email: 'mariana@asados.com',
+      email: 'mariana@crmsofiamanager.com.br',
       funcao: 'vendedor',
       ativo: true,
       telefone: '5541998877665',
@@ -104,7 +104,7 @@ const defaultProps = {
       nome: 'Admin Principal',
       funcao: 'admin',
       ativo: true,
-      email: 'admin@asados.com',
+      email: 'admin@crmsofiamanager.com.br',
       telefone: '5541999990000',
     },
     {
@@ -112,7 +112,7 @@ const defaultProps = {
       nome: 'Carlos Vendedor',
       funcao: 'vendedor',
       ativo: true,
-      email: 'carlos@asados.com',
+      email: 'carlos@crmsofiamanager.com.br',
       telefone: '5541988881111',
     },
   ],
@@ -164,7 +164,7 @@ describe('AdminDashboard — Gestão de Usuários, Métricas, Logs e Comprovante
       target: { value: 'Mariana Souza' },
     })
     fireEvent.change(screen.getByPlaceholderText('carlos@crmsofiamanager.com.br'), {
-      target: { value: 'mariana@asados.com' },
+      target: { value: 'mariana@crmsofiamanager.com.br' },
     })
     fireEvent.change(screen.getByPlaceholderText('Mínimo 6 dígitos'), {
       target: { value: 'senha123' },
@@ -177,7 +177,7 @@ describe('AdminDashboard — Gestão de Usuários, Métricas, Logs e Comprovante
     await waitFor(() => {
       expect(criarUsuarioAdmin).toHaveBeenCalledWith({
         nome: 'Mariana Souza',
-        email: 'mariana@asados.com',
+        email: 'mariana@crmsofiamanager.com.br',
         senha: 'senha123',
         funcao: 'vendedor',
         telefone: undefined,
@@ -240,7 +240,7 @@ describe('AdminDashboard — Gestão de Usuários, Métricas, Logs e Comprovante
     await waitFor(() => {
       expect(editarUsuarioAdmin).toHaveBeenCalledWith('op-1', {
         nome: 'Carlos Oliveira Vendedor',
-        email: 'carlos@asados.com',
+        email: 'carlos@crmsofiamanager.com.br',
         telefone: '5541988881111',
         funcao: 'vendedor',
         ativo: true,

@@ -347,6 +347,8 @@ volumes:
   redis_data:
 ```
 
+(Nota histórica: o arquivo `nginx.conf` foi removido deste repositório; o ingress ativo é o `portfolio-nginx` do projeto Portafolio, conforme `docs/runbooks/domain-deployment.md`.)
+
 ### 7.2 Estratégia de Backups do Banco de Dados
 *   **Cloud Backup**: Configuração de rotinas automáticas de snapshot no painel do Supabase.
 *   **Backup Físico VPS**: Cron job configurado para executar `supabase db dump` diariamente, gerando arquivos SQL compactados salvos em volume de disco isolado na VPS.

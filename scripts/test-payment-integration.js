@@ -106,8 +106,8 @@ function setSessionCookies(session) {
 async function runTests() {
   logSection('Starting Payment Integration & Security Test Suite (Épica 7)');
 
-  const testUserAEmail = `test_pay_usera_${Date.now()}@asados.com`;
-  const testUserBEmail = `test_pay_userb_${Date.now()}@asados.com`;
+  const testUserAEmail = `test_pay_usera_${Date.now()}@crmsofiamanager.com.br`;
+  const testUserBEmail = `test_pay_userb_${Date.now()}@crmsofiamanager.com.br`;
   const testPassword = 'Password123!';
 
   let userASession = null;

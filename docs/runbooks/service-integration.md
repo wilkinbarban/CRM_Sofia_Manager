@@ -41,4 +41,14 @@ The command succeeds only when the application, Supabase, Evolution API, both Po
 
 ## Operational note
 
-Apply `nginx.conf` and issue the public TLS certificate during the deployment phase. Phase 5 validates the configuration syntax and local integrated runtime without opening administrative endpoints.
+The ingress configuration lives in the Portafolio project (`portfolio-nginx`); this repository no longer carries an nginx config. Apply the ingress change there and issue the public TLS certificate during the deployment phase. Phase 5 validates the configuration syntax and local integrated runtime without opening administrative endpoints. The operational source of truth for that ingress is `docs/runbooks/domain-deployment.md`.
+
+## Evolution webhook body limit
+
+The Evolution webhook accepts payloads up to 10 MiB. The limit is `client_max_body_size 10M`, scoped to an exact `location = /api/webhooks/evolution` so the generic application upload limit is not widened. The live ingress enforces it, and that configuration lives in the separate `Portafolio` project (`portfolio-nginx`, sites under `nginx/sites/`), not in this repository. What governs production is the configuration rendered in the running container:
+
+```bash
+docker exec portfolio-nginx nginx -T
+```
+
+Changing this limit is an ingress change in that project. The deploy smoke does not cover the behaviour today, and nothing in this repository asserts it.

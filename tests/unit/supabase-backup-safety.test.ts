@@ -65,7 +65,7 @@ describe('Supabase backup safety', () => {
 
   it('accepts identity flags before the final backup directory argument', () => {
     const result = spawnSync(join(root, 'ops', 'supabase', 'verify-backup-restore.sh'), [
-      '--email', 'admin@asados.com',
+      '--email', 'admin@crmsofiamanager.com.br',
       '--phone', '5541988888888',
       '/definitely/missing/backup',
     ], { encoding: 'utf8' })

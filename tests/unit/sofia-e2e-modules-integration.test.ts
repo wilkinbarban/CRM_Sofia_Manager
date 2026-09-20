@@ -429,7 +429,7 @@ describe('E2E Integration: Sofía, Canais (WhatsApp & Telegram), On/Off & Módul
       const mockServerSupabase = {
         auth: {
           getUser: vi.fn().mockResolvedValue({
-            data: { user: { id: 'admin-1', email: 'admin@asados.com' } },
+            data: { user: { id: 'admin-1', email: 'admin@crmsofiamanager.com.br' } },
             error: null,
           }),
         },

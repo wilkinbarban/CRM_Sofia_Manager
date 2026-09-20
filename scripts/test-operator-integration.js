@@ -103,10 +103,10 @@ function setSessionCookies(session) {
 async function runTests() {
   logSection('Starting Operator Inbox & Security Integration Tests (Épica 4)');
 
-  const testOperatorEmail = `test_op_${Date.now()}@asados.com`;
-  const testAdminEmail = `test_admin_${Date.now()}@asados.com`;
-  const testSupervisorEmail = `test_supervisor_${Date.now()}@asados.com`;
-  const testClientEmail = `test_client_${Date.now()}@asados.com`;
+  const testOperatorEmail = `test_op_${Date.now()}@crmsofiamanager.com.br`;
+  const testAdminEmail = `test_admin_${Date.now()}@crmsofiamanager.com.br`;
+  const testSupervisorEmail = `test_supervisor_${Date.now()}@crmsofiamanager.com.br`;
+  const testClientEmail = `test_client_${Date.now()}@crmsofiamanager.com.br`;
   const testPassword = 'Password123!';
 
   let operatorUser = null;

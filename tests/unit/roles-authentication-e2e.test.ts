@@ -12,7 +12,7 @@ describe('End-to-End Roles Authentication & Authorization Suite', () => {
     })
 
     const { data, error } = await supabase.auth.signInWithPassword({
-      email: 'admin@asados.com',
+      email: 'admin@crmsofiamanager.com.br',
       password: 'SenhaAdmin123',
     })
 
@@ -40,7 +40,7 @@ describe('End-to-End Roles Authentication & Authorization Suite', () => {
     })
 
     const { data, error } = await supabase.auth.signInWithPassword({
-      email: 'supervisor@asados.com',
+      email: 'supervisor@crmsofiamanager.com.br',
       password: 'SenhaSupervisor123',
     })
 
@@ -67,7 +67,7 @@ describe('End-to-End Roles Authentication & Authorization Suite', () => {
     })
 
     const { data, error } = await supabase.auth.signInWithPassword({
-      email: 'vendedor@asados.com',
+      email: 'vendedor@crmsofiamanager.com.br',
       password: 'SenhaVendedor123',
     })
 
