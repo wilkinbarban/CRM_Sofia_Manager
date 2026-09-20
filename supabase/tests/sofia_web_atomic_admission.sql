@@ -3,7 +3,7 @@ create extension if not exists pgtap;
 \ir ../migrations/20260914010000_sofia_web_atomic_admission.sql
 \ir ../migrations/20260919010000_web_admission_idempotency_content.sql
 begin;
-select plan(28);
+select plan(31);
 
 select ok(exists (select 1 from pg_catalog.pg_proc p cross join lateral pg_catalog.aclexplode(coalesce(p.proacl, pg_catalog.acldefault('f', p.proowner))) privilege where p.oid = 'public.enqueue_sofia_inbound_message(uuid,uuid,text,text,text,text,timestamptz)'::regprocedure and privilege.grantee = pg_catalog.to_regrole('service_role')::oid and privilege.privilege_type = 'EXECUTE'),'service role has direct Web admission EXECUTE');
 select ok(not exists (select 1 from pg_catalog.pg_proc p cross join lateral pg_catalog.aclexplode(coalesce(p.proacl, pg_catalog.acldefault('f', p.proowner))) privilege where p.oid = 'public.enqueue_sofia_inbound_message(uuid,uuid,text,text,text,text,timestamptz)'::regprocedure and privilege.grantee in (pg_catalog.to_regrole('anon')::oid, pg_catalog.to_regrole('authenticated')::oid) and privilege.privilege_type = 'EXECUTE'),'anon and authenticated have no direct Web admission EXECUTE');
@@ -21,6 +21,9 @@ insert into public.conversas(id,cliente_id) values
  ('c2000000-0000-4000-8000-000000000001','c1000000-0000-4000-8000-000000000001'),
  ('c2000000-0000-4000-8000-000000000002','c1000000-0000-4000-8000-000000000002'),
  ('c2000000-0000-4000-8000-000000000003','c1000000-0000-4000-8000-000000000003');
+-- R1-2: a closed conversation, the state the replaced browser insert was denied by RLS.
+insert into public.clientes(id,nome,telefone) values ('c1000000-0000-4000-8000-000000000004','Fechada','5541991111304');
+insert into public.conversas(id,cliente_id,status) values ('c2000000-0000-4000-8000-000000000004','c1000000-0000-4000-8000-000000000004','fechada');
 create temporary table admissao(label text,message_id uuid,batch_id uuid,duplicate boolean,scheduled_at timestamptz);
 grant select,insert on admissao to service_role;
 set local role service_role;
@@ -55,5 +58,11 @@ select set_config('request.jwt.claim','{"role":"authenticated"}',true);
 select throws_ok($$select * from public.enqueue_sofia_inbound_message('c2000000-0000-4000-8000-000000000001','c1000000-0000-4000-8000-000000000001','web','web-auth','texto',null)$$,'42501','SOFIA_BATCH_SERVICE_ROLE_REQUIRED','authority is checked before Web input details');
 reset role;
 select is((select count(*)::integer from public.mensagens where conversa_id='c2000000-0000-4000-8000-000000000001'),2,'a rejected content mismatch leaves exactly the originally admitted rows');
+set local role service_role;
+select set_config('request.jwt.claim','{"role":"service_role"}',true);
+select throws_ok($$select * from public.enqueue_sofia_inbound_message('c2000000-0000-4000-8000-000000000004','c1000000-0000-4000-8000-000000000004','web','web-fechada','texto depois do encerramento',null)$$,'22023','SOFIA_BATCH_CONVERSA_FECHADA','an admission into a closed conversation is refused with a typed error');
+reset role;
+select is((select count(*)::integer from public.mensagens where conversa_id='c2000000-0000-4000-8000-000000000004'),0,'a refused closed-conversation admission inserts no message');
+select is((select count(*)::integer from public.sofia_inbound_batches where conversa_id='c2000000-0000-4000-8000-000000000004'),0,'a refused closed-conversation admission creates no batch');
 select * from finish();
 rollback;

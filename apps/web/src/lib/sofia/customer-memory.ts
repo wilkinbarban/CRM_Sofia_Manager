@@ -34,14 +34,19 @@ export interface FatoCandidato {
 }
 
 const INVISIVEIS_BIDI = /[\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/g
-const CONTROLE = /[\u0000-\u001F\u007F]/
+// U+2028 LINE SEPARATOR e U+2029 PARAGRAPH SEPARATOR sao categoria Unicode `separator`
+// (Zl/Zp), nao `control`: nao entram em `\u0000-\u001F` e precisam ser nomeados. Um
+// separador abre uma linha nova no prompt, exatamente o que a constraint do banco recusa,
+// e aqui ele e DESCARTADO (nao dobrado em espaco): um valor que nao cabe em uma linha nao
+// pode virar uma versao editada da afirmacao do cliente.
+const CONTROLE_OU_SEPARADOR = /[\u0000-\u001F\u007F\u2028\u2029]/
 const QUEBRA_OU_TAB = /[\r\n\t]+/g
 const ESPACOS_REPETIDOS = / {2,}/g
 
 /**
  * Normaliza um `valor` vindo do modelo. Devolve `null` quando o valor precisa
  * ser descartado (nao-string, vazio, acima de 500 caracteres ou com caractere
- * de controle remanescente).
+ * de controle ou separador de linha remanescente).
  */
 export function normalizarValor(bruto: unknown): string | null {
   if (typeof bruto !== 'string') return null
@@ -55,7 +60,7 @@ export function normalizarValor(bruto: unknown): string | null {
 
   if (valor === '') return null
   if (valor.length > FATO_VALOR_MAX_CARACTERES) return null
-  if (CONTROLE.test(valor)) return null
+  if (CONTROLE_OU_SEPARADOR.test(valor)) return null
   return valor
 }
 
