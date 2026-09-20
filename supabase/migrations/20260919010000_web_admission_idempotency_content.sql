@@ -101,5 +101,5 @@ begin
   insert into public.sofia_inbound_batch_messages(batch_id, message_id, message_created_at)
     values (v_batch.id, v_message_id, p_received_at);
   return query select v_message_id, v_batch.id, false, v_batch.scheduled_process_at;
-end
+end;
 $$;
