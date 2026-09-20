@@ -91,8 +91,8 @@ export function formatarCardapioResumido(produtos: ProdutoCardapio[], baseUrl = 
   }
 
   const linhas: string[] = [
-    '🔥 *CASA DE ASSADOS BRASA & SABOR — O que vai querer hoje?*',
-    '_Confira nossos assados e combos especiais de domingo (Bairro Umbará, Curitiba - PR):_',
+    '🔥 *CARDÁPIO — O que vai querer hoje?*',
+    '_Confira os itens e combos disponíveis neste ambiente de demonstração com dados de teste:_',
     '',
   ]
 

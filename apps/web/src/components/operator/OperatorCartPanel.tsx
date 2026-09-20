@@ -465,7 +465,7 @@ export default function OperatorCartPanel({
                 >
                   {HORARIOS_RETIRADA.map((h) => (
                     <option key={h} value={h}>
-                      {h} (Balcão Umbará)
+                      {h} (Balcão de Retirada)
                     </option>
                   ))}
                 </select>

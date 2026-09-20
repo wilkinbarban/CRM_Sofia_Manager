@@ -60,7 +60,7 @@ function formatarResumoCarrinho(carrinho: CarrinhoCompleto): string {
     linhas.join('\n'),
     ``,
     `💰 *Total:* ${totalFormatado}`,
-    `⏰ *Retirada:* Domingo (Balcão Umbará)`,
+    `⏰ *Retirada:* Domingo (Balcão de Retirada)`,
     ``,
     `Para confirmar ou adicionar mais itens, pode me chamar por aqui! 😊`,
   ].join('\n')

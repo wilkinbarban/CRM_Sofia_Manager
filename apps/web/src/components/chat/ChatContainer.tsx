@@ -890,7 +890,7 @@ export default function ChatContainer({
             <div className="h-4 w-px bg-zinc-800 hidden sm:block" />
             <div className="hidden min-w-0 flex-col sm:flex">
               <span className="text-xs font-semibold text-zinc-200">Sofia • Atendimento Virtual</span>
-              <span className="text-[10px] text-zinc-400">Domingo de Assados no Umbará</span>
+              <span className="text-[10px] text-zinc-400">Ambiente de demonstração com dados de teste</span>
             </div>
           </div>
 
@@ -1096,7 +1096,7 @@ export default function ChatContainer({
               </div>
               <h3 className="text-zinc-200 font-semibold">Olá, {clienteNome}!</h3>
               <p className="text-sm text-zinc-500 max-w-xs">
-                Seja bem-vindo à Casa de Assados Brasa & Sabor! Escolha seus assados no cardápio ao lado para montar seu pedido personalizado.
+                Seja bem-vindo ao CRM Sofia Manager! Este é um ambiente de demonstração com dados de teste. Escolha os itens no cardápio ao lado para montar seu pedido personalizado.
               </p>
             </div>
           ) : (
@@ -1591,7 +1591,7 @@ export default function ChatContainer({
                       >
                         {HORARIOS_RETIRADA.map((h) => (
                           <option key={h} value={h}>
-                            {h} (Balcão Umbará)
+                            {h} (Balcão de Retirada)
                           </option>
                         ))}
                       </select>

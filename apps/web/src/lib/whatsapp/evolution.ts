@@ -266,7 +266,7 @@ export async function sendOtpEvolution(
     }
 
     const url = `${apiUrl}/message/sendText/${instanceName}`
-    const text = `🔐 *Código de Verificação — Asados*\n\nSeu código é: *${code}*\n\n⏳ Válido por *10 minutos*. Se você não solicitou, desconsidere.`
+    const text = `🔐 *Código de Verificação — CRM Sofia Manager*\n\nSeu código é: *${code}*\n\n⏳ Válido por *10 minutos*. Se você não solicitou, desconsidere.`
 
     const response = await fetch(url, {
       method: 'POST',

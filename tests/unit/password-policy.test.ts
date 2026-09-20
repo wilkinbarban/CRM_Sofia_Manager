@@ -3,7 +3,7 @@ import { validatePasswordPolicy, PASSWORD_POLICY_REQUIREMENTS } from '@/lib/auth
 
 describe('Password Policy Enforcement', () => {
   it('accepts passwords meeting all complexity criteria', () => {
-    expect(validatePasswordPolicy('Asados2026!')).toEqual({ valid: true })
+    expect(validatePasswordPolicy('Sofia2026!')).toEqual({ valid: true })
     expect(validatePasswordPolicy('SegredoForte1')).toEqual({ valid: true })
     expect(validatePasswordPolicy('P@ssw0rd99')).toEqual({ valid: true })
   })
@@ -15,19 +15,19 @@ describe('Password Policy Enforcement', () => {
   })
 
   it('rejects passwords without uppercase letters', () => {
-    const result = validatePasswordPolicy('asados2026!')
+    const result = validatePasswordPolicy('sofia2026!')
     expect(result.valid).toBe(false)
     expect(result.errors).toContain(PASSWORD_POLICY_REQUIREMENTS.uppercase)
   })
 
   it('rejects passwords without lowercase letters', () => {
-    const result = validatePasswordPolicy('ASADOS2026!')
+    const result = validatePasswordPolicy('SOFIA2026!')
     expect(result.valid).toBe(false)
     expect(result.errors).toContain(PASSWORD_POLICY_REQUIREMENTS.lowercase)
   })
 
   it('rejects passwords without numeric digits', () => {
-    const result = validatePasswordPolicy('AsadosChurrasco!')
+    const result = validatePasswordPolicy('SofiaChurrasco!')
     expect(result.valid).toBe(false)
     expect(result.errors).toContain(PASSWORD_POLICY_REQUIREMENTS.number)
   })

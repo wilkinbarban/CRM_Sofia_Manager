@@ -20,7 +20,7 @@ describe('Sales Receipt 2ª Via (Segunda Via) Output', () => {
     ],
     charged_amount_centavos: 11990,
     payment: { status: 'aprovado', method: 'pix' },
-    establishment: { name: 'Casa de Assados Sofia' },
+    establishment: { name: 'Ambiente de demonstração' },
     issuance: { issued_at: '2026-08-25T12:00:00.000Z', snapshot_version: 1 },
   }
 

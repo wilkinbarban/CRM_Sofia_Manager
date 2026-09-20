@@ -212,7 +212,7 @@ export async function executarToolSofia(
       const horariosTexto = HORARIOS_RETIRADA_DOMINGO.join(', ')
       return {
         success: true,
-        mensagem: `Nossos horários de retirada para domingo são: ${horariosTexto}. As retiradas são feitas no nosso balcão aqui no Umbará!`,
+        mensagem: `Nossos horários de retirada para domingo são: ${horariosTexto}. As retiradas são feitas no balcão de retirada. Este é um ambiente de demonstração com dados de teste.`,
         data: HORARIOS_RETIRADA_DOMINGO,
       }
     }

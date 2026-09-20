@@ -70,7 +70,7 @@ describe('E2E Lifecycle Test: Ciclo Completo de Pedidos (Sem e Com Intervenção
   const mockProdutos = [
     {
       id: 'prod-combo-1',
-      nome: 'Combo 1 - O Clássico Brasa & Sabor',
+      nome: 'Combo 1 - O Clássico',
       descricao: 'Frango assado recheado + maionese artesanal 500g + risoto curitibano',
       preco_centavos: 6990,
       precoCentavos: 6990,
@@ -319,7 +319,7 @@ describe('E2E Lifecycle Test: Ciclo Completo de Pedidos (Sem e Com Intervenção
       const conversao = await converterCarrinhoEmPedido({
         carrinhoId: mockCartState.id,
         meioPagamento: 'pix',
-        horarioRetirada: '12:00 (Balcão Umbará)',
+        horarioRetirada: '12:00 (Balcão de Retirada)',
       })
       expect(conversao.success).toBe(true)
       expect(conversao.pedidoId).toBe('ped-oficial-100')
@@ -327,7 +327,7 @@ describe('E2E Lifecycle Test: Ciclo Completo de Pedidos (Sem e Com Intervenção
       expect(mockSupabaseAdmin.rpc).toHaveBeenCalledWith('converter_carrinho_em_pedido', {
         p_carrinho_id: mockCartState.id,
         p_meio_pagamento: 'pix',
-        p_horario_retirada: '12:00 (Balcão Umbará)',
+        p_horario_retirada: '12:00 (Balcão de Retirada)',
       })
     })
 
@@ -392,7 +392,7 @@ describe('E2E Lifecycle Test: Ciclo Completo de Pedidos (Sem e Com Intervenção
       expect((payRes.data as any)?.status_pagamento).toBe('aprovado')
     })
 
-    it('1.5 Finalização do pedido: marcação de status como Entregue no balcão Umbará', async () => {
+    it('1.5 Finalização do pedido: marcação de status como Entregue no balcão de retirada', async () => {
       const directStatusUpdate = vi.fn()
       const transitionRpc = vi.fn().mockImplementation(
         (name: string, params: {
@@ -446,7 +446,7 @@ describe('E2E Lifecycle Test: Ciclo Completo de Pedidos (Sem e Com Intervenção
         pedidoId: mockPedidoState.id,
         novoStatus: 'entregue',
         idempotencyKey: 'lifecycle-manual-delivery-1',
-        reason: 'Pedido retirado no balcão Umbará',
+        reason: 'Pedido retirado no balcão de retirada',
       })
 
       expect(statusRes.success).toBe(true)
@@ -455,7 +455,7 @@ describe('E2E Lifecycle Test: Ciclo Completo de Pedidos (Sem e Com Intervenção
         p_pedido_id: mockPedidoState.id,
         p_novo_status: 'entregue',
         p_idempotency_key: 'lifecycle-manual-delivery-1',
-        p_reason: 'Pedido retirado no balcão Umbará',
+        p_reason: 'Pedido retirado no balcão de retirada',
       })
       expect(directStatusUpdate).not.toHaveBeenCalled()
     })
@@ -508,7 +508,7 @@ describe('E2E Lifecycle Test: Ciclo Completo de Pedidos (Sem e Com Intervenção
               apikey: 'test-evo-api-key',
               'Content-Type': 'application/json',
             }),
-            body: expect.stringContaining('Combo 1 - O Clássico Brasa & Sabor'),
+            body: expect.stringContaining('Combo 1 - O Clássico'),
           })
         )
 
@@ -601,7 +601,7 @@ describe('E2E Lifecycle Test: Ciclo Completo de Pedidos (Sem e Com Intervenção
         })
 
         expect(actionResult.handled).toBe(true)
-        expect(actionResult.respostaTexto).toContain('Combo 1 - O Clássico Brasa & Sabor')
+        expect(actionResult.respostaTexto).toContain('Combo 1 - O Clássico')
         expect(actionResult.respostaTexto).toContain('adicionado ao seu pedido')
       })
     })
@@ -613,12 +613,12 @@ describe('E2E Lifecycle Test: Ciclo Completo de Pedidos (Sem e Com Intervenção
       it('formata e entrega cardápio com descrições, preços e fotos para Telegram e Web', () => {
         const textoCardapioTg = formatarCardapioResumido(mockProdutos as any)
 
-        expect(textoCardapioTg).toContain('CASA DE ASSADOS BRASA & SABOR')
-        expect(textoCardapioTg.toUpperCase()).toContain('COMBO 1 - O CLÁSSICO BRASA & SABOR')
+        expect(textoCardapioTg).toContain('CARDÁPIO — O que vai querer hoje?')
+        expect(textoCardapioTg.toUpperCase()).toContain('COMBO 1 - O CLÁSSICO')
         expect(textoCardapioTg).toContain('R$ 69,90')
         expect(textoCardapioTg.toUpperCase()).toContain('COSTELA FOGO DE CHÃO (KG)')
         expect(textoCardapioTg).toContain('R$ 79,90')
-        expect(textoCardapioTg).toContain('Bairro Umbará, Curitiba - PR')
+        expect(textoCardapioTg).toContain('ambiente de demonstração com dados de teste')
       })
 
       it('processa mensagem do cliente no webhook do Telegram e responde com Sofia', async () => {

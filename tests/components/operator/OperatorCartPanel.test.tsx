@@ -64,7 +64,7 @@ describe('OperatorCartPanel (TDD)', () => {
             preco_total_centavos: 6990,
             produtos: {
               id: 'prod-1',
-              nome: 'Combo 1 - O Clássico Brasa & Sabor',
+              nome: 'Combo 1 - O Clássico',
               url_imagem: '/img.png',
             },
           },
@@ -82,7 +82,7 @@ describe('OperatorCartPanel (TDD)', () => {
       />
     )
 
-    expect(await screen.findByText('Combo 1 - O Clássico Brasa & Sabor')).toBeInTheDocument()
+    expect(await screen.findByText('Combo 1 - O Clássico')).toBeInTheDocument()
     expect(screen.getByText('Converter em Pedido Oficial')).toBeInTheDocument()
 
     // Simular conversão do pedido

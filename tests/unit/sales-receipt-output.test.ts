@@ -7,7 +7,7 @@ const snapshot = {
   line_items: [{ id: 'line-1', name: 'Costela', quantity: 2, unit_price_centavos: 2500, line_total_centavos: 5000 }],
   charged_amount_centavos: 5000,
   payment: { status: 'aprovado', method: 'pix' },
-  establishment: { name: 'Asados' },
+  establishment: { name: 'Loja de Teste' },
   issuance: { issued_at: '2026-08-20T12:00:00.000Z', snapshot_version: 1 },
 }
 
@@ -68,7 +68,7 @@ describe('sales receipt output', () => {
   it('encodes accented Portuguese deterministically with WinAnsi instead of corrupt placeholders', () => {
     const accentedSnapshot = {
       ...snapshot,
-      establishment: { name: 'Asados São José' },
+      establishment: { name: 'Empório São José' },
       customer: { name: 'João Açúcar', phone: '5541999999999' },
       line_items: [{ ...snapshot.line_items[0], name: 'Pão de alho' }],
     }

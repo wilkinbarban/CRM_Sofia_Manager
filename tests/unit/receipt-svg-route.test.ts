@@ -27,7 +27,7 @@ const snapshot = {
   line_items: [],
   charged_amount_centavos: 1234,
   payment: { status: 'aprovado', method: 'pix' },
-  establishment: { name: 'Asados' },
+  establishment: { name: 'Loja de Teste' },
   issuance: { issued_at: '2026-08-20T00:00:00.000Z', snapshot_version: 1 },
 }
 

@@ -135,7 +135,7 @@ export default function PerfilForm({ operatorInfo }: PerfilFormProps) {
             Meu Perfil de Operador
           </h1>
           <p className="mt-1 text-xs text-zinc-400">
-            Gerencie suas informações de acesso e configurações de segurança na Casa de Assados Brasa & Sabor.
+            Gerencie suas informações de acesso e configurações de segurança no CRM Sofia Manager.
           </p>
         </div>
       </section>

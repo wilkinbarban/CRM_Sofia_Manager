@@ -8,7 +8,7 @@ describe('Motor de Cartões Digitais para WhatsApp & Telegram', () => {
   it('gera cartão visual estruturado com markdown e CTA amigável para o Combo 1', () => {
     const cartao1 = obterCartaoCombo('Combo 1')
     expect(cartao1).toBeDefined()
-    expect(cartao1?.textoMarkdownCartao).toContain('🍗 *COMBO 1 — O CLÁSSICO BRASA & SABOR*')
+    expect(cartao1?.textoMarkdownCartao).toContain('🍗 *COMBO 1 — O CLÁSSICO*')
     expect(cartao1?.textoMarkdownCartao).toContain('`R$ 69,90`')
     expect(cartao1?.textoMarkdownCartao).toContain('Serve 3 a 4 pessoas')
     expect(cartao1?.textoMarkdownCartao).toContain('piá')
@@ -24,12 +24,12 @@ describe('Motor de Cartões Digitais para WhatsApp & Telegram', () => {
 
   it('gera catálogo completo contendo os 4 combos e instruções de pré-venda', () => {
     const catalogo = gerarCatalogoTextoCompleto()
-    expect(catalogo).toContain('CASA DE ASSADOS BRASA & SABOR — CARDÁPIO DE COMBOS FAMILIARES')
+    expect(catalogo).toContain('CARDÁPIO DE COMBOS — AMBIENTE DE DEMONSTRAÇÃO')
     expect(catalogo).toContain('COMBO 1')
     expect(catalogo).toContain('COMBO 2')
     expect(catalogo).toContain('COMBO 3')
     expect(catalogo).toContain('COMBO 4')
-    expect(catalogo).toContain('Bairro Umbará')
+    expect(catalogo).toContain('Ambiente de demonstração com dados de teste')
     expect(catalogo).toContain('janelas de 15 min')
   })
 })

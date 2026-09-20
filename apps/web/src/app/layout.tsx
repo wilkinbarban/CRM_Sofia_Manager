@@ -11,20 +11,20 @@ export const viewport: Viewport = {
 export const metadata: Metadata = {
   metadataBase: new URL('https://crmsofiamanager.duckdns.org'),
   title: {
-    default: 'CRM Sofia Manager | Casa de Assados Brasa & Sabor',
+    default: 'CRM Sofia Manager | Atendimento, Pedidos e IA',
     template: '%s | CRM Sofia Manager',
   },
   description:
-    'CRM Sofia Manager: Plataforma omnichannel de atendimento inteligente, gestão de pedidos e RAG para a Casa de Assados Brasa & Sabor no bairro Umbará, Curitiba - PR.',
+    'CRM Sofia Manager: plataforma omnichannel de atendimento inteligente, gestão de pedidos e RAG. Ambiente de demonstração com dados de teste.',
   keywords: [
     'CRM Sofia Manager',
-    'Casa de Assados Brasa & Sabor',
-    'Frango Assado Curitiba',
-    'Costela no Bafo Umbará',
-    'Churrasco de Domingo Curitiba',
-    'Assados Umbará',
+    'Atendimento WhatsApp',
+    'Gestão de Pedidos',
+    'Atendimento com IA',
+    'RAG',
+    'Ambiente de demonstração',
   ],
-  authors: [{ name: 'Casa de Assados Brasa & Sabor' }],
+  authors: [{ name: 'CRM Sofia Manager' }],
   icons: {
     icon: [
       { url: '/favicon.ico', sizes: 'any' },
@@ -34,11 +34,11 @@ export const metadata: Metadata = {
     apple: '/apple-touch-icon.png',
   },
   openGraph: {
-    title: 'Casa de Assados Brasa & Sabor | O Verdadeiro Sabor do Domingo',
+    title: 'CRM Sofia Manager | Atendimento, Pedidos e IA',
     description:
-      'Frango recheado, costela no bafo por 6h e combos completos para a sua família no Umbará, Curitiba.',
+      'Plataforma omnichannel de atendimento inteligente, gestão de pedidos e RAG. Ambiente de demonstração com dados de teste.',
     url: 'https://crmsofiamanager.duckdns.org',
-    siteName: 'Casa de Assados Brasa & Sabor',
+    siteName: 'CRM Sofia Manager',
     locale: 'pt_BR',
     type: 'website',
     images: [
@@ -46,7 +46,7 @@ export const metadata: Metadata = {
         url: '/logo-brasa-sabor.png',
         width: 1024,
         height: 1024,
-        alt: 'Casa de Assados Brasa & Sabor - Combos de Churrasco',
+        alt: 'CRM Sofia Manager — ambiente de demonstração com dados de teste',
       },
     ],
   },

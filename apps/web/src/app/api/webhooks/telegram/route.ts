@@ -43,9 +43,9 @@ async function enviarMensagemDireta(chatId: string, texto: string): Promise<bool
   }
 }
 
-const MENSAGEM_BOAS_VINDAS = `🍖 *Olá! Seja bem-vindo(a) à Asados!*
+const MENSAGEM_BOAS_VINDAS = `🍖 *Olá! Seja bem-vindo(a) ao CRM Sofia Manager!*
 
-Sou a Sofía, assistente virtual da melhor churrascaria de Curitiba. 😊
+Sou a Sofía, atendente virtual deste CRM. 😊 Este é um ambiente de demonstração com dados de teste — nenhum negócio real está configurado.
 
 Para continuar o atendimento e personalizar sua experiência, preciso que você compartilhe seu número de telefone. É rapidinho!
 

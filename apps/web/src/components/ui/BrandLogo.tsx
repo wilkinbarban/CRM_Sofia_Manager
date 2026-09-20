@@ -29,7 +29,7 @@ export function BrandLogo({
       <div className="relative flex items-center justify-center shrink-0 drop-shadow-md">
         <Image
           src="/logo-brasa-sabor.png"
-          alt="Casa de Assados Brasa & Sabor"
+          alt="CRM Sofia Manager"
           width={currentSize.img}
           height={currentSize.img}
           priority
@@ -39,12 +39,12 @@ export function BrandLogo({
       <div className="flex flex-col">
         <div className="flex items-center gap-1.5 leading-tight">
           <span className={`font-bold tracking-tight text-zinc-100 ${currentSize.title}`}>
-            Casa de Assados <span className="text-amber-400 font-extrabold">Brasa &amp; Sabor</span>
+            CRM Sofia <span className="text-amber-400 font-extrabold">Manager</span>
           </span>
         </div>
         {showSubtitle && (
           <span className={`text-zinc-400 font-medium tracking-wide ${currentSize.sub}`}>
-            Tradição no Umbará • Curitiba
+            Ambiente de demonstração • dados de teste
           </span>
         )}
       </div>

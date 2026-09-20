@@ -14,7 +14,7 @@ const snapshot = {
   line_items: [{ id: 'line-1', name: 'Pão de alho', quantity: 1, unit_price_centavos: 1200, line_total_centavos: 1200 }],
   charged_amount_centavos: 1200,
   payment: { status: 'aprovado', method: 'pix' },
-  establishment: { name: 'Asados São José' },
+  establishment: { name: 'Empório São José' },
   issuance: { issued_at: '2026-08-20T12:00:00.000Z', snapshot_version: 1 },
 }
 

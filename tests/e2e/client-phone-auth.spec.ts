@@ -18,7 +18,7 @@ test.describe('E2E: Client Phone-First Authentication Flow', () => {
     await page.goto('/cadastro')
 
     // 1. Verify header & elements
-    await expect(page.getByText('Casa de Assados Brasa & Sabor')).toBeVisible()
+    await expect(page.getByText('CRM Sofia Manager')).toBeVisible()
     await expect(page.getByText(/Crie sua conta em poucos segundos com seu celular de Curitiba/i)).toBeVisible()
 
     // 2. Verify inputs: Nome, Celular, Senha (no Email field)

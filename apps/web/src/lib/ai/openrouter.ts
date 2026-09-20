@@ -231,7 +231,7 @@ export async function processarRagPipeline(
     console.error('[RAG Pipeline] Falha ao processar histórico de mensagens:', err)
   }
 
-  // 4. Buscar horários de atendimento da churrascaria em tempo real
+  // 4. Buscar horários de atendimento em tempo real
   let contextoHorarios = ''
   try {
     const { data: horarios } = await supabase
@@ -242,7 +242,7 @@ export async function processarRagPipeline(
 
     if (horarios && horarios.length > 0) {
       const nomesDias = ['Domingo', 'Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado']
-      contextoHorarios = 'HORÁRIOS DE ATENDIMENTO DA CHURRASCARIA:\n' + horarios
+      contextoHorarios = 'HORÁRIOS DE ATENDIMENTO:\n' + horarios
         .map((h: any) => `- ${nomesDias[h.dia_semana]}: das ${h.hora_abertura.slice(0, 5)} às ${h.hora_fechamento.slice(0, 5)}`)
         .join('\n')
     }
@@ -424,7 +424,7 @@ ${regraIdiomaRodape}`
       }
 
       if (!isDeepSeek) {
-        headers['HTTP-Referer'] = 'https://github.com/wilkin/proyectos/Asados'
+        headers['HTTP-Referer'] = 'https://github.com/wilkinbarban/CRM_Sofia_Manager'
         headers['X-Title'] = 'CRM Sofia Manager'
       }
 

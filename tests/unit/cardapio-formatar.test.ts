@@ -47,7 +47,7 @@ describe('Cardápio Formatter: Formatação Visual e Consultiva para WhatsApp e 
   it('formats full structured menu with categories, prices in BRL, and consultative footer', () => {
     const cardapio = formatarCardapioResumido(produtosExemplo)
 
-    expect(cardapio).toContain('CASA DE ASSADOS BRASA & SABOR')
+    expect(cardapio).toContain('CARDÁPIO — O que vai querer hoje?')
     expect(cardapio).toContain('Costela Premium 1kg')
     expect(cardapio).toContain('R$ 89,90')
     expect(cardapio).toContain('Picanha Especial na Brasa 800g')

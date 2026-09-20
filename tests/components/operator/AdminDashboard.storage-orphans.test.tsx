@@ -73,7 +73,7 @@ vi.mock('@/components/operator/integrations/MercadoPagoCard', () => ({
 }))
 
 const dashboardProps = {
-  usuarioLogado: { id: 'admin-1', nome: 'Admin Asados', funcao: 'admin', ativo: true },
+  usuarioLogado: { id: 'admin-1', nome: 'Admin CRM', funcao: 'admin', ativo: true },
   usuariosIniciais: [],
   estatisticasIniciais: {
     totalIa: 0,

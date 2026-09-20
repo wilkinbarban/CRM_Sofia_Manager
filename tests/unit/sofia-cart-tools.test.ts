@@ -48,7 +48,7 @@ describe('Sofia AI Cart Tools (TDD)', () => {
             quantidade: 1,
             preco_unitario_centavos: 6990,
             preco_total_centavos: 6990,
-            produtos: { nome: 'Combo 1 - O Clássico Brasa & Sabor' },
+            produtos: { nome: 'Combo 1 - O Clássico' },
           },
         ],
       },
@@ -61,7 +61,7 @@ describe('Sofia AI Cart Tools (TDD)', () => {
     )
 
     expect(resultado.success).toBe(true)
-    expect(resultado.mensagem).toContain('Combo 1 - O Clássico Brasa & Sabor')
+    expect(resultado.mensagem).toContain('Combo 1 - O Clássico')
     expect(resultado.mensagem).toContain('69,90')
     expect(carrinhoService.adicionarItemAoCarrinho).toHaveBeenCalledWith(
       expect.objectContaining({

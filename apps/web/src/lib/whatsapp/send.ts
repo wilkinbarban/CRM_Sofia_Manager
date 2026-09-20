@@ -228,7 +228,7 @@ export async function sendOtpMeta(
       type: 'text',
       text: {
         preview_url: false,
-        body: `🔐 Código de Verificação — Asados\n\nSeu código é: ${code}\n\n⏳ Válido por 10 minutos.`
+        body: `🔐 Código de Verificação — CRM Sofia Manager\n\nSeu código é: ${code}\n\n⏳ Válido por 10 minutos.`
       }
     }
 

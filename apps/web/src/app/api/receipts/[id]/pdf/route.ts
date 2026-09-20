@@ -104,7 +104,7 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
             status: pedido.status_pagamento,
             method: pedido.meio_pagamento || 'pix',
           },
-          establishment: { name: 'Casa de Assados Brasa & Sabor' },
+          establishment: { name: 'Ambiente de demonstração' },
           issuance: {
             issued_at: pedido.data_criacao || new Date().toISOString(),
             snapshot_version: 1,

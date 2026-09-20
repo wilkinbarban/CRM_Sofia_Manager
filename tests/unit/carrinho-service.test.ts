@@ -103,7 +103,7 @@ describe('CarrinhoService (TDD)', () => {
           quantidade: 1,
           preco_unitario_centavos: 6990,
           preco_total_centavos: 6990,
-          produtos: { nome: 'Combo 1 - O Clássico Brasa & Sabor', url_imagem: '/img1.png' },
+          produtos: { nome: 'Combo 1 - O Clássico', url_imagem: '/img1.png' },
         },
       ],
     }

@@ -23,7 +23,7 @@ describe('Cardápio RAG Integration: Entrega Consultiva no OpenRouter Pipeline',
     vi.spyOn(adminSupabaseModule, 'createAdminClient').mockReturnValue(mockSupabase as any)
     vi.spyOn(configModule, 'obterConfiguracaoSistema').mockImplementation(async (key: string) => {
       if (key === 'OPENROUTER_API_KEY') return 'placeholder'
-      if (key === 'SOFIA_SYSTEM_PROMPT') return 'Você é a Sofia da churrascaria.'
+      if (key === 'SOFIA_SYSTEM_PROMPT') return 'Você é a Sofia, atendente deste CRM.'
       return null
     })
   })

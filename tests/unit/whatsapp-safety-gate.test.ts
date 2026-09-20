@@ -212,7 +212,7 @@ describe('WhatsApp Safety Gate: Governança, Limites e Bloqueio Proativo', () =>
     const result = await validarEnvioWhatsAppSafety({
       supabase: mockSupabase,
       clienteId: 'cliente-humano',
-      texto: 'Olá, sou o atendente Carlos da Asados, em que posso ajudar?',
+      texto: 'Olá, sou o atendente Carlos, em que posso ajudar?',
       categoria: 'SERVICE',
       origem: 'operador',
     })

@@ -1,6 +1,6 @@
 /**
  * Sofia Business Router — Heurística de Classificação de Negócio em 3 Níveis
- * Casa de Assados Sofia
+ * CRM Sofia Manager
  */
 
 export type SofiaTier = 'economy' | 'smart' | 'frontier'

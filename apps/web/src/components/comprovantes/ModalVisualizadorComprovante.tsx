@@ -842,7 +842,7 @@ export default function ModalVisualizadorComprovante({
         <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-zinc-800/80 shrink-0">
           <div className="flex items-center gap-2">
             <span className="text-[11px] text-zinc-400">
-              Casa de Assados Brasa & Sabor • Visualizador de comprovante
+              CRM Sofia Manager • Visualizador de comprovante
             </span>
           </div>
 

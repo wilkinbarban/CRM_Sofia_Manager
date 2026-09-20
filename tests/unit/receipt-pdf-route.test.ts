@@ -25,7 +25,7 @@ import { GET } from '@/app/api/receipts/[id]/pdf/route'
 const snapshot = {
   order: { id: 'receipt-order' }, customer: { name: 'Ada' }, line_items: [],
   charged_amount_centavos: 1234, payment: { status: 'aprovado', method: 'pix' },
-  establishment: { name: 'Asados' }, issuance: { issued_at: '2026-08-20T00:00:00.000Z', snapshot_version: 1 },
+  establishment: { name: 'Loja de Teste' }, issuance: { issued_at: '2026-08-20T00:00:00.000Z', snapshot_version: 1 },
 }
 
 beforeEach(() => {

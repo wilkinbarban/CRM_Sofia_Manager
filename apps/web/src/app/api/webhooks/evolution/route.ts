@@ -544,7 +544,7 @@ export async function POST(request: Request) {
           await supabaseAdmin.from('mensagens').insert({
             conversa_id: conversaId,
             remetente: 'ia',
-            conteudo: '🔥 *Cardápio Oficial de Domingo*\n\nGostaria de ver os nossos combos oficiais com fotos e valores?\nResponda *1* para eu te enviar as fotos! 📸\n\n_Casa de Assados Brasa & Sabor · Umbará_',
+            conteudo: '🔥 *Cardápio Oficial de Domingo*\n\nGostaria de ver os nossos combos oficiais com fotos e valores?\nResponda *1* para eu te enviar as fotos! 📸\n\n_Ambiente de demonstração — dados de teste_',
           })
         } catch {
           console.error('[Evolution Webhook] CATALOG_PROMPT_PERSIST_FAILED')

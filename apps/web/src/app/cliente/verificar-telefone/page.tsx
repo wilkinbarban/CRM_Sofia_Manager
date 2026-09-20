@@ -229,7 +229,7 @@ export default function VerificarTelefonePage() {
         <div className="flex flex-col items-center mb-8 text-center">
           <BrandLogo size="xl" showSubtitle={false} className="flex-col !gap-3" />
           <p className="text-xs text-amber-500 font-bold tracking-widest uppercase mt-1">
-            Tradição em Assados de Domingo • Umbará
+            Ambiente de demonstração com dados de teste
           </p>
           <p className="text-sm text-zinc-400 mt-2 text-center">
             Validação de segurança de celular para clientes de Curitiba
@@ -391,7 +391,7 @@ export default function VerificarTelefonePage() {
             </div>
             <h2 className="text-2xl font-bold text-white mb-2">{canalEnvio === 'telegram' ? 'Telegram' : 'WhatsApp'} Verificado!</h2>
             <p className="text-zinc-300 max-w-[280px]">
-              Seu telefone foi vinculado com sucesso à sua conta da Casa de Assados Brasa & Sabor.
+              Seu telefone foi vinculado com sucesso à sua conta. Este é um ambiente de demonstração com dados de teste.
             </p>
             <p className="text-xs text-zinc-500 mt-6">
               Carregando suas configurações de cliente...

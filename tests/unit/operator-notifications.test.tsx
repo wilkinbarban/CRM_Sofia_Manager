@@ -28,7 +28,7 @@ describe('Atendimento Notifications & Queue Indicators', () => {
       id: `cli-${id}`,
       nome,
       telefone: '5541999998888',
-      endereco: 'Rua Umbará, 123',
+      endereco: 'Rua das Flores, 123',
     },
     mensagens,
   })

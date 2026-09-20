@@ -1,5 +1,5 @@
 /**
- * OmniRoute Gateway Client — Casa de Assados Sofia
+ * OmniRoute Gateway Client — CRM Sofia Manager
  * Comunicação com gateway local OpenAI-compatible em 127.0.0.1:20128
  */
 

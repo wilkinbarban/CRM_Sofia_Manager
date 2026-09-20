@@ -396,7 +396,7 @@ export async function testarGoogleCalendar(
         const response = await calendar.events.insert({
           calendarId: calendarId,
           requestBody: {
-            summary: `[TESTE] Conexão Asados - ${timestamp}`,
+            summary: `[TESTE] Conexão CRM Sofia Manager - ${timestamp}`,
             description: 'Evento de teste para validar a integração com o Google Calendar.',
             start: {
               dateTime: start.toISOString(),
@@ -873,8 +873,8 @@ export async function testarConexaoLLM(apiKey: string, model: string) {
     }
 
     if (!isDeepSeek) {
-      headers['HTTP-Referer'] = 'https://github.com/wilkin/proyectos/Asados'
-      headers['X-Title'] = 'CRM Casa de Assados Brasa & Sabor Test'
+      headers['HTTP-Referer'] = 'https://github.com/wilkinbarban/CRM_Sofia_Manager'
+      headers['X-Title'] = 'CRM Sofia Manager Test'
     }
 
     const response = await fetch(apiUrl, {
@@ -953,7 +953,7 @@ export async function testarConexaoOmniRoute(baseUrl: string, apiKey: string, mo
       body: JSON.stringify({
         model: targetModel,
         messages: [
-          { role: 'system', content: 'Você é a Sofía da Casa de Assados.' },
+          { role: 'system', content: 'Você é a Sofia, atendente deste CRM.' },
           { role: 'user', content: 'responda apenas com a palavra OK' }
         ],
         max_tokens: 150,

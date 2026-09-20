@@ -22,7 +22,7 @@ describe('OrdersManagementDashboard - Advanced Filtering & Search', () => {
       id: 'ped-101',
       status: 'novo',
       tipo_entrega: 'entrega',
-      endereco_entrega: 'Rua Nicola Pellanda, 1500 - Umbará',
+      endereco_entrega: 'Rua Nicola Pellanda, 1500 - Curitiba',
       taxa_entrega_centavos: 1000,
       total_produtos_centavos: 6990,
       total_pedido_centavos: 7990,
@@ -33,7 +33,7 @@ describe('OrdersManagementDashboard - Advanced Filtering & Search', () => {
       cliente_id: 'cli-1',
       clientes: { id: 'cli-1', nome: 'Wilkin Silva', telefone: '5541998887777', email: 'wilkin@test.com' },
       itens: [
-        { id: 'it-1', quantidade: 1, preco_unitario_centavos: 6990, preco_total_centavos: 6990, produtos: { id: 'p1', nome: 'Combo 1 - O Clássico Brasa & Sabor' } }
+        { id: 'it-1', quantidade: 1, preco_unitario_centavos: 6990, preco_total_centavos: 6990, produtos: { id: 'p1', nome: 'Combo 1 - O Clássico' } }
       ]
     },
     {

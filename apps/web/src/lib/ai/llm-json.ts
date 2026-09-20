@@ -41,7 +41,7 @@ async function chamarLegadoJson(params: ModeloEconomicoJsonParams): Promise<stri
   }
 
   if (!isDeepSeek) {
-    headers['HTTP-Referer'] = 'https://github.com/wilkin/proyectos/Asados'
+    headers['HTTP-Referer'] = 'https://github.com/wilkinbarban/CRM_Sofia_Manager'
     headers['X-Title'] = 'CRM Sofia Manager'
   }
 

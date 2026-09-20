@@ -40,7 +40,7 @@ export default async function ProdutosLayout({
           <div className="flex h-8 w-8 items-center justify-center rounded bg-amber-500 font-bold text-zinc-950 shadow-md shadow-amber-500/10 select-none">
             A
           </div>
-          <span className="font-semibold text-zinc-100 tracking-tight font-sans">Console de Atendimento Asados</span>
+          <span className="font-semibold text-zinc-100 tracking-tight font-sans">Console de Atendimento CRM Sofia Manager</span>
         </div>
 
         {/* Ações / Perfil no Cabeçalho */}

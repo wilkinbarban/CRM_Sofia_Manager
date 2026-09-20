@@ -13,7 +13,7 @@ describe('Sofia Business Router — Classificação em 3 Níveis', () => {
 
     it('classifica perguntas sobre localização e endereço como economy', () => {
       const res = classifySofiaRequestTier({
-        mensagemCliente: 'Onde fica a loja de vocês no Umbará?',
+        mensagemCliente: 'Onde fica a loja de vocês?',
       })
       expect(res.tier).toBe('economy')
       expect(res.modelAlias).toBe('business-economy')

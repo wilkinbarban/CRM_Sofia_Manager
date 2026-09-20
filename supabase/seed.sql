@@ -235,6 +235,6 @@ INSERT INTO public.mensagens (
     'f7f7f7f7-f7f7-f7f7-f7f7-f7f7f7f7f7f7',
     'e5e5e5e5-e5e5-e5e5-e5e5-e5e5e5e5e5e5',
     'ia',
-    'Olá, João! Eu sou a Sofía, assistente virtual da Asados. Nossos kits variam de R$ 150 a R$ 450. Qual tamanho de evento você planeja?',
+    'Olá, João! Eu sou a Sofía, atendente deste CRM em ambiente de demonstração com dados de teste. Nossos kits variam de R$ 150 a R$ 450. Qual tamanho de evento você planeja?',
     NULL
 );

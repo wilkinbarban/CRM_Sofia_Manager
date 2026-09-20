@@ -25,7 +25,7 @@ export default function VerificarEmailClient({ sucesso, next }: VerificarEmailCl
         <div className="flex flex-col items-center mb-8 text-center">
           <BrandLogo size="xl" showSubtitle={false} className="flex-col !gap-3" />
           <p className="text-xs text-amber-500 font-bold tracking-widest uppercase mt-1">
-            Tradição em Assados de Domingo • Umbará
+            Ambiente de demonstração com dados de teste
           </p>
         </div>
 
@@ -42,7 +42,7 @@ export default function VerificarEmailClient({ sucesso, next }: VerificarEmailCl
               <div className="space-y-2">
                 <h2 className="text-2xl font-bold text-zinc-100">E-mail Confirmado!</h2>
                 <p className="text-zinc-400 text-sm">
-                  Seu endereço de e-mail foi verificado com sucesso. Agora você tem acesso a todos os serviços da churrascaria.
+                  Seu endereço de e-mail foi verificado com sucesso. Agora você tem acesso a todos os recursos do sistema.
                 </p>
               </div>
 

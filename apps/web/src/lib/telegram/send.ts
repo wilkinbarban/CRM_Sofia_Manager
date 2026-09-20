@@ -310,7 +310,7 @@ export async function enviarOtpTelegram(
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         chat_id: telegramChatId,
-        text: `🔐 *Código de Verificação — Asados*\n\nSeu código OTP é: *${codigo}*\n\n⏳ Ele expira em *10 minutos*.\n\nSe você não solicitou este código, ignore esta mensagem.`,
+        text: `🔐 *Código de Verificação — CRM Sofia Manager*\n\nSeu código OTP é: *${codigo}*\n\n⏳ Ele expira em *10 minutos*.\n\nSe você não solicitou este código, ignore esta mensagem.`,
         parse_mode: 'Markdown'
       })
     })

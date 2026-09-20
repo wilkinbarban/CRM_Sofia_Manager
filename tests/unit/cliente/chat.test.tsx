@@ -517,7 +517,7 @@ describe('ChatContainer Core UI Tests (Phase 2)', () => {
         id: 'msg-inserted-456',
         conversa_id: 'conversa-123',
         remetente: 'cliente' as const,
-        conteudo: '🛒 *Pedido Montado no Cardápio:*\n• 1x Costela Premium (R$ 89,90)\n\n💰 *Total:* R$ 89,90\n🕒 *Horário de Retirada:* 12:00\n📍 *Local:* Balcão Umbará (Casa de Assados Brasa & Sabor)\n\nOlá! Gostaria de confirmar esse pedido, por favor!',
+        conteudo: '🛒 *Pedido Montado no Cardápio:*\n• 1x Costela Premium (R$ 89,90)\n\n💰 *Total:* R$ 89,90\n🕒 *Horário de Retirada:* 12:00\n📍 *Local:* Balcão de Retirada (ambiente de demonstração com dados de teste)\n\nOlá! Gostaria de confirmar esse pedido, por favor!',
         url_anexo: null,
         data_criacao: new Date().toISOString(),
       }

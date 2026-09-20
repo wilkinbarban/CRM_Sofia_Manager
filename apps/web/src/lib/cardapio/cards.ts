@@ -19,7 +19,7 @@ export const COMBOS_OFICIAIS: CartaoCombo[] = [
   {
     id: 'a1111111-1111-4111-8111-111111111111',
     numeroCombo: 1,
-    nome: 'Combo 1 – O Clássico Brasa & Sabor',
+    nome: 'Combo 1 – O Clássico',
     slogan: 'O verdadeiro sabor do domingo na mesa da sua família!',
     rendimento: 'Serve 3 a 4 pessoas',
     precoCentavos: 6990,
@@ -35,7 +35,7 @@ export const COMBOS_OFICIAIS: CartaoCombo[] = [
     destaqueBadge: '⭐ MAIS PEDIDO DO DOMINGO',
     urlImagemPrincipal: '/cardapio/combo_1_classico_sofia_1.png',
     urlImagemSecundaria: '/cardapio/combo_1_classico_sofia_2.png',
-    textoMarkdownCartao: `🍗 *COMBO 1 — O CLÁSSICO BRASA & SABOR* ⭐
+    textoMarkdownCartao: `🍗 *COMBO 1 — O CLÁSSICO* ⭐
 _O verdadeiro sabor do domingo na mesa da sua família!_
 
 📦 *COMPOSIÇÃO DO COMBO:*
@@ -70,7 +70,7 @@ _O verdadeiro sabor do domingo na mesa da sua família!_
     urlImagemPrincipal: '/cardapio/combo_2_costela_suprema_1.png',
     urlImagemSecundaria: '/cardapio/combo_2_costela_suprema_2.png',
     textoMarkdownCartao: `🥩 *COMBO 2 — COSTELA SUPREMA NO BAFO* 🔥
-_A verdadeira especialidade do churrasco curitibano!_
+_A verdadeira especialidade do preparo lento no bafo!_
 
 📦 *COMPOSIÇÃO DO COMBO:*
 • *1,0kg de Costela Bovina Premium com Osso* (Derrete na boca!)
@@ -88,7 +88,7 @@ _A verdadeira especialidade do churrasco curitibano!_
   {
     id: 'a3333333-3333-4333-8333-333333333333',
     numeroCombo: 3,
-    nome: 'Combo 3 – Dueto Brasa & Sabor (Frango & Costelinha Suína)',
+    nome: 'Combo 3 – Dueto (Frango & Costelinha Suína)',
     slogan: 'O melhor de dois mundos para quem ama variedade!',
     rendimento: 'Serve 3 a 4 pessoas',
     precoCentavos: 9490,
@@ -104,7 +104,7 @@ _A verdadeira especialidade do churrasco curitibano!_
     destaqueBadge: '✨ DUETO PERFEITO',
     urlImagemPrincipal: '/cardapio/combo_3_dueto_sofia_1.png',
     urlImagemSecundaria: '/cardapio/combo_3_dueto_sofia_2.png',
-    textoMarkdownCartao: `🍗🥩 *COMBO 3 — DUETO BRASA & SABOR* ✨
+    textoMarkdownCartao: `🍗🥩 *COMBO 3 — DUETO* ✨
 _A combinação perfeita de Frango Assado & Costelinha Suína!_
 
 📦 *COMPOSIÇÃO DO COMBO:*
@@ -154,7 +154,7 @@ _O grande banquete completo para reunir quem você mais ama!_
 
 👥 *Rendimento:* Serve com muita fartura de 5 a 6 pessoas!
 💰 *Valor:* \`R$ 169,90\` (Melhor custo-benefício por pessoa!)
-🔥 *Preparo:* O verdadeiro festival de carnes na brasa de Curitiba!
+🔥 *Preparo:* O verdadeiro festival de carnes na brasa!
 ⏱️ *Retirada:* Agendamento em janelas de 15 min (sem filas!)
 
 💬 *Vai reunir a família hoje, piá?* Esse Kit Churrasco é a escolha perfeita! Quer que eu reserve o seu? 🍖🔥`,
@@ -193,9 +193,9 @@ export function obterCartaoCombo(identificador: number | string): CartaoCombo | 
 /* eslint-disable-next-line @typescript-eslint/no-unused-vars */
 export function gerarCatalogoTextoCompleto(appUrl = 'https://crmsofiamanager.duckdns.org'): string {
   const cabecalho = [
-    '🍖 *CASA DE ASSADOS BRASA & SABOR — CARDÁPIO DE COMBOS FAMILIARES* 🔥',
-    '_O verdadeiro sabor do domingo na mesa da sua família!_',
-    '📍 *Bairro Umbará, Curitiba - PR* | Retirada sem fila & Delivery',
+    '🍖 *CARDÁPIO DE COMBOS — AMBIENTE DE DEMONSTRAÇÃO* 🔥',
+    '_Dados de teste: nenhum item abaixo representa um negócio real._',
+    '📍 *Ambiente de demonstração com dados de teste* | Retirada e Delivery',
     '',
   ].join('\n')
 

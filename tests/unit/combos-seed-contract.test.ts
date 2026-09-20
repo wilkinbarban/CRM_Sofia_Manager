@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { COMBOS_OFICIAIS, obterCartaoCombo, obterCartoesCombosOficiais } from '@/lib/cardapio/cards'
 
-describe('Catálogo Oficial dos 4 Combos da Casa de Assados Sofia', () => {
+describe('Catálogo Oficial dos 4 Combos do Ambiente de Demonstração', () => {
   it('contém exatamente os 4 combos oficiais documentados no plano de negócios', () => {
     const combos = obterCartoesCombosOficiais()
     expect(combos).toHaveLength(4)
@@ -13,7 +13,7 @@ describe('Catálogo Oficial dos 4 Combos da Casa de Assados Sofia', () => {
   it('Combo 1 tem preço de R$ 69,90 e atende de 3 a 4 pessoas', () => {
     const combo1 = obterCartaoCombo(1)
     expect(combo1).toBeDefined()
-    expect(combo1?.nome).toContain('Combo 1 – O Clássico Brasa & Sabor')
+    expect(combo1?.nome).toContain('Combo 1 – O Clássico')
     expect(combo1?.precoCentavos).toBe(6990)
     expect(combo1?.precoFormatado).toBe('R$ 69,90')
     expect(combo1?.rendimento).toContain('3 a 4 pessoas')
@@ -36,7 +36,7 @@ describe('Catálogo Oficial dos 4 Combos da Casa de Assados Sofia', () => {
   it('Combo 3 tem preço de R$ 94,90 e serve 3 a 4 pessoas', () => {
     const combo3 = obterCartaoCombo(3)
     expect(combo3).toBeDefined()
-    expect(combo3?.nome).toContain('Combo 3 – Dueto Brasa & Sabor')
+    expect(combo3?.nome).toContain('Combo 3 – Dueto')
     expect(combo3?.precoCentavos).toBe(9490)
     expect(combo3?.precoFormatado).toBe('R$ 94,90')
     expect(combo3?.itensComposicao.some((i) => i.includes('Frango'))).toBe(true)

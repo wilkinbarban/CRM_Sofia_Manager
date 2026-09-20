@@ -1445,7 +1445,7 @@ export default function AdminDashboard({
             </span>
             <div>
               <div className="text-xs font-bold text-zinc-200">Painel de Controle • CRM Sofia Manager</div>
-              <div className="text-[11px] text-zinc-400">Gestão centralizada de estoque, pré-vendas, IA e equipe no Umbará</div>
+              <div className="text-[11px] text-zinc-400">Gestão centralizada de estoque, pré-vendas, IA e equipe — ambiente de demonstração</div>
             </div>
           </div>
 
@@ -2213,7 +2213,7 @@ export default function AdminDashboard({
             <div className="rounded-xl border border-amber-500/10 bg-amber-500/5 p-4 text-xs text-amber-500/80 leading-relaxed shrink-0 flex gap-2">
               <AlertTriangle className="h-4 w-4 shrink-0 text-amber-500 mt-0.5" />
               <div>
-                Este prompt é carregado pelo pipeline de IA do OpenRouter para estruturar as respostas. Ele foi desenhado para assegurar o tom curitibano de atendimento, evitar alucinações técnicas fora da base de conhecimento e garantir o encaminhamento suave ao transbordo humano sempre que necessário.
+                Este prompt é carregado pelo pipeline de IA do OpenRouter para estruturar as respostas. Ele foi desenhado para assegurar um tom cordial e consistente no atendimento, evitar alucinações técnicas fora da base de conhecimento e garantir o encaminhamento suave ao transbordo humano sempre que necessário.
               </div>
             </div>
           </div>

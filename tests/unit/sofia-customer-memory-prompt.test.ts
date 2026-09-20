@@ -30,7 +30,7 @@ const linha = (tipo: string, chave: string, valor: string) => `- ${tipo}/${chave
 const VAO_PRE_CHANGE = '\n\n\n\n\n'
 
 const CONHECIMENTO_FALLBACK = 'Nenhuma informação específica adicional da base de conhecimento foi encontrada.'
-const ARTIGO_FALSO = { titulo: 'Endereço da loja', conteudo: 'Ficamos no bairro Umbará, em Curitiba.' }
+const ARTIGO_FALSO = { titulo: 'Endereço da loja', conteudo: 'Atendemos em ambiente de demonstração com dados de teste.' }
 const TEXTO_ARTIGO_FALSO = `Título: ${ARTIGO_FALSO.titulo}\nConteúdo: ${ARTIGO_FALSO.conteudo}`
 const SEGMENTO_PEDIDOS = 'PEDIDOS ATIVOS DO CLIENTE EM PROCESSAMENTO:\n• Pedido #12345678 | Status: NOVO | Pagamento: PENDENTE | Total: R$ 129,90 | Itens: 2x Costela'
 

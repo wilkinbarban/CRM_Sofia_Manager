@@ -528,7 +528,7 @@ export async function actionCriarPedidoCliente(data: {
       .map((it) => `• ${it.quantidade}x ${it.nome} (${formatarMoeda(it.preco_unitario_centavos * it.quantidade)})`)
       .join('\n')
 
-    const mensagemTexto = `🛒 *Pedido #${pedido.id.substring(0, 8).toUpperCase()} Registrado!*\n\n${itensTexto}\n\n💰 *Total:* ${formatarMoeda(totalProdutosCentavos)}\n🕒 *Horário de Retirada:* ${horarioEfetivo}\n📍 *Local:* Balcão Umbará (Casa de Assados Brasa & Sabor)\n\nOlá! Acabei de enviar esse pedido para o atendimento!`
+    const mensagemTexto = `🛒 *Pedido #${pedido.id.substring(0, 8).toUpperCase()} Registrado!*\n\n${itensTexto}\n\n💰 *Total:* ${formatarMoeda(totalProdutosCentavos)}\n🕒 *Horário de Retirada:* ${horarioEfetivo}\n📍 *Local:* Balcão de Retirada (ambiente de demonstração com dados de teste)\n\nOlá! Acabei de enviar esse pedido para o atendimento!`
 
     let novaMensagem = null
     if (data.conversaId) {
@@ -1396,7 +1396,7 @@ export async function gerarCobrancaPixPedido(pedidoId: string) {
 
     if (isPlaceholder) {
       const mockPaymentId = `mock_pix_${pedidoId.slice(0, 8)}`
-      const mockCopiaCola = `00020126580014br.gov.bcb.pix0136${pedidoId}520400005303986540${valorReais.toFixed(2)}5802BR5928CASA DE ASSADOS BRASA E SABOR6008CURITIBA62070503***6304MOCK`
+      const mockCopiaCola = `00020126580014br.gov.bcb.pix0136${pedidoId}520400005303986540${valorReais.toFixed(2)}5802BR5924AMBIENTE DE DEMONSTRACAO6008CURITIBA62070503***6304MOCK`
       const mockQrCodeDataUrl = await QRCode.toDataURL(mockCopiaCola, { width: 320, margin: 1 })
       const mockQrCodeBase64 = mockQrCodeDataUrl.replace(/^data:image\/png;base64,/, '')
 
@@ -1476,7 +1476,7 @@ export async function gerarCobrancaPixPedido(pedidoId: string) {
       if (isLiveCredsError) {
         console.warn('[gerarCobrancaPixPedido] Usando modo de simulação PIX Sandbox devido a credenciais de teste não homologadas no BACEN.')
         const mockPaymentId = `mock_pix_${pedidoId.slice(0, 8)}`
-        const mockCopiaCola = `00020126580014br.gov.bcb.pix0136${pedidoId}520400005303986540${valorReais.toFixed(2)}5802BR5928CASA DE ASSADOS BRASA E SABOR6008CURITIBA62070503***6304MOCK`
+        const mockCopiaCola = `00020126580014br.gov.bcb.pix0136${pedidoId}520400005303986540${valorReais.toFixed(2)}5802BR5924AMBIENTE DE DEMONSTRACAO6008CURITIBA62070503***6304MOCK`
         const mockQrCodeDataUrl = await QRCode.toDataURL(mockCopiaCola, { width: 320, margin: 1 })
         const mockQrCodeBase64 = mockQrCodeDataUrl.replace(/^data:image\/png;base64,/, '')
 
@@ -1598,7 +1598,7 @@ export async function despacharCobrancaPixMulticanal(
       currency: 'BRL',
     })
 
-    const textoMensagem = `Olá, *${nomeCliente}*! 🥩\n\nSeu pedido *#${pedidoShort}* na Casa de Assados Brasa & Sabor está pronto para pagamento!\n\n💰 *Valor Total:* ${valorFormatado}\n\n🔑 *Chave PIX (Copia e Cola):*\n\`\`\`\n${dadosPix.qrCodeCopiaCola}\n\`\`\`\n\n📲 *Como pagar:* Copie o código acima e cole no app do seu banco na opção "PIX Copia e Cola", ou acesse o seu Painel de Pedidos para escanear o QR Code.\n\nApós o pagamento, você pode anexar seu comprovante aqui mesmo na conversa!`
+    const textoMensagem = `Olá, *${nomeCliente}*! 🥩\n\nSeu pedido *#${pedidoShort}* está pronto para pagamento! Este é um ambiente de demonstração com dados de teste.\n\n💰 *Valor Total:* ${valorFormatado}\n\n🔑 *Chave PIX (Copia e Cola):*\n\`\`\`\n${dadosPix.qrCodeCopiaCola}\n\`\`\`\n\n📲 *Como pagar:* Copie o código acima e cole no app do seu banco na opção "PIX Copia e Cola", ou acesse o seu Painel de Pedidos para escanear o QR Code.\n\nApós o pagamento, você pode anexar seu comprovante aqui mesmo na conversa!`
 
     const canaisNotificados: string[] = []
     let conversaId = pedido.conversa_id
