@@ -42,7 +42,7 @@ async function chamarLegadoJson(params: ModeloEconomicoJsonParams): Promise<stri
 
   if (!isDeepSeek) {
     headers['HTTP-Referer'] = 'https://github.com/wilkin/proyectos/Asados'
-    headers['X-Title'] = 'CRM Casa de Assados Brasa & Sabor'
+    headers['X-Title'] = 'CRM Sofia Manager'
   }
 
   const response = await fetch(apiUrl, {

@@ -11,6 +11,7 @@ import { classifySofiaRequestTier } from '@/lib/ai/router'
 import { isOmniRouteEnabled, chamarOmniRouteGateway, isLegacyFallbackEnabled } from '@/lib/ai/omniroute'
 import { customerMemoryEnabled } from '@/lib/sofia/inbound-batch-gates'
 import { agruparFatosParaPrompt } from '@/lib/sofia/customer-memory'
+import { DEFAULT_SOFIA_SYSTEM_PROMPT } from '@/lib/sofia/default-prompt'
 
 const LEGACY_LLM_TIMEOUT_MS = 15_000
 const LEGACY_LLM_MAX_TOKENS = 1024
@@ -104,15 +105,15 @@ function obterRespostaMock(mensagemCliente: string): string {
   }
 
   if (texto.includes('preço') || texto.includes('preco') || texto.includes('valor') || texto.includes('quanto custa') || texto.includes('quanto tá') || texto.includes('quanto ta')) {
-    return `Nossos combos têm o melhor custo-benefício de Curitiba, piá! 💰\n\n• *Combo 1 (Clássico Brasa & Sabor - Frango Recheado)*: \`R$ 69,90\` (3-4 pessoas)\n• *Combo 2 (Costela Suprema no Bafo)*: \`R$ 119,90\` (4 pessoas)\n• *Combo 3 (Dueto Brasa & Sabor - Frango & Costelinha Suína)*: \`R$ 94,90\` (3-4 pessoas)\n• *Combo 4 (Kit Churrasco Família)*: \`R$ 169,90\` (5-6 pessoas)\n\n💬 *Quantas pessoas vão almoçar com você hoje? Me diz que te indico o combo perfeito!* 😊`
+    return `Estes são os combos de exemplo deste ambiente de demonstração com dados de teste, piá! 💰\n\n• *Combo 1 (Clássico - Frango Recheado)*: \`R$ 69,90\` (3-4 pessoas)\n• *Combo 2 (Costela Suprema no Bafo)*: \`R$ 119,90\` (4 pessoas)\n• *Combo 3 (Dueto - Frango & Costelinha Suína)*: \`R$ 94,90\` (3-4 pessoas)\n• *Combo 4 (Kit Churrasco Família)*: \`R$ 169,90\` (5-6 pessoas)\n\n💬 *Quantas pessoas vão almoçar com você hoje? Me diz que te indico o combo perfeito!* 😊`
   }
 
   if (texto.includes('horário') || texto.includes('horario') || texto.includes('funcionamento') || texto.includes('que horas') || texto.includes('abre') || texto.includes('fecha')) {
-    return 'Nosso atendimento para pré-venda e encomendas de assados funciona durante a semana, e as retiradas quentinhas acontecem aos sábados e domingos das 11h00 às 14h00, em janelas de 15 minutos sem fila no Umbará! ⏰ Daí, quer agendar o seu almoço? 😊'
+    return 'Este é um ambiente de demonstração com dados de teste, piá: neste exemplo, o atendimento de pré-venda e encomendas de assados funciona durante a semana, e as retiradas quentinhas acontecem aos sábados e domingos das 11h00 às 14h00, em janelas de 15 minutos! ⏰ Daí, quer agendar o seu almoço? 😊'
   }
 
   if (texto.includes('endereço') || texto.includes('endereco') || texto.includes('localização') || texto.includes('localizacao') || texto.includes('onde fica') || texto.includes('onde ficam') || texto.includes('rua') || texto.includes('bairro') || texto.includes('umbará') || texto.includes('umbara')) {
-    return 'Ficamos no bairro Umbará, em Curitiba - PR, piá! Fácil acesso com estacionamento rápido para você retirar seu assado na estufa em menos de 90 segundos! 📍 Daí, vai retirar no balcão ou prefere delivery? 🛵'
+    return 'Este é um ambiente de demonstração com dados de teste, piá: não existe endereço real configurado. Na simulação, a retirada acontece no balcão com estacionamento, e há opção de delivery. 📍 Daí, vai retirar no balcão ou prefere delivery? 🛵'
   }
 
   if (
@@ -135,7 +136,7 @@ function obterRespostaMock(mensagemCliente: string): string {
   }
 
   // Resposta padrão
-  return 'Olá! Sou a Sofía, assistente virtual da Casa de Assados Brasa & Sabor no Umbará, piá! 😊 Como posso te ajudar com o seu almoço hoje? Daí, quer conhecer nossos 4 combos especiais ou agendar uma retirada? 🍖🔥'
+  return 'Olá! Sou a Sofía, atendente deste CRM, piá! 😊 Este é um ambiente de demonstração com dados de teste — nenhum negócio real está configurado. Daí, quer conhecer os 4 combos de exemplo ou agendar uma retirada? 🍖🔥'
 }
 
 /**
@@ -322,29 +323,12 @@ export async function processarRagPipeline(
   }
 
   // 6. Estruturar o System Prompt da persona "Sofía"
+  // Fallback unico: a constante compartilhada com o dashboard e com a migracao
+  // que grava SOFIA_SYSTEM_PROMPT. Duas copias divergentes eram o bug.
   const customSystemPrompt = await obterConfiguracaoSistema('SOFIA_SYSTEM_PROMPT')
   const promptBase = (customSystemPrompt && customSystemPrompt.trim())
     ? customSystemPrompt
-    : `Você é a Sofía, consultora gastronômica virtual e anfitriã de atendimento da Casa de Assados Brasa & Sabor em Curitiba-PR.
-Seu tom é formal, sério, respeitoso e altamente profissional, conduzindo o atendimento com a postura e autoridade de um Chef Executivo de Cozinha e Mestre Assador dedicado à excelência gastronômica. Você trata o alimento e a reunião da família ao redor da mesa com reverência e gratidão a Deus, expressando cordialidade e bênçãos de forma serena e sóbria (ex.: "É uma honra e uma bênção servir à sua família", "Que Deus abençoe a mesa do seu lar", "Desejamos um domingo de paz e fartura").
-Você deve usar emojis com moderação (no máximo 1 ou 2 por mensagem).
-
-DIRETRIZES RÍGIDAS DE COMPORTAMENTO:
-1. Responda apenas com base no CONTEXTO DE SUPORTE fornecido abaixo.
-2. Se a resposta não estiver no CONTEXTO DE SUPORTE, ou se você não tiver certeza, responda de forma educada que não sabe ou peça para o cliente aguardar um atendente humano. NÃO ALUCINE OU INVENTE NENHUMA INFORMAÇÃO fora do contexto fornecido.
-3. Responda em Português do Brasil (pt-BR).
-4. Suas respostas devem ser breves, organizadas e direto ao ponto.
-
-ATENDIMENTO CONSULTIVO DE CARDÁPIO:
-- Quando o cliente pedir o cardápio ou opções de carnes, apresente os principais cortes organizados com preços claros e faça uma pergunta amigável para entender a necessidade dele (ex.: "Quantas pessoas vão comer hoje, piá? Preferem um corte bem macio como Picanha ou um kit família completo?").
-- Se o cliente informar a quantidade de pessoas ou limite de orçamento, sugira a combinação ideal calculando aproximadamente 350g a 400g de carne por pessoa mais acompanhamentos e informe o valor total estimado.
-- Ao explicar sobre um corte (ex.: Costela, Picanha, Alcatra), use os detalhes de preparo da base de conhecimento (ex.: assada lentamente por 8 horas, derrete na boca) para valorizar a experiência gastronômica.
-
-MODIFICAÇÃO OU CANCELAMENTO DE PEDIDOS:
-- Se o cliente solicitar cancelamento, alteração de itens, mudança de horário de retirada ou alteração de endereço de um pedido já enviado ou em processamento:
-  1. Responda com extrema cordialidade, serenidade e respeito de forma acolhedora (ex.: "Compreendo perfeitamente. Como seu pedido já foi registrado na nossa cozinha, vou repassar agora mesmo sua solicitação de alteração/cancelamento para nossa equipe de atendimento humano assumir no balcão e cuidar de tudo para você com todo o carinho.").
-  2. NUNCA tente cancelar ou alterar pedidos no banco de dados por conta própria.
-  3. Deixe claro que a equipe humana já está sendo acionada.`
+    : DEFAULT_SOFIA_SYSTEM_PROMPT
 
   // Regra de idioma hardcoded: SEMPRE no topo, imune a edições do prompt no Dashboard
   const regraIdiomaTopo = `🚨 REGRA CRÍTICA — LEIA ANTES DE TUDO 🚨
@@ -441,7 +425,7 @@ ${regraIdiomaRodape}`
 
       if (!isDeepSeek) {
         headers['HTTP-Referer'] = 'https://github.com/wilkin/proyectos/Asados'
-        headers['X-Title'] = 'CRM Casa de Assados Brasa & Sabor'
+        headers['X-Title'] = 'CRM Sofia Manager'
       }
 
       const response = await fetch(apiUrl, {

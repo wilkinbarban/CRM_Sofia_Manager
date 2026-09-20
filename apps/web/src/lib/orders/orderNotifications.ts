@@ -29,7 +29,7 @@ export function formatarMensagemNotificacao(params: NotificacaoPedidoParams, nom
   if (params.tipo === 'status_pedido') {
     switch (params.novoStatus) {
       case 'confirmado':
-        return `${saudacao}\n\n🥩 *Pedido Confirmado!*\nSeu pedido foi aceito pela nossa equipe e já está sendo preparado com todo o carinho e sabor da Casa de Assados Brasa & Sabor.\n\n⏰ Avisaremos assim que estiver pronto para retirada ou sair para entrega!`
+        return `${saudacao}\n\n🥩 *Pedido Confirmado!*\nSeu pedido foi aceito pela nossa equipe e já está sendo preparado com todo o carinho. Este é um ambiente de demonstração com dados de teste.\n\n⏰ Avisaremos assim que estiver pronto para retirada ou sair para entrega!`
       case 'entregue':
         return `${saudacao}\n\n✨ *Pedido Concluído!*\nSeu pedido foi finalizado com sucesso. Que Deus abençoe a mesa da sua família e tenham uma excelente refeição!\n\nSeu comprovante de venda digital está disponível no seu painel.`
       case 'cancelado':
@@ -53,7 +53,7 @@ export function formatarMensagemNotificacao(params: NotificacaoPedidoParams, nom
     }
   }
 
-  return `${saudacao}\n\nHá uma nova atualização no seu pedido na Casa de Assados Brasa & Sabor.`
+  return `${saudacao}\n\nHá uma nova atualização no seu pedido neste ambiente de demonstração com dados de teste.`
 }
 
 /**

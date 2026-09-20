@@ -67,7 +67,7 @@ export async function enviarPromptCatalogoWhatsApp(telefone: string): Promise<Ca
     'Gostaria de ver os nossos combos oficiais com fotos e valores?',
     'Responda *1* para eu te enviar as fotos! 📸',
     '',
-    '_Casa de Assados Brasa & Sabor · Umbará_',
+    '_Ambiente de demonstração — dados de teste_',
   ].join('\n')
   const result = await postCatalogMessage('/message/sendText', config, {
     number: telefone,
@@ -133,7 +133,7 @@ export function montarPayloadCarrossel(params: EnviarCardapioInput) {
 
   return {
     number: params.telefone,
-    body: `🔥 *Cardápio Oficial de Domingo — Casa de Assados Brasa & Sabor*\n_Tradição no Umbará • O que vai querer hoje?_`,
+    body: `🔥 *Cardápio Oficial de Domingo — ambiente de demonstração*\n_Dados de teste • O que vai querer hoje?_`,
     cards,
   }
 }
@@ -143,7 +143,7 @@ export function montarPayloadBotoes(params: EnviarCardapioInput) {
     number: params.telefone,
     title: '🔥 Cardápio Oficial de Domingo',
     description: 'Escolha um produto para adicionar ao pedido:',
-    footer: 'Casa de Assados Brasa & Sabor · Umbará',
+    footer: 'Ambiente de demonstração — dados de teste',
     buttons: params.produtos.slice(0, 3).map((produto) => ({
       type: 'reply',
       displayText: produto.nome.slice(0, 20),
@@ -157,7 +157,7 @@ export function montarPayloadLista(params: EnviarCardapioInput) {
     number: params.telefone,
     title: '🔥 Cardápio Oficial de Domingo',
     description: 'Veja os assados disponíveis e escolha o seu.',
-    footerText: 'Casa de Assados Brasa & Sabor · Umbará',
+    footerText: 'Ambiente de demonstração — dados de teste',
     buttonText: 'Ver cardápio',
     sections: [{
       title: 'Produtos',
@@ -179,7 +179,7 @@ export function montarPayloadTexto(params: EnviarCardapioInput) {
   return {
     number: params.telefone,
     text: [
-      '🔥 *Cardápio Oficial de Domingo — Casa de Assados Brasa & Sabor*',
+      '🔥 *Cardápio Oficial de Domingo — ambiente de demonstração*',
       '',
       ...itens,
       '',
@@ -222,7 +222,7 @@ export function montarPayloadCardsFallback(params: EnviarCardapioInput) {
       `━━━━━━━━━━━━━━━━━━━━━━━━`,
       `📝 ${p.descricao || 'Assado lentamente com tempero especial de família.'}`,
       `💰 *Preço:* ${valor}`,
-      `📍 *Retirada:* Domingo no Balcão Umbará`,
+      `📍 *Retirada:* Domingo no balcão (ambiente de demonstração)`,
       `━━━━━━━━━━━━━━━━━━━━━━━━`,
       `*Ações rápidas:*`,
       `1️⃣ Adicionar ao pedido (digite *"Quero o item ${idx + 1}"*)`,

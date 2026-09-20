@@ -2,8 +2,8 @@
 
 **Date:** 2026-09-16
 **Repository:** `github.com/wilkinbarban/CRM_Sofia_Manager`
-**Release HEAD on `main`:** `303a757`
-**Current Production Web Image:** `asados-web:evolution-text-optin-303a757-20260916T010928Z` (`sha256:f92fa9326954e238be69c9798fe9cb963580625701a21c363b0f64dc0c12ba08`)
+**Release HEAD on `main`:** `303a757` (snapshot recorded 2026-09-16; the running image below was built later, from revision `78152c3`)
+**Current Production Web Image:** `asados-web:brand-189-78152c3-20260920T191545Z` (built from revision `78152c3`; image digest not recorded in this document)
 **Previous Web Image (Rollback Tag):** `asados-web:rollback-e7628e776c1f27f8c07f5b0dc136454a7adbbebea6eba6503d9a78db05178054`
 **Production Database Identity:** `asados-supabase-db` (ID: `0bff70962b42e9757f1ecd9aa5b8ffaf4e4dbb051ade52f4ee30497cbffa9f54`, port 5432)
 
@@ -18,6 +18,8 @@ The operator intends to clone this repository to a fresh VPS and develop the nex
 ---
 
 ## 2. Channel Feature Parity Matrix
+
+> **Scope of this matrix:** the ✅ / ⚠️ / ❌ marks below describe **implemented capability** — what each code path does when its feature gate is open — not the **production runtime**. The live gate positions are recorded in §6.2; because all four Sofia inbound batch gates are `false` there, the *Sliding Inbound Batching* and *Post-Generation Pacing* rows describe code the current deployment does not exercise.
 
 | Feature | Telegram | WhatsApp (Evolution v2.3.7 / Baileys) | Status / Notes |
 |---|---|---|---|
@@ -107,25 +109,55 @@ printenv | grep '_ENABLED='
 ## 6. Current Production Deployment State
 
 ### 6.1 Container Stack (`docker compose ps`)
-- `asados-web`: Image `asados-web:evolution-text-optin-303a757-20260916T010928Z` (Port `127.0.0.1:3020:3000`)
+- `asados-web`: Image `asados-web:brand-189-78152c3-20260920T191545Z` (Port `127.0.0.1:3020:3000`)
 - `asados-sofia-inbound-batch-maintenance`: Loop scheduler (Alpine 3.20)
 - `asados-evolution-api`: Evolution v2.3.7 (Port `8080`)
 - `asados-evolution-db`: Postgres 16 Alpine
 - `asados-evolution-redis`: Redis
 - `asados-supabase-db`: Primary PostgreSQL container (`0bff70962b42...`)
 
-### 6.2 Active Feature Gates (6 true / 12 false)
-- `SOFIA_INBOUND_BATCH_EVOLUTION_ENQUEUE_ENABLED=true`
-- `SOFIA_INBOUND_BATCH_PROCESSING_ENABLED=true`
-- `SOFIA_INBOUND_BATCH_RUNTIME_ENABLED=true`
-- `SOFIA_INBOUND_BATCH_TELEGRAM_ENQUEUE_ENABLED=true`
-- `AI_ROUTING_LEGACY_FALLBACK_ENABLED=true`
-- `AI_ROUTING_V2_ENABLED=true`
+The running web image was built from revision `78152c3` (`chore(brand)`: retire the old brand and the dead ingress config). The **Release HEAD on `main`** field at the top of this document records the earlier 2026-09-16 snapshot (`303a757`) and is **not** the revision of this image.
+
+### 6.2 Feature Gates (0 true / 16 false; the two AI routing flags are absent)
+All four Sofia inbound batch gates named below are **closed** (`false`) — none of them is `true`, contrary to what an earlier revision of this runbook stated:
+- `SOFIA_INBOUND_BATCH_EVOLUTION_ENQUEUE_ENABLED=false`
+- `SOFIA_INBOUND_BATCH_PROCESSING_ENABLED=false`
+- `SOFIA_INBOUND_BATCH_RUNTIME_ENABLED=false`
+- `SOFIA_INBOUND_BATCH_TELEGRAM_ENQUEUE_ENABLED=false`
 - All 8 payment proof gates: `false`
 - All 4 notification gates: `false`
+
+This section describes **production runtime**; §2 describes **implemented capability**, so its ✅ rows for inbound batching and post-generation pacing are not in conflict with the closed gates listed above.
+
+With every batch gate closed, the inbound batch pipeline is off in production:
+- the WhatsApp and Telegram webhooks never enqueue (`evolutionInboundBatchEnqueueEnabled()` and `telegramInboundBatchEnqueueEnabled()` both return `false`);
+- the maintenance endpoint returns its zero payload without processing anything (`inboundBatchProcessingEnabled()`);
+- the runtime pacing path of the worker (`inboundBatchRuntimeEnabled()`) is never exercised.
+
+Both channels are therefore served by the synchronous path. The gates live in `apps/web/src/lib/sofia/inbound-batch-gates.ts` and each one is a literal `value === "true"` check, so an absent variable is a closed gate.
+
+The two AI routing flags **do not exist in this environment at all**: there is no `AI_ROUTING_V2_ENABLED` and no `AI_ROUTING_LEGACY_FALLBACK_ENABLED` entry in the root `.env`, and neither is exported into the `web` container. `apps/web/src/lib/ai/omniroute.ts` reads them from `process.env` only:
+
+```ts
+export function isOmniRouteEnabled(): boolean {
+  return process.env.AI_ROUTING_V2_ENABLED === 'true'
+}
+
+export function isLegacyFallbackEnabled(): boolean {
+  return process.env.AI_ROUTING_LEGACY_FALLBACK_ENABLED !== 'false'
+}
+```
+
+The dashboard's OmniRoute switch (`apps/web/src/components/operator/integrations/LlmApiCard.tsx`) writes `OMNIROUTE_BASE_URL`, `OMNIROUTE_API_KEY`, `AI_ROUTING_V2_ENABLED` and `AI_ROUTING_LEGACY_FALLBACK_ENABLED` into `public.configuracoes_sistema` through `salvarConfiguracaoAdmin`. `lib/ai/omniroute.ts` never reads that table, and there is no DB-to-environment bridge, so flipping the card's switch does **not** enable the gateway. Treat the card as stored display values, not as a working feature gate.
+
+The root `.env` file that holds the four batch gates is dated and unmodified, and nothing rewrites it during a deploy. The closed state is deliberate configuration, not drift.
 
 ### 6.3 Deployment & Rollback Levers
 - Deploy state file: `/var/lib/asados/deploy/release.env`
 - Rollback command: `/home/wilkin/proyectos/Asados/scripts/deploy-web.sh rollback`
 - Immediate kill switch for Evolution queue without redeploying:
   Set `SOFIA_INBOUND_BATCH_EVOLUTION_ENQUEUE_ENABLED=false` in `.env` and run `docker compose up -d --no-deps --force-recreate web`.
+  That switch is already in the `false` position documented in §6.2, so the Evolution queue is already disabled and no redeploy is required to turn it off.
+
+### 6.4 Database Contents (demo environment)
+`asados-supabase-db` holds **test data**, not a real operation: 3 clients, 1 conversation and 2 messages. Everything the operator and Sofia can see — clients, conversations, products in stock, orders — is example data used to validate the system. No real business is configured in this environment.

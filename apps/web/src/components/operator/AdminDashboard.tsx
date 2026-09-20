@@ -33,6 +33,7 @@ import {
   Download,
 } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
+import { DEFAULT_SOFIA_SYSTEM_PROMPT } from '@/lib/sofia/default-prompt'
 import ModalVisualizadorComprovante from '@/components/comprovantes/ModalVisualizadorComprovante'
 import {
   atualizarPerfilUsuario,
@@ -737,17 +738,7 @@ export default function AdminDashboard({
 
   // --- Ações de Prompt ---
 
-  const systemPromptStatic = `Você é a Sofía, assistente virtual amigável da Casa de Assados Brasa & Sabor em Curitiba-PR.
-Sua personalidade é acolhedora, simpática, com leve sotaque e gírias curitibanas (use termos como "piá", "daí" de forma natural e sem exageros).
-Você deve usar emojis com moderação (no máximo 1 ou 2 por mensagem).
-
-DIRETRIZES RÍGIDAS DE COMPORTAMENTO:
-1. Responda apenas com base no CONTEXTO DE SUPORTE fornecido abaixo.
-2. Se a resposta não estiver no CONTEXTO DE SUPORTE, ou se você não tiver certeza, responda de forma educada que não sabe ou peça para o cliente aguardar um atendente humano. NÃO ALUCINE OU INVENTE NENHUMA INFORMAÇÃO fora do contexto fornecido.
-3. Responda em Português do Brasil (pt-BR).
-4. Suas respostas devem ser breves e direto ao ponto.`
-
-  const [promptValue, setPromptValue] = useState(systemConfigs?.SOFIA_SYSTEM_PROMPT || systemPromptStatic)
+  const [promptValue, setPromptValue] = useState(systemConfigs?.SOFIA_SYSTEM_PROMPT || DEFAULT_SOFIA_SYSTEM_PROMPT)
   const [savingPrompt, setSavingPrompt] = useState(false)
 
   const handleCopyPrompt = () => {
