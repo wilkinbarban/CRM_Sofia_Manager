@@ -271,10 +271,10 @@ export default function ChatContainer({
   // Input & Upload States
   const [inputValue, setInputValue] = useState('');
   const [isSending, setIsSending] = useState(false);
-  // Chave de idempotência gerada pelo cliente para a admissão atômica Web. Ela é mantida
-  // enquanto a mesma tentativa de envio não conclui, de modo que repetir o envio devolve a
-  // mensagem e o lote originais sem alterar o prazo do lote.
-  const pendingIdempotencyKeyRef = useRef<string | null>(null);
+  // Chave de idempotência gerada pelo cliente para a admissão atômica Web. Ela é vinculada ao
+  // texto que a originou: repetir o mesmo envio continua devolvendo a mensagem e o lote
+  // originais, mas um texto editado gera uma chave nova em vez de reenviar a chave antiga.
+  const pendingIdempotencyKeyRef = useRef<{ chave: string; conteudo: string } | null>(null);
   const [sofiaPresenceExpiresAt, setSofiaPresenceExpiresAt] = useState<string | null>(null);
   const isIaTyping = sofiaPresenceExpiresAt !== null && new Date(sofiaPresenceExpiresAt).getTime() > Date.now();
   const [uploading, setUploading] = useState(false);
@@ -753,10 +753,13 @@ export default function ChatContainer({
 
     // Elegibilidade idêntica à do acionamento atual da Sofia: texto, sem anexo e IA ativa.
     const elegivelParaAdmissao = Boolean(conversa.ia_ativa && messageData.conteudo && !messageData.url_anexo);
+    const pendente = pendingIdempotencyKeyRef.current;
     const idempotencyKey = elegivelParaAdmissao
-      ? pendingIdempotencyKeyRef.current ?? crypto.randomUUID()
+      ? (pendente?.conteudo === messageData.conteudo ? pendente.chave : crypto.randomUUID())
       : null;
-    if (idempotencyKey) pendingIdempotencyKeyRef.current = idempotencyKey;
+    if (idempotencyKey && messageData.conteudo) {
+      pendingIdempotencyKeyRef.current = { chave: idempotencyKey, conteudo: messageData.conteudo };
+    }
 
     try {
       // Com o gate Web ativo a admissão é atômica no servidor (mensagem + lote na mesma
