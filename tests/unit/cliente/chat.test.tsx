@@ -3,7 +3,7 @@ import { render, screen, waitFor, fireEvent, cleanup } from '@testing-library/re
 import { describe, expect, it, vi, beforeEach, afterEach, beforeAll } from 'vitest'
 import ChatContainer from '@/components/chat/ChatContainer'
 import ClienteChatPage from '@/app/cliente/chat/page'
-import { obterSofiaPresence, processarIaChat } from '@/app/actions/chat'
+import { admitirMensagemSofiaWeb, obterSofiaPresence, processarIaChat } from '@/app/actions/chat'
 
 // Mock next/navigation
 vi.mock('next/navigation', () => ({
@@ -564,5 +564,55 @@ describe('ChatContainer Core UI Tests (Phase 2)', () => {
         }
       })
     })
+  })
+})
+
+describe('ChatContainer Web admission idempotency key', () => {
+  const admitir = vi.mocked(admitirMensagemSofiaWeb)
+
+  beforeEach(() => {
+    admitir.mockReset()
+    admitir.mockResolvedValue({ success: true, mensagem: null })
+  })
+
+  const enviarTexto = async (texto: string) => {
+    const esperadas = admitir.mock.calls.length + 1
+    const campo = screen.getByPlaceholderText('Digite sua mensagem...')
+    fireEvent.change(campo, { target: { value: texto } })
+    await waitFor(() => {
+      fireEvent.submit(campo.closest('form') as HTMLFormElement)
+      expect(admitir).toHaveBeenCalledTimes(esperadas)
+    })
+  }
+
+  it('mints a new idempotency key when the text is edited after a failed admission', async () => {
+    admitir.mockResolvedValue({ success: false, error: 'SOFIA_BATCH_ADMISSION_FAILED' })
+
+    render(
+      <ChatContainer clienteNome="Ana Silva" conversaInicial={baseConversa} mensagensIniciais={[]} produtos={[]} />
+    )
+
+    await enviarTexto('primeira tentativa')
+    await enviarTexto('texto editado')
+
+    const [, conteudoEditado, chaveEditada] = admitir.mock.calls[1]
+    const [, , chaveOriginal] = admitir.mock.calls[0]
+    expect(conteudoEditado).toBe('texto editado')
+    expect(chaveEditada).not.toBe(chaveOriginal)
+  })
+
+  it('keeps the same idempotency key when the identical text is retried', async () => {
+    admitir.mockResolvedValue({ success: false, error: 'SOFIA_BATCH_ADMISSION_FAILED' })
+
+    render(
+      <ChatContainer clienteNome="Ana Silva" conversaInicial={baseConversa} mensagensIniciais={[]} produtos={[]} />
+    )
+
+    await enviarTexto('mesmo texto')
+    await enviarTexto('mesmo texto')
+
+    const [, , primeiraChave] = admitir.mock.calls[0]
+    const [, , segundaChave] = admitir.mock.calls[1]
+    expect(segundaChave).toBe(primeiraChave)
   })
 })
