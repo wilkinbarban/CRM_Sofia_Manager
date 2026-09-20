@@ -9,14 +9,14 @@ afterEach(() => {
 
 describe('Supabase URL resolution', () => {
   it('uses the public URL in browser-facing configuration', () => {
-    process.env.NEXT_PUBLIC_SUPABASE_URL = 'https://casadeasados.duckdns.org'
+    process.env.NEXT_PUBLIC_SUPABASE_URL = 'https://crmsofiamanager.duckdns.org'
     process.env.SUPABASE_INTERNAL_URL = 'http://api-gw:8000'
 
-    expect(getSupabasePublicUrl()).toBe('https://casadeasados.duckdns.org')
+    expect(getSupabasePublicUrl()).toBe('https://crmsofiamanager.duckdns.org')
   })
 
   it('prefers the private Docker URL for server-side traffic', () => {
-    process.env.NEXT_PUBLIC_SUPABASE_URL = 'https://casadeasados.duckdns.org'
+    process.env.NEXT_PUBLIC_SUPABASE_URL = 'https://crmsofiamanager.duckdns.org'
     process.env.SUPABASE_INTERNAL_URL = 'http://api-gw:8000'
 
     expect(getSupabaseServerUrl()).toBe('http://api-gw:8000')

@@ -62,7 +62,7 @@ describe('Evolution transport contract', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ presence: 'composing' }), { status: 200 })))
     const handle = await startEvolutionPresence('c')
     expect(fetch).toHaveBeenCalledWith('https://evolution.example/chat/sendPresence/instance', expect.objectContaining({
-      headers: expect.objectContaining({ Origin: 'https://casadeasados.duckdns.org' }),
+      headers: expect.objectContaining({ Origin: 'https://crmsofiamanager.duckdns.org' }),
     }))
     handle.stop()
   })

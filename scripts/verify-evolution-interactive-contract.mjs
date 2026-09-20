@@ -8,7 +8,7 @@ if (!baseUrl) {
 
 const headers = {
   Accept: 'application/json',
-  Origin: process.env.NEXT_PUBLIC_APP_URL || 'https://casadeasados.duckdns.org',
+  Origin: process.env.NEXT_PUBLIC_APP_URL || 'https://crmsofiamanager.duckdns.org',
 }
 
 if (apiKey) headers.apikey = apiKey

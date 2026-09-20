@@ -80,27 +80,27 @@ function obterRespostaMock(mensagemCliente: string): string {
     texto.includes('o que voces tem') ||
     texto.includes('pratos')
   ) {
-    return gerarCatalogoCardsCompleto('https://casadeasados.duckdns.org')
+    return gerarCatalogoCardsCompleto('https://crmsofiamanager.duckdns.org')
   }
 
   if (texto.includes('combo 1') || texto.includes('clássico') || texto.includes('classico')) {
     const c1 = obterCartaoCombo(1)
-    return c1 ? c1.textoMarkdownCartao : gerarCatalogoCardsCompleto('https://casadeasados.duckdns.org')
+    return c1 ? c1.textoMarkdownCartao : gerarCatalogoCardsCompleto('https://crmsofiamanager.duckdns.org')
   }
 
   if (texto.includes('combo 2') || (texto.includes('costela') && !texto.includes('suína') && !texto.includes('suina'))) {
     const c2 = obterCartaoCombo(2)
-    return c2 ? c2.textoMarkdownCartao : gerarCatalogoCardsCompleto('https://casadeasados.duckdns.org')
+    return c2 ? c2.textoMarkdownCartao : gerarCatalogoCardsCompleto('https://crmsofiamanager.duckdns.org')
   }
 
   if (texto.includes('combo 3') || texto.includes('dueto') || texto.includes('costelinha')) {
     const c3 = obterCartaoCombo(3)
-    return c3 ? c3.textoMarkdownCartao : gerarCatalogoCardsCompleto('https://casadeasados.duckdns.org')
+    return c3 ? c3.textoMarkdownCartao : gerarCatalogoCardsCompleto('https://crmsofiamanager.duckdns.org')
   }
 
   if (texto.includes('combo 4') || texto.includes('família') || texto.includes('familia') || texto.includes('kit churrasco')) {
     const c4 = obterCartaoCombo(4)
-    return c4 ? c4.textoMarkdownCartao : gerarCatalogoCardsCompleto('https://casadeasados.duckdns.org')
+    return c4 ? c4.textoMarkdownCartao : gerarCatalogoCardsCompleto('https://crmsofiamanager.duckdns.org')
   }
 
   if (texto.includes('preço') || texto.includes('preco') || texto.includes('valor') || texto.includes('quanto custa') || texto.includes('quanto tá') || texto.includes('quanto ta')) {

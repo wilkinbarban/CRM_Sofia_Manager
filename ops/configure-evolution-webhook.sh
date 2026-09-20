@@ -6,7 +6,7 @@ instance="${EVOLUTION_INSTANCE_NAME:?EVOLUTION_INSTANCE_NAME is required}"
 api_key="${EVOLUTION_API_KEY:?EVOLUTION_API_KEY is required}"
 webhook_secret="${EVOLUTION_WEBHOOK_SECRET:?EVOLUTION_WEBHOOK_SECRET is required}"
 webhook_url="${EVOLUTION_WEBHOOK_URL:-http://web:3000/api/webhooks/evolution}"
-app_origin="${NEXT_PUBLIC_APP_URL:-https://casadeasados.duckdns.org}"
+app_origin="${NEXT_PUBLIC_APP_URL:-https://crmsofiamanager.duckdns.org}"
 
 payload="$(
   node -e '

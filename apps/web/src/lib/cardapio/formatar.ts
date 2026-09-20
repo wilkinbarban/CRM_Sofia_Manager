@@ -70,12 +70,12 @@ function categorizarProduto(nome: string): 'kits' | 'cortes' | 'acompanhamentos'
 /**
  * Formata o cardápio estruturado em Cartões Digitais (Cards) com miniaturas para WhatsApp, Telegram e Web (Figura 4)
  */
-export function formatarCardapioResumido(produtos: ProdutoCardapio[], baseUrl = 'https://casadeasados.duckdns.org'): string {
+export function formatarCardapioResumido(produtos: ProdutoCardapio[], baseUrl = 'https://crmsofiamanager.duckdns.org'): string {
   if (!produtos || produtos.length === 0) {
     return 'No momento nosso cardápio está sendo atualizado pelo mestre assador. Por favor, pergunte a um atendente!'
   }
 
-  const cleanBaseUrl = (baseUrl || 'https://casadeasados.duckdns.org').replace(/\/$/, '')
+  const cleanBaseUrl = (baseUrl || 'https://crmsofiamanager.duckdns.org').replace(/\/$/, '')
 
   const grupos: Record<'cortes' | 'kits' | 'acompanhamentos' | 'bebidas' | 'outros', ProdutoCardapio[]> = {
     cortes: [],

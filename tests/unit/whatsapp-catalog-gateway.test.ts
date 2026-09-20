@@ -24,14 +24,14 @@ describe('WhatsApp Catalog Gateway & Multi-Level Fallback (TDD)', () => {
       nome: 'Combo 1 - O Clássico Brasa & Sabor',
       descricao: 'Frango Assado + Farofa + Maionese Especial',
       precoCentavos: 6990,
-      urlImagem: 'https://casadeasados.duckdns.org/combo1.jpg',
+      urlImagem: 'https://crmsofiamanager.duckdns.org/combo1.jpg',
     },
     {
       id: 'prod-2',
       nome: 'Combo 2 - Costela Suprema',
       descricao: '1kg de Costela macia no bafo + Farofa da Casa',
       precoCentavos: 11990,
-      urlImagem: 'https://casadeasados.duckdns.org/combo2.jpg',
+      urlImagem: 'https://crmsofiamanager.duckdns.org/combo2.jpg',
     },
   ]
 
@@ -57,7 +57,7 @@ describe('WhatsApp Catalog Gateway & Multi-Level Fallback (TDD)', () => {
     expect(payload.body).toContain('O que vai querer hoje')
     expect(payload.cards).toHaveLength(2)
     expect(payload.cards[0].title).toBe('🍗 Combo 1 - O Clássico Brasa & Sabor')
-    expect(payload.cards[0].imageUrl).toBe('https://casadeasados.duckdns.org/combo1.jpg')
+    expect(payload.cards[0].imageUrl).toBe('https://crmsofiamanager.duckdns.org/combo1.jpg')
     expect(payload.cards[0].buttons[0].id).toBe('cart:add:prod-1')
     expect(payload.cards[0].buttons[0].displayText).toContain('Adicionar')
   })
@@ -69,7 +69,7 @@ describe('WhatsApp Catalog Gateway & Multi-Level Fallback (TDD)', () => {
     })
 
     expect(cards).toHaveLength(2)
-    expect(cards[0].imageUrl).toBe('https://casadeasados.duckdns.org/combo1.jpg')
+    expect(cards[0].imageUrl).toBe('https://crmsofiamanager.duckdns.org/combo1.jpg')
     expect(cards[0].caption).toContain('COMBO 1 - O CLÁSSICO BRASA & SABOR')
     expect(cards[0].caption).toContain('69,90')
     expect(cards[0].caption).toContain('1️⃣ Adicionar ao pedido')
@@ -83,7 +83,7 @@ describe('WhatsApp Catalog Gateway & Multi-Level Fallback (TDD)', () => {
       'http://127.0.0.1:8086/message/sendText/asados-bot',
       expect.objectContaining({
         method: 'POST',
-        headers: expect.objectContaining({ Origin: 'https://casadeasados.duckdns.org' }),
+        headers: expect.objectContaining({ Origin: 'https://crmsofiamanager.duckdns.org' }),
         body: expect.stringContaining('Cardápio Oficial de Domingo'),
       }),
     )
@@ -101,7 +101,7 @@ describe('WhatsApp Catalog Gateway & Multi-Level Fallback (TDD)', () => {
       for (const [url, init] of mockFetch.mock.calls) {
         expect(url).toBe('http://127.0.0.1:8086/message/sendMedia/asados-bot')
         expect(init).toEqual(expect.objectContaining({
-          headers: expect.objectContaining({ apikey: 'test-api-key', Origin: 'https://casadeasados.duckdns.org' }),
+          headers: expect.objectContaining({ apikey: 'test-api-key', Origin: 'https://crmsofiamanager.duckdns.org' }),
         }))
       }
     })

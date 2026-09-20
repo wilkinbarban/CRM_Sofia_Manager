@@ -9,7 +9,7 @@ export const viewport: Viewport = {
 }
 
 export const metadata: Metadata = {
-  metadataBase: new URL('https://casadeasados.duckdns.org'),
+  metadataBase: new URL('https://crmsofiamanager.duckdns.org'),
   title: {
     default: 'CRM Sofia Manager | Casa de Assados Brasa & Sabor',
     template: '%s | CRM Sofia Manager',
@@ -37,7 +37,7 @@ export const metadata: Metadata = {
     title: 'Casa de Assados Brasa & Sabor | O Verdadeiro Sabor do Domingo',
     description:
       'Frango recheado, costela no bafo por 6h e combos completos para a sua família no Umbará, Curitiba.',
-    url: 'https://casadeasados.duckdns.org',
+    url: 'https://crmsofiamanager.duckdns.org',
     siteName: 'Casa de Assados Brasa & Sabor',
     locale: 'pt_BR',
     type: 'website',

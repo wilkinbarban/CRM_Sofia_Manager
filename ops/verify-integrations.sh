@@ -25,7 +25,7 @@ done
 docker exec asados-web node -e '
   Promise.all([
     fetch("http://api-gw:8000/auth/v1/settings", { headers: { apikey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY } }),
-    fetch("http://evolution-api:8080/", { headers: { Origin: "https://casadeasados.duckdns.org" } }),
+    fetch("http://evolution-api:8080/", { headers: { Origin: "https://crmsofiamanager.duckdns.org" } }),
   ]).then((responses) => {
     if (responses.some((response) => !response.ok)) process.exit(1)
   }).catch(() => process.exit(1))

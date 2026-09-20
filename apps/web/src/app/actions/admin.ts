@@ -1140,7 +1140,7 @@ export async function testarConexaoEvolution(apiUrl: string, apiKey: string, ins
       return { success: false, error: 'URL, API Key e Nome da Instância são obrigatórios.' }
     }
 
-    const publicOrigin = process.env.NEXT_PUBLIC_APP_URL || 'https://casadeasados.duckdns.org'
+    const publicOrigin = process.env.NEXT_PUBLIC_APP_URL || 'https://crmsofiamanager.duckdns.org'
     const { connected: isConnected, state, data } = await getEvolutionConnectionState(
       { apiUrl, apiKey, instanceName },
       publicOrigin,
@@ -1180,7 +1180,7 @@ export async function obterQrCodeEvolution(apiUrl: string, apiKey: string, insta
       return { success: false, error: 'URL, API Key e Nome da Instância são obrigatórios.' }
     }
 
-    const publicOrigin = process.env.NEXT_PUBLIC_APP_URL || 'https://casadeasados.duckdns.org'
+    const publicOrigin = process.env.NEXT_PUBLIC_APP_URL || 'https://crmsofiamanager.duckdns.org'
     const { qrcode } = await getEvolutionQrCode(
       { apiUrl, apiKey, instanceName },
       publicOrigin,

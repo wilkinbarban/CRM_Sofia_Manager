@@ -75,7 +75,7 @@ If you develop this differently on a new VPS, heed these architectural principle
      headers: {
        'apikey': apiKey,
        'Content-Type': 'application/json',
-       'Origin': process.env.NEXT_PUBLIC_APP_URL || 'https://casadeasados.duckdns.org',
+       'Origin': process.env.NEXT_PUBLIC_APP_URL || 'https://crmsofiamanager.duckdns.org',
      }
      ```
 4. **Decouple Queue Scheduler from Web Container**:

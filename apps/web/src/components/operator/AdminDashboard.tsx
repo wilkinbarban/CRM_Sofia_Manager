@@ -1204,7 +1204,7 @@ DIRETRIZES RÍGIDAS DE COMPORTAMENTO:
                   value={createUserModal.email}
                   onChange={e => setCreateUserModal(prev => ({ ...prev, email: e.target.value }))}
                   className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3.5 py-2.5 text-xs text-zinc-100 placeholder-zinc-500 focus:border-amber-500 focus:outline-none"
-                  placeholder="carlos@casadeasados.com.br"
+                  placeholder="carlos@crmsofiamanager.com.br"
                 />
               </div>
 

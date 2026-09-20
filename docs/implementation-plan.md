@@ -147,7 +147,7 @@ This plan migrates the existing Next.js application without discarding the curre
 ### Phase 7 — Deploy the domain
 
 - [x] Verify DuckDNS points to the deployment host.
-- [x] Issue a certificate containing `casadeasados.duckdns.org`.
+- [x] Issue a certificate containing `crmsofiamanager.duckdns.org`.
 - [x] Configure automatic renewal and validate it without changing the live certificate.
 - [x] Validate HTTP redirect, HTTPS, headers, WebSockets, and upstream isolation.
 
@@ -155,7 +155,7 @@ This plan migrates the existing Next.js application without discarding the curre
 
 - DNS: the public A record and the deployment host both resolve to `185.194.219.167`.
 - Ingress: the domain is integrated into the existing `portfolio-nginx` owner of ports 80/443; it reaches Web and Supabase through their private Docker networks, without widening host bindings.
-- TLS: Let's Encrypt issued an ECDSA certificate whose exact SAN is `casadeasados.duckdns.org`, valid through 2026-11-11.
+- TLS: Let's Encrypt issued an ECDSA certificate whose exact SAN is `crmsofiamanager.duckdns.org`, valid through 2026-11-11.
 - Renewal: the existing daily Certbot job manages the shared certificate volume, and a scoped `renew --dry-run` completed successfully without replacing the live certificate.
 - HTTP/HTTPS: HTTP redirects to HTTPS, an anonymous request to the root returns 307 to `/login`, and live/ready probes return 200.
 - Security: HSTS, CSP, frame, MIME, referrer, and permissions headers are present. Realtime completed an HTTP 101 WebSocket upgrade.
@@ -178,7 +178,7 @@ This plan migrates the existing Next.js application without discarding the curre
 - Rollback: the guarded Web-only deployment retained the previous immutable image and restored it successfully in 9 seconds.
 - Restore rehearsal: both archives validated in disposable stacks; the restored databases contained 24 Supabase `public` tables and 37 Evolution `public` tables.
 - Probe classification: the malformed external `Next-Action: s4` request failed closed with HTTP 404 and `x-nextjs-action-not-found`; it was classified as an understood internet probe rather than an application failure.
-- Log gate: the ingress review was scoped to `casadeasados.duckdns.org`, and the Asados ingress logs were clean after the exact probe classification.
+- Log gate: the ingress review was scoped to `crmsofiamanager.duckdns.org`, and the Asados ingress logs were clean after the exact probe classification.
 
 ## Delivery rules
 

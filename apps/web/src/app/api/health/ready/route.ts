@@ -26,7 +26,7 @@ export async function GET() {
       },
     }),
     dependencyIsReady('http://evolution-api:8080/', {
-      headers: { Origin: 'https://casadeasados.duckdns.org' },
+      headers: { Origin: 'https://crmsofiamanager.duckdns.org' },
     }),
   ])
 

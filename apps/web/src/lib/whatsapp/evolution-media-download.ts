@@ -118,7 +118,7 @@ export async function downloadEvolutionMedia(input: DownloadInput) {
       headers: {
         apikey: input.apiKey,
         'Content-Type': 'application/json',
-        Origin: process.env.NEXT_PUBLIC_APP_URL || 'https://casadeasados.duckdns.org',
+        Origin: process.env.NEXT_PUBLIC_APP_URL || 'https://crmsofiamanager.duckdns.org',
       },
       body: JSON.stringify({ message: input.message, convertToMp4: false }),
       redirect: 'error',

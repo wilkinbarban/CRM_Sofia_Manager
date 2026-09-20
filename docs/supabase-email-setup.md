@@ -15,12 +15,12 @@ Para que os fluxos de confirmação de e-mail e recuperação de senha redirecio
    * **Site URL**:
      * Defina como a URL base oficial de produção:
        ```
-       https://casadeasados.duckdns.org
+       https://crmsofiamanager.duckdns.org
        ```
    * **Redirect URLs**:
      * Adicione a URL com suporte a subcaminhos curinga para permitir redirecionamentos dinâmicos seguros após o login/confirmação:
        ```
-       https://casadeasados.duckdns.org/**
+       https://crmsofiamanager.duckdns.org/**
        ```
 5. Clique em **Save** no canto inferior ou superior da seção.
 
@@ -51,4 +51,4 @@ Para personalizar o e-mail de confirmação enviado aos novos clientes da churra
 Para testar se o fluxo está operando corretamente:
 1. Registre um novo usuário através da tela de cadastro (`/cadastro` ou `/login`).
 2. Verifique se o e-mail recebido na caixa de entrada do usuário de teste segue a formatação oficial.
-3. Clique no botão de confirmação e certifique-se de que ele redireciona o usuário com sucesso para a rota `https://casadeasados.duckdns.org/verificar-email?sucesso=true`.
+3. Clique no botão de confirmação e certifique-se de que ele redireciona o usuário com sucesso para a rota `https://crmsofiamanager.duckdns.org/verificar-email?sucesso=true`.

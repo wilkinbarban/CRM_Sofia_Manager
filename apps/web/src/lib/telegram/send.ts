@@ -57,7 +57,7 @@ export async function enviarCatalogoTelegram(chatId: string, products: ProdutoCa
   for (const product of products) {
     const card = buildTelegramCatalogCard(
       product,
-      process.env.NEXT_PUBLIC_APP_URL || 'https://casadeasados.duckdns.org',
+      process.env.NEXT_PUBLIC_APP_URL || 'https://crmsofiamanager.duckdns.org',
     )
     const textPayload = {
       chat_id: chatId,
