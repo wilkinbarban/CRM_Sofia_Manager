@@ -53,7 +53,7 @@ Este documento especifica os requisitos de negócio e técnicos para o Painel Ad
 *   **REQ-ADM-023**: O dashboard estatístico MUST calcular e apresentar de forma clara a proporção (taxa/razão) de mensagens respondidas de forma automática pela IA Sofía contra as intervenções humanas dos operadores.
 
 ### 2.5 Visualizador do Master Prompt da IA
-*   **REQ-ADM-024**: O painel administrativo MUST expor uma área contendo o texto e diretrizes do Master System Prompt do assistente virtual Sofía (utilizado para interagir com a API de LLM via OpenRouter).
+*   **REQ-ADM-024**: O painel administrativo MUST expor uma área contendo o texto e diretrizes do Master System Prompt do assistente virtual Sofía (utilizado para interagir com a API de LLM via DeepSeek).
 *   **REQ-ADM-025**: A área de visualização do Master Prompt MUST ser puramente de leitura (`read-only`), servindo estritamente para auditoria visual da persona e diretrizes de comportamento do robô. A edição do prompt via interface administrativa SHALL ser proibida neste release para evitar descalibração acidental do pipeline RAG.
 
 ### 2.6 Exclusão de Usuários e Clientes (deletarUsuarioAdmin)
@@ -69,7 +69,7 @@ Este documento especifica os requisitos de negócio e técnicos para o Painel Ad
 *   **REQ-ADM-033**: Após o logout, o sistema MUST redirecionar automaticamente o usuário para a página de login em `/login`.
 
 ### 2.8 Gerenciamento Dinâmico de API Keys
-*   **REQ-ADM-034**: Administradores MUST poder visualizar, editar e salvar chaves de API (Meta WhatsApp Cloud API e LLM/OpenRouter) dinamicamente pelo dashboard.
+*   **REQ-ADM-034**: Administradores MUST poder visualizar, editar e salvar chaves de API (Meta WhatsApp Cloud API e LLM/DeepSeek) dinamicamente pelo dashboard.
 *   **REQ-ADM-035**: As configurações de chaves de API e tokens MUST ser salvas na tabela de configurações do sistema (ex: `public.configuracoes_sistema`).
 *   **REQ-ADM-036**: O sistema MUST ler essas chaves em tempo de execução utilizando uma função utilitária com fallback automático para as variáveis de ambiente (`.env`) no servidor caso o registro no banco não esteja presente.
 *   **REQ-ADM-037**: Para segurança, as chaves sensíveis (segredos/tokens) MUST ser exibidas de forma mascarada (ex: exibindo apenas caracteres iniciais e asteriscos) na interface do usuário e nunca SHALL ser impressas em texto claro nos logs de auditoria.
@@ -90,7 +90,7 @@ Este documento especifica os requisitos de negócio e técnicos para o Painel Ad
     *   E o arquivo `index.ts` para exportações (barrel exports).
 *   **REQ-ADM-043**: Cada componente de cartão MUST seguir a mesma interface padrão: receber `configInicial` (`Record<string, string>`) e `onToastMessage` (`(tipo: 'success' | 'error', msg: string) => void`), gerenciando seu próprio estado local de carregamento, validação e formulário.
 *   **REQ-ADM-044**: Cada cartão MUST funcionar de forma independente, de modo que a edição ou salvamento em um cartão não afete nem submeta o estado dos outros.
-*   **REQ-ADM-045**: O cartão de LLM API MUST gerenciar `OPENROUTER_API_KEY` (campo tipo password) e `OPENROUTER_MODEL` (select dropdown), oferecendo ações de Testar Conexão (`testarConexaoLLM`), Sincronizar Modelos (`obterModelosDisponiveis`) e Salvar LLM (`salvarConfiguracaoSistema`). Se a chave não estiver configurada, o dropdown deve exibir modelos padrão (Gemini 2.5 Flash, Gemini 2.5 Pro, DeepSeek Chat, LLaMA 3.3).
+*   **REQ-ADM-045**: O cartão de LLM API MUST gerenciar `DEEPSEEK_API_KEY` (campo tipo password) e `DEEPSEEK_MODEL` (select dropdown), oferecendo ações de Testar Conexão (`testAuthorizedDeepSeekModel`), Sincronizar Modelos (`listAuthorizedDeepSeekModels`) e Salvar LLM (`salvarConfiguracaoAdmin`). A lista de modelos MUST vir exclusivamente da ação de servidor autorizada, sem catálogo embutido no cliente: quando nenhum modelo autorizado for retornado para a chave configurada, o dropdown MUST exibir a opção "Nenhum modelo disponível" em vez de modelos padrão.
 *   **REQ-ADM-046**: O cartão de WhatsApp API (Meta Cloud) MUST gerenciar as chaves `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_APP_SECRET` e `WHATSAPP_VERIFY_TOKEN`, com ações para Testar Conexão Meta e Salvar.
 *   **REQ-ADM-047**: O cartão de WhatsApp QR (Evolution API) MUST gerenciar `EVOLUTION_API_URL`, `EVOLUTION_API_KEY` e `EVOLUTION_INSTANCE_NAME`, exibindo uma área de QR Code base64 obtida de `obterQrCodeEvolution` quando não conectado, e suportando o botão "Atualizar QR Code".
 *   **REQ-ADM-048**: O cartão de Evolution API MUST conter o seletor `WHATSAPP_PROVIDER` (provedor ativo de WhatsApp) na parte inferior, representado como um interruptor/toggle com opções "Meta Cloud API" (`meta`) e "Evolution API" (`evolution`). A alteração do switch MUST exibir um aviso de confirmação e persistir imediatamente no banco de dados.
@@ -105,7 +105,7 @@ Este documento especifica os requisitos de negócio e técnicos para o Painel Ad
 
 ### 2.12 Editor de Prompt do Sistema Mestre
 *   **REQ-PRM-001**: O sistema de RAG Sofía MUST parar de carregar a Persona da IA e as instruções operacionais de arquivos estáticos ou variáveis de ambiente locais.
-*   **REQ-PRM-002**: O pipeline de RAG MUST carregar o system prompt a ser enviado na requisição do OpenRouter a partir do valor registrado na tabela `public.configuracoes_sistema` sob a chave `'SOFIA_SYSTEM_PROMPT'`.
+*   **REQ-PRM-002**: O pipeline de RAG MUST carregar o system prompt a ser enviado na requisição da DeepSeek a partir do valor registrado na tabela `public.configuracoes_sistema` sob a chave `'SOFIA_SYSTEM_PROMPT'`.
 *   **REQ-PRM-003**: A aba "Prompt da IA" do painel `AdminDashboard` MUST exibir um editor de texto interativo (textarea) com a carga inicial de `'SOFIA_SYSTEM_PROMPT'`.
 *   **REQ-PRM-004**: Ao clicar em "Salvar", o sistema MUST realizar uma operação de `upsert` na tabela `public.configuracoes_sistema` gravando o novo texto sob a chave `'SOFIA_SYSTEM_PROMPT'` com `eh_segredo = FALSE`.
 *   **REQ-PRM-005**: A ação de salvar o Prompt do Sistema mestre MUST disparar a inclusão de um log de auditoria na tabela `public.logs_auditoria` identificando a ação `'atualizar_prompt_sistema'` e registrando o ID do operador.
@@ -255,7 +255,7 @@ Este documento especifica os requisitos de negócio e técnicos para o Painel Ad
 
 #### Cenário 1: Visualização e atualização de chaves de API pelo administrador
 *   **Given** que o administrador está autenticado no painel administrativo na aba "Integrações",
-*   **When** ele preenche novos valores para o token da Meta e chave de API do OpenRouter e clica em "Salvar",
+*   **When** ele preenche novos valores para o token da Meta e chave de API da DeepSeek e clica em "Salvar",
 *   **Then** o sistema executa uma Server Action que valida as entradas e as persiste na tabela `public.configuracoes_sistema`,
 *   **And** mascara a exibição da chave na interface do usuário após a gravação bem-sucedida,
 *   **And** registra a ação na tabela de logs de auditoria sem expor os valores literais das chaves de API.
@@ -272,7 +272,7 @@ Este documento especifica os requisitos de negócio e técnicos para o Painel Ad
 
 #### Cenário 1: Salvamento independente do cartão de LLM
 *   **Given** que o operador está na aba de Integrações,
-*   **And** o cartão de LLM exibe os campos `OPENROUTER_API_KEY` e `OPENROUTER_MODEL`,
+*   **And** o cartão de LLM exibe os campos `DEEPSEEK_API_KEY` e `DEEPSEEK_MODEL`,
 *   **When** o operador modifica a chave de API do LLM e clica em "Salvar LLM",
 *   **Then** apenas as chaves do LLM são salvas na tabela `configuracoes_sistema`,
 *   **And** nenhuma outra configuração de integração é submetida ou alterada,

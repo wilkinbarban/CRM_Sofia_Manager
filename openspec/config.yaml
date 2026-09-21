@@ -16,7 +16,7 @@ stack:
   storage: "Supabase Storage"
   integrations:
     whatsapp: "Meta WhatsApp Business Cloud API"
-    llm: "OpenRouter API (Gemini/other LLMs)"
+    llm: "DeepSeek API"
     payment: "Mercado Pago Sandbox"
     calendar: "Google Calendar API"
 

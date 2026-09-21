@@ -106,7 +106,7 @@ Un CRM liviano con:
 Debe permitir:
 * Configurar WhatsApp (tokens/ids, estado de conexión, test de webhook)
 * Gestionar prompt máster y prompts derivados (versionado + rollback)
-* Gestionar API keys de OpenRouter (rotación, revocación, modelo permitido)
+* Gestionar API keys de DeepSeek (rotación, revocación, modelo permitido)
 * Configuración operativa: horarios, mensajes fuera de horario, respuestas rápidas
 * Auditoría: cambios de prompts, claves (sin exponer valor), configuración
 
@@ -155,7 +155,7 @@ Salida exigida de diseño: estructura de carpetas OpenSpec + plantilla de spec.
 * shadcn/ui
 * Supabase (Postgres + Auth + Realtime/Storage si aplica)
 * Meta WhatsApp Business Cloud API
-* OpenRouter API (LLMs)
+* DeepSeek API (LLMs)
 
 ---
 
@@ -183,7 +183,7 @@ Salida exigida de diseño: estructura de carpetas OpenSpec + plantilla de spec.
 * Cliente (perfil)
 * Oportunidad (pipeline simple)
 * Pedido (crear/editar)
-* Admin: WhatsApp + IA (prompts) + OpenRouter keys + settings
+* Admin: WhatsApp + IA (prompts) + DeepSeek keys + settings
 * Auditoría
 
 ---
@@ -201,7 +201,7 @@ Salida exigida de diseño: estructura de carpetas OpenSpec + plantilla de spec.
 # Fase 0 — Documentación de arranque (OBLIGATORIA, antes de código)
 Debes entregar estos documentos primero:
 1. OpenSpec/PRD desglosado por módulos (M1–M10) con criterios de aceptación.
-1. Arquitectura (diagrama textual): UI → Server Actions → DB → Integraciones (WhatsApp/OpenRouter).
+1. Arquitectura (diagrama textual): UI → Server Actions → DB → Integraciones (WhatsApp/DeepSeek).
 1. Modelo de datos (tablas + relaciones + índices mínimos).
 1. Seguridad: RLS por tabla + permisos por rol.
 1. Plan de despliegue VPS Ubuntu (Docker compose, TLS, env, backups).

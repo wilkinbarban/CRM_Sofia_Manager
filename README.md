@@ -56,7 +56,7 @@ flowchart TD
 
     subgraph Core["Núcleo da Aplicação (Next.js 16 + Node.js)"]
         SRV["🚀 Server Actions & API Routes"]
-        RAG["🧠 Sofia RAG Pipeline (OpenRouter / DeepSeek)"]
+        RAG["🧠 Sofia RAG Pipeline (DeepSeek)"]
         SEC["🛡️ Security & Phone OTP Gateways"]
     end
 
@@ -127,7 +127,7 @@ flowchart TD
 | **Estilização** | Tailwind CSS 3.4 & Lucide Icons | Design system escuro, denso e responsivo |
 | **Banco de Dados** | Supabase PostgreSQL 15 com RLS & RPCs | Persistência transacional e isolamento multilocatário |
 | **Realtime** | Supabase Realtime | Atualização em tempo real de mensagens e pedidos |
-| **Inteligência Artificial** | OpenRouter (DeepSeek Chat) | Pipeline RAG com injeção dinâmica de estoque e cardápio |
+| **Inteligência Artificial** | DeepSeek | Pipeline RAG com injeção dinâmica de estoque e cardápio |
 | **WhatsApp Gateway** | Evolution API v2 | Comunicação com clientes via WhatsApp |
 | **Pagamentos** | Mercado Pago SDK | Processamento de Pix instantâneo e Checkout Pro |
 | **Agenda** | Google Calendar API v3 | Controle de capacidade e horários de retirada |

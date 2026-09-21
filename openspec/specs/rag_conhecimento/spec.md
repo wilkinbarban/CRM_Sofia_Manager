@@ -7,7 +7,7 @@
 ---
 
 ## 1. Descrição Executiva
-Este documento especifica a implementação do módulo de Recuperação de Informação e Geração Aumentada por Recuperação (RAG - Retrieval-Augmented Generation) integrado à Base de Conhecimento da Churrascaria. O objetivo principal é automatizar o atendimento a clientes através do WhatsApp e Portal Web usando o modelo de linguagem da OpenRouter com a persona virtual "Sofía". A Inteligência Artificial responderá às dúvidas comuns dos clientes (cardápio, preços, horários de funcionamento, regras de reservas e endereço) baseando-se estritamente nos artigos cadastrados e mantidos por administradores em um painel gerencial dedicado.
+Este documento especifica a implementação do módulo de Recuperação de Informação e Geração Aumentada por Recuperação (RAG - Retrieval-Augmented Generation) integrado à Base de Conhecimento da Churrascaria. O objetivo principal é automatizar o atendimento a clientes através do WhatsApp e Portal Web usando o modelo de linguagem da DeepSeek com a persona virtual "Sofía". A Inteligência Artificial responderá às dúvidas comuns dos clientes (cardápio, preços, horários de funcionamento, regras de reservas e endereço) baseando-se estritamente nos artigos cadastrados e mantidos por administradores em um painel gerencial dedicado.
 
 ---
 
@@ -35,9 +35,9 @@ Este documento especifica a implementação do módulo de Recuperação de Infor
 *   **REQ-RAG-010**: Apenas artigos ativos (`ativo = TRUE`) MUST ser retornados pelo serviço de busca.
 *   **REQ-RAG-011**: O serviço de busca MUST limitar o resultado a no máximo 3 (três) artigos com melhor classificação de relevância para a consulta informada.
 
-### 2.3 Integração com OpenRouter e Persona "Sofía"
-*   **REQ-RAG-012**: O backend do sistema MUST carregar as credenciais e parâmetros do modelo a partir das variáveis de ambiente `OPENROUTER_API_KEY` e `OPENROUTER_MODEL`.
-*   **REQ-RAG-013**: A chave `OPENROUTER_API_KEY` MUST ser mantida em segredo absoluto no servidor e nunca ser exposta ao frontend ou gravada em logs de auditoria.
+### 2.3 Integração com DeepSeek e Persona "Sofía"
+*   **REQ-RAG-012**: O backend do sistema MUST carregar as credenciais e parâmetros do modelo a partir das chaves `DEEPSEEK_API_KEY` e `DEEPSEEK_MODEL`, resolvidas primeiro na tabela `public.configuracoes_sistema`, tendo a variável de ambiente correspondente como alternativa.
+*   **REQ-RAG-013**: A chave `DEEPSEEK_API_KEY` MUST ser mantida em segredo absoluto no servidor e nunca ser exposta ao frontend ou gravada em logs de auditoria.
 *   **REQ-RAG-014**: A persona da assistente virtual "Sofía" MUST seguir estritamente as seguintes diretrizes de escrita e comportamento no prompt do sistema (System Prompt):
     *   **Identidade**: Assistente virtual simpática da Churrascaria (Asados).
     *   **Tom e Linguagem**: Educação, presteza, respostas breves e uso moderado de emojis amigáveis.
@@ -48,13 +48,13 @@ Este documento especifica a implementação do módulo de Recuperação de Infor
 ### 2.4 Execução do Pipeline de RAG (Gancho de Entrada / Inbound Hook)
 *   **REQ-RAG-015**: O pipeline de RAG MUST ser disparado de forma automática e assíncrona sempre que uma nova linha for inserida na tabela `public.mensagens` onde o `remetente` seja igual a `'cliente'`.
 *   **REQ-RAG-016**: O pipeline de RAG SHALL NOT ser executado se a coluna `ia_ativa` na tabela `public.conversas` correspondente for igual a `FALSE`.
-*   **REQ-RAG-017**: Ao iniciar a execução, o pipeline MUST construir o contexto de entrada para a chamada da API do OpenRouter, composto por:
+*   **REQ-RAG-017**: Ao iniciar a execução, o pipeline MUST construir o contexto de entrada para a chamada da API da DeepSeek, composto por:
     1.  **System Prompt**: Definição da Persona "Sofía", regras de comportamento e guardrails anti-alucinação.
     2.  **Contexto da Base de Conhecimento**: O conteúdo dos 3 artigos recuperados pelo Serviço de Recuperação de Conhecimento com base no texto da última mensagem do cliente.
     3.  **Histórico da Conversa**: As últimas 10 mensagens anteriores daquela conversa ordenadas cronologicamente (`data_criacao` ascendente), identificando claramente o remetente de cada uma (cliente, operador, ia).
     4.  **Mensagem Atual**: O conteúdo textual da mensagem recém-inserida pelo cliente.
-*   **REQ-RAG-018**: O sistema MUST efetuar a chamada HTTP ao serviço da OpenRouter enviando o contexto construído e aguardar a geração da resposta.
-*   **REQ-RAG-019**: Ao receber a resposta da OpenRouter, o sistema MUST inseri-la na tabela `public.mensagens` preenchendo a coluna `conversa_id`, definindo `remetente` como `'ia'::public.tipo_remetente` e o conteúdo retornado pela IA.
+*   **REQ-RAG-018**: O sistema MUST efetuar a chamada HTTP ao serviço da DeepSeek enviando o contexto construído e aguardar a geração da resposta.
+*   **REQ-RAG-019**: Ao receber a resposta da DeepSeek, o sistema MUST inseri-la na tabela `public.mensagens` preenchendo a coluna `conversa_id`, definindo `remetente` como `'ia'::public.tipo_remetente` e o conteúdo retornado pela IA.
 *   **REQ-RAG-020**: Caso a conversa correspondente esteja vinculada a um cliente com telefone validado e verificado (conforme políticas da Épica 1), o sistema MUST chamar de forma imediata e assíncrona a função de envio do WhatsApp (`enviarMensagemWhatsapp` ou correspondente da Meta Cloud API) para entregar a resposta gerada ao celular do cliente.
 
 ### 2.5 Painel Administrativo de CRUD da Base de Conhecimento
@@ -114,13 +114,13 @@ Este documento especifica a implementação do módulo de Recuperação de Infor
 *   **Then** o sistema intercepta a inserção e dispara a execução do pipeline de RAG.
 *   **And** busca os artigos relacionados ao termo "carnes" na tabela `public.base_conhecimento`.
 *   **And** monta o prompt histórico com as últimas 10 mensagens, o system prompt da persona "Sofía" e os artigos recuperados.
-*   **And** realiza a requisição ao OpenRouter.
+*   **And** realiza a requisição à DeepSeek.
 *   **And** salva a resposta retornada pela IA na tabela `public.mensagens` com `remetente` = `'ia'`.
 
 ### Cenário 3: Pipeline de RAG ignora mensagem quando IA está desligada
 *   **Given** que existe uma conversa com a flag `ia_ativa` = `FALSE` (atendimento humano assumido).
 *   **When** o cliente insere uma nova mensagem na tabela `public.mensagens` com o conteúdo "Qual o endereço?".
-*   **Then** o sistema intercepta a inserção, mas aborta a execução do pipeline de RAG imediatamente sem realizar consultas de artigos nem chamadas para a API do OpenRouter.
+*   **Then** o sistema intercepta a inserção, mas aborta a execução do pipeline de RAG imediatamente sem realizar consultas de artigos nem chamadas para a API da DeepSeek.
 
 ### Cenário 4: Resposta da IA enviada automaticamente para o WhatsApp do cliente verificado
 *   **Given** que uma conversa está associada a um registro de cliente que possui o telefone verificado `5541988887777`.
@@ -132,7 +132,7 @@ Este documento especifica a implementação do módulo de Recuperação de Infor
 ### Cenário 5: Tratamento de dúvidas fora do escopo da Base de Conhecimento (Anti-alucinação)
 *   **Given** que a base de conhecimento possui artigos apenas sobre horários, cardápio e endereço.
 *   **When** o cliente envia a pergunta "Vocês vendem carvão para viagem?" e o serviço de FTS não encontra artigos de alta relevância ou os artigos recuperados não respondem à pergunta.
-*   **Then** o OpenRouter processa a pergunta com base nos guardrails da persona "Sofía".
+*   **Then** a DeepSeek processa a pergunta com base nos guardrails da persona "Sofía".
 *   **And** a IA responde informando educadamente que não dispõe dessa informação específica.
 *   **And** sugere a transferência do atendimento para um atendente humano para que ele possa ajudar com a dúvida.
 
