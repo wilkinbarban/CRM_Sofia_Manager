@@ -1,20 +1,37 @@
 /**
- * DeepSeek model catalog and chat probe client — server-only.
+ * DeepSeek model catalog, chat probe and general chat client — server-only.
  *
  * Reads the authenticated `GET https://api.deepseek.com/models` catalog and
- * projects it onto a safe `{ id, label }` shape for operator UIs, and probes the
+ * projects it onto a safe `{ id, label }` shape for operator UIs, probes the
  * fixed `POST https://api.deepseek.com/chat/completions` endpoint with an
- * operator-selected model. This module must only be imported from server code
- * (`'use server'` actions and React Server Components): it refuses to run when a
- * browser runtime is detected, it keeps the API key inside the Authorization
- * header, and it never returns or logs the key, the response body, or the
- * transport error message.
+ * operator-selected model, and sends real conversations through
+ * `chamarDeepSeekChat` for Sofia's generation and JSON extraction. This module
+ * must only be imported from server code (`'use server'` actions and React
+ * Server Components): it refuses to run when a browser runtime is detected, it
+ * keeps the API key inside the Authorization header, and it never returns or
+ * logs the key, the response body, or the transport error message.
  */
+
+import { obterConfiguracaoSistema } from '@/lib/config/sistema'
 
 export const DEEPSEEK_MODELS_URL = 'https://api.deepseek.com/models'
 export const DEEPSEEK_MODELS_TIMEOUT_MS = 5_000
 export const DEEPSEEK_CHAT_COMPLETIONS_URL = 'https://api.deepseek.com/chat/completions'
 export const DEEPSEEK_CHAT_TIMEOUT_MS = 15_000
+
+/** Fallback when neither the database nor the environment selects a usable
+ * value (https://api-docs.deepseek.com/api/create-chat-completion). */
+export const DEEPSEEK_DEFAULT_MODEL = 'deepseek-flash'
+
+/** Retry policy of `chamarDeepSeekChat`, exported so tests can pin it. */
+export const DEEPSEEK_CHAT_MAX_ATTEMPTS = 2
+export const DEEPSEEK_CHAT_RETRY_BASE_DELAY_MS = 250
+
+/** Hard ceiling on the provider response body: it bounds the streamed read. */
+export const DEEPSEEK_MAX_RESPONSE_BYTES = 1024 * 1024
+
+/** Hard ceiling on the accepted assistant content, applied before trimming. */
+export const DEEPSEEK_MAX_CONTENT_CHARS = 16_000
 
 export type DeepSeekModelOption = {
   id: string
@@ -57,6 +74,40 @@ export type DeepSeekChatProbeInput = {
   timeoutMs?: number
 }
 
+export type DeepSeekChatMessage = {
+  role: 'system' | 'user' | 'assistant'
+  content: string
+}
+
+export type DeepSeekChatError =
+  | 'DEEPSEEK_SERVER_ONLY'
+  | 'DEEPSEEK_MODEL_REQUIRED'
+  | 'DEEPSEEK_NOT_CONFIGURED'
+  | 'DEEPSEEK_TIMEOUT'
+  | 'DEEPSEEK_HTTP_ERROR'
+  | 'DEEPSEEK_REQUEST_FAILED'
+  | 'DEEPSEEK_INVALID_RESPONSE'
+  | 'DEEPSEEK_EMPTY_RESPONSE'
+  | 'DEEPSEEK_RESPONSE_TOO_LARGE'
+
+export type DeepSeekChatResult =
+  | { success: true; content: string }
+  // `attempts`/`retried` are additive: `error`/`status` callers stay unaffected.
+  | { success: false; error: DeepSeekChatError; status?: number; attempts?: number; retried?: boolean }
+
+export type DeepSeekChatInput = {
+  apiKey: string | null | undefined
+  model: string
+  messages: DeepSeekChatMessage[]
+  temperature: number
+  maxTokens: number
+  timeoutMs?: number
+  /** Adds `response_format: { type: 'json_object' }`; the prompt must instruct JSON. */
+  jsonResponse?: boolean
+  maxResponseBytes?: number
+  maxContentChars?: number
+}
+
 const PLACEHOLDER_FRAGMENTS = [
   'placeholder',
   'insert_here',
@@ -75,6 +126,24 @@ export function isUsableDeepSeekApiKey(value: string | null | undefined): boolea
 
   const normalized = apiKey.toLowerCase()
   return !PLACEHOLDER_FRAGMENTS.some((fragment) => normalized.includes(fragment))
+}
+
+/** The trimmed model id, or null when the value cannot be one. */
+function modeloValido(value: unknown): string | null {
+  const modelo = typeof value === 'string' ? value.trim() : ''
+  if (!modelo || /[\s\u0000-\u001f\u007f]/.test(modelo)) return null
+  return modelo
+}
+
+/** Effective model id: an unusable value falls back to `DEEPSEEK_DEFAULT_MODEL`. */
+export function normalizarModeloDeepSeek(value: unknown): string {
+  return modeloValido(value) ?? DEEPSEEK_DEFAULT_MODEL
+}
+
+/** Single resolution path: `configuracoes_sistema`, then `process.env`, then the default. */
+export async function resolverModeloDeepSeek(): Promise<string> {
+  const configurado = await obterConfiguracaoSistema('DEEPSEEK_MODEL')
+  return modeloValido(configurado) ?? modeloValido(process.env.DEEPSEEK_MODEL) ?? DEEPSEEK_DEFAULT_MODEL
 }
 
 function assertServerRuntime(): void {
@@ -162,6 +231,166 @@ export async function listDeepSeekModels(input: DeepSeekModelsInput): Promise<De
   }
 
   return { success: true, models }
+}
+
+/**
+ * Reads a JSON body under a hard byte ceiling, mirroring the bounded guard the
+ * legacy generation path used before this boundary existed. The declared
+ * `content-length` is rejected up front and the streamed read is cancelled as
+ * soon as the running total overflows, so an oversized provider body can never
+ * be buffered whole.
+ */
+async function readBoundedDeepSeekJson(response: Response, maxResponseBytes: number): Promise<unknown> {
+  const declared = response.headers.get('content-length')
+  if (declared && (!/^\d+$/.test(declared) || Number(declared) > maxResponseBytes)) {
+    throw new Error('DEEPSEEK_RESPONSE_TOO_LARGE')
+  }
+  if (!response.body) throw new Error('DEEPSEEK_EMPTY_BODY')
+
+  const reader = response.body.getReader()
+  const chunks: Uint8Array[] = []
+  let total = 0
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    total += value.byteLength
+    if (total > maxResponseBytes) {
+      await reader.cancel()
+      throw new Error('DEEPSEEK_RESPONSE_TOO_LARGE')
+    }
+    chunks.push(value)
+  }
+
+  const bytes = new Uint8Array(total)
+  let offset = 0
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset)
+    offset += chunk.byteLength
+  }
+  return JSON.parse(new TextDecoder().decode(bytes))
+}
+
+/**
+ * Sends a real conversation and returns the assistant text — the single provider
+ * call behind Sofia's generation and the customer-memory JSON extraction.
+ *
+ * Server-only like the rest of this module, it never echoes the API key and
+ * never returns a raw provider body: HTTP, transport, timeout, malformed,
+ * empty and oversized responses all collapse onto stable codes. The request body
+ * always disables thinking (so `temperature` keeps its documented effect), keeps
+ * `stream: false`, and asks for `json_object` only when the caller does.
+ * A transient failure (per-attempt timeout, HTTP 429, HTTP 5xx) is retried at
+ * most once behind a bounded backoff, never outliving the caller `timeoutMs`.
+ */
+export async function chamarDeepSeekChat(input: DeepSeekChatInput): Promise<DeepSeekChatResult> {
+  assertServerRuntime()
+
+  const apiKey = input.apiKey?.trim() ?? ''
+  if (!isUsableDeepSeekApiKey(apiKey)) {
+    return { success: false, error: 'DEEPSEEK_NOT_CONFIGURED' }
+  }
+
+  const model = typeof input.model === 'string' ? input.model.trim() : ''
+  if (!model) {
+    return { success: false, error: 'DEEPSEEK_MODEL_REQUIRED' }
+  }
+
+  const timeoutMs = input.timeoutMs ?? DEEPSEEK_CHAT_TIMEOUT_MS
+  const maxResponseBytes = input.maxResponseBytes ?? DEEPSEEK_MAX_RESPONSE_BYTES
+  const maxContentChars = input.maxContentChars ?? DEEPSEEK_MAX_CONTENT_CHARS
+
+  const body: Record<string, unknown> = {
+    model,
+    messages: input.messages,
+    temperature: input.temperature,
+    max_tokens: input.maxTokens,
+    thinking: { type: 'disabled' },
+    stream: false,
+  }
+  if (input.jsonResponse) {
+    body.response_format = { type: 'json_object' }
+  }
+
+  const deadline = Date.now() + timeoutMs
+  let attempts = 0
+  let response: Response | null = null
+  // Last retryable failure of the loop, reported as-is when no retry is left.
+  let falha: { error: DeepSeekChatError; status?: number } | null = null
+
+  const tentar = () =>
+    fetch(DEEPSEEK_CHAT_COMPLETIONS_URL, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(Math.max(1, Math.min(timeoutMs, deadline - Date.now()))),
+    })
+
+  while (!response && attempts < DEEPSEEK_CHAT_MAX_ATTEMPTS) {
+    if (attempts > 0) {
+      const espera = DEEPSEEK_CHAT_RETRY_BASE_DELAY_MS + Math.floor(Math.random() * 150)
+      // Base backoff, jitter and one 1s attempt must still fit the caller deadline.
+      if (deadline - Date.now() < espera + 1_000) break
+      await new Promise((resolve) => setTimeout(resolve, espera))
+    }
+
+    attempts += 1
+    falha = null
+    try {
+      const tentativa = await tentar()
+      if (tentativa.ok) response = tentativa
+      else if (tentativa.status === 429 || tentativa.status >= 500) {
+        falha = { error: 'DEEPSEEK_HTTP_ERROR', status: tentativa.status }
+      } else {
+        // A permanent 4xx (bad key, unknown model or bad body) is never retried.
+        return { success: false, error: 'DEEPSEEK_HTTP_ERROR', status: tentativa.status, attempts, retried: attempts > 1 }
+      }
+    } catch (error) {
+      if (!isTimeoutError(error)) {
+        return { success: false, error: 'DEEPSEEK_REQUEST_FAILED', attempts, retried: attempts > 1 }
+      }
+      falha = { error: 'DEEPSEEK_TIMEOUT' }
+    }
+  }
+
+  if (!response) {
+    return { success: false, error: falha?.error ?? 'DEEPSEEK_TIMEOUT', status: falha?.status, attempts, retried: attempts > 1 }
+  }
+
+  let payload: unknown
+  try {
+    payload = await readBoundedDeepSeekJson(response, maxResponseBytes)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : ''
+    if (message === 'DEEPSEEK_RESPONSE_TOO_LARGE') {
+      return { success: false, error: 'DEEPSEEK_RESPONSE_TOO_LARGE' }
+    }
+    if (message === 'DEEPSEEK_EMPTY_BODY') {
+      return { success: false, error: 'DEEPSEEK_EMPTY_RESPONSE' }
+    }
+    return { success: false, error: 'DEEPSEEK_INVALID_RESPONSE' }
+  }
+
+  const choices = asRecord(payload)?.choices
+  const firstChoice = Array.isArray(choices) ? asRecord(choices[0]) : null
+  const content = asRecord(firstChoice?.message)?.content
+
+  if (typeof content !== 'string') {
+    return { success: false, error: 'DEEPSEEK_INVALID_RESPONSE' }
+  }
+  if (content.length > maxContentChars) {
+    return { success: false, error: 'DEEPSEEK_RESPONSE_TOO_LARGE' }
+  }
+
+  const trimmed = content.trim()
+  if (!trimmed) {
+    return { success: false, error: 'DEEPSEEK_EMPTY_RESPONSE' }
+  }
+
+  return { success: true, content: trimmed }
 }
 
 /**

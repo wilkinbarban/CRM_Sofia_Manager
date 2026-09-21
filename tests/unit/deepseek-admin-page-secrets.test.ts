@@ -276,6 +276,26 @@ describe('admin page server-to-client configuration projection', () => {
     expect(JSON.stringify(systemConfigs)).not.toContain(ENVIRONMENT_SECRETS.DEEPSEEK_API_KEY)
   })
 
+  it('projects the environment-only DeepSeek model so the operator sees it', async () => {
+    applyEnvironment({ DEEPSEEK_MODEL: 'deepseek-v4-pro' })
+    mocks.createClient.mockResolvedValue(supabaseClient({ rows: [] }))
+
+    const systemConfigs = await projectAdminDashboardProps()
+
+    expect(systemConfigs.DEEPSEEK_MODEL).toBe('deepseek-v4-pro')
+  })
+
+  it('prefers the stored DeepSeek model over the environment fallback', async () => {
+    applyEnvironment({ DEEPSEEK_MODEL: 'deepseek-v4-pro' })
+    mocks.createClient.mockResolvedValue(
+      supabaseClient({ rows: configRows({ DEEPSEEK_MODEL: 'deepseek-flash' }) }),
+    )
+
+    const systemConfigs = await projectAdminDashboardProps()
+
+    expect(systemConfigs.DEEPSEEK_MODEL).toBe('deepseek-flash')
+  })
+
   it('does not mark DeepSeek as configured when the stored key is a placeholder', async () => {
     applyEnvironment({})
     mocks.createClient.mockResolvedValue(

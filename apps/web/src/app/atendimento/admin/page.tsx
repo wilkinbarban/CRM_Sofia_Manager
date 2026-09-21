@@ -121,6 +121,8 @@ export default async function AdminPage({ searchParams }: AdminPageProps) {
   }
 
   const systemConfigs: Record<string, string> = {
+    DEEPSEEK_API_KEY: '',
+    DEEPSEEK_MODEL: '',
     OPENROUTER_API_KEY: '',
     WHATSAPP_ACCESS_TOKEN: '',
     WHATSAPP_PHONE_NUMBER_ID: '',
@@ -156,6 +158,9 @@ export default async function AdminPage({ searchParams }: AdminPageProps) {
   }
   if (!systemConfigs.OPENROUTER_MODEL && process.env.OPENROUTER_MODEL) {
     systemConfigs.OPENROUTER_MODEL = process.env.OPENROUTER_MODEL
+  }
+  if (!systemConfigs.DEEPSEEK_MODEL && process.env.DEEPSEEK_MODEL) {
+    systemConfigs.DEEPSEEK_MODEL = process.env.DEEPSEEK_MODEL
   }
   if (!systemConfigs.WHATSAPP_APP_SECRET && process.env.WHATSAPP_APP_SECRET) {
     systemConfigs.WHATSAPP_APP_SECRET = process.env.WHATSAPP_APP_SECRET

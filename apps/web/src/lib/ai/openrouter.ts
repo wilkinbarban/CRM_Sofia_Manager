@@ -8,7 +8,12 @@ import { normalizeCuritibaPhone, isCuritibaPhone } from '@/lib/auth/phone'
 import { formatarCardapioResumido } from '@/lib/cardapio/formatar'
 import { gerarCatalogoCardsCompleto, obterCartaoCombo } from '@/lib/cardapio/cards'
 import { classifySofiaRequestTier } from '@/lib/ai/router'
-import { isOmniRouteEnabled, chamarOmniRouteGateway, isLegacyFallbackEnabled } from '@/lib/ai/omniroute'
+import { isLegacyFallbackEnabled } from '@/lib/ai/omniroute'
+import {
+  chamarDeepSeekChat,
+  isUsableDeepSeekApiKey,
+  resolverModeloDeepSeek,
+} from '@/lib/ai/deepseek'
 import { customerMemoryEnabled } from '@/lib/sofia/inbound-batch-gates'
 import { agruparFatosParaPrompt } from '@/lib/sofia/customer-memory'
 
@@ -17,47 +22,24 @@ const LEGACY_LLM_MAX_TOKENS = 1024
 const LEGACY_LLM_MAX_RESPONSE_BYTES = 1024 * 1024
 const LEGACY_LLM_MAX_CONTENT_CHARS = 16_000
 
-async function readLegacyLlmJson(response: Response): Promise<any> {
-  const declared = response.headers.get('content-length')
-  if (declared && (!/^\d+$/.test(declared) || Number(declared) > LEGACY_LLM_MAX_RESPONSE_BYTES)) {
-    throw new Error('LEGACY_LLM_RESPONSE_TOO_LARGE')
-  }
-  if (!response.body) throw new Error('LEGACY_LLM_EMPTY_RESPONSE')
-  const reader = response.body.getReader()
-  const chunks: Uint8Array[] = []
-  let total = 0
-  while (true) {
-    const { done, value } = await reader.read()
-    if (done) break
-    total += value.byteLength
-    if (total > LEGACY_LLM_MAX_RESPONSE_BYTES) {
-      await reader.cancel()
-      throw new Error('LEGACY_LLM_RESPONSE_TOO_LARGE')
-    }
-    chunks.push(value)
-  }
-  const bytes = new Uint8Array(total)
-  let offset = 0
-  for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength }
-  return JSON.parse(new TextDecoder().decode(bytes))
+/**
+ * Resolve a chave do provedor de geração: `configuracoes_sistema` primeiro,
+ * `process.env` depois. A chave nunca sai deste módulo.
+ */
+async function obterChaveProvedor(): Promise<string> {
+  const configurada = await obterConfiguracaoSistema('DEEPSEEK_API_KEY')
+  return configurada || process.env.DEEPSEEK_API_KEY || ''
 }
 
 /**
- * Verifica se as chaves da API do OpenRouter não estão configuradas ou possuem valores de placeholder
+ * Modo Mock de contingência: a chave do provedor está ausente ou é um dos
+ * valores de placeholder que o dashboard do operador costuma persistir.
  */
-function isOpenRouterMockMode(apiKey: string | null): boolean {
-  if (!apiKey) return true
+function isLlmMockMode(apiKey: string | null | undefined): boolean {
+  const trimmed = apiKey?.trim()
+  if (!trimmed) return true
 
-  const placeholders = [
-    'placeholder',
-    'your_openrouter_api_key',
-    'insert_here',
-    'your_key',
-    'your-api-key'
-  ]
-
-  const lowerKey = apiKey.toLowerCase()
-  return placeholders.some(p => lowerKey.includes(p))
+  return !isUsableDeepSeekApiKey(trimmed)
 }
 
 /**
@@ -391,6 +373,8 @@ ${regraIdiomaRodape}`
   let respostaIa = ''
 
   // 6.1 Classificação de Negócio em 3 Níveis (Sofia Business Router)
+  // Uso exclusivamente de telemetria: o roteamento por tier não seleciona mais
+  // modelo. O provedor de geração é sempre a DeepSeek com DEEPSEEK_MODEL.
   const classification = classifySofiaRequestTier({
     mensagemCliente,
     valorCarrinhoCentavos: cartAtivo?.total_centavos || 0,
@@ -398,83 +382,40 @@ ${regraIdiomaRodape}`
   })
   console.info(`[RAG Pipeline] Tier de Negócio classificado: ${classification.tier} (${classification.modelAlias}) - Motivo: ${classification.motivo}`)
 
-  // 6.2 Tentativa primária via OmniRoute Gateway (quando habilitado via Feature Flag)
-  if (isOmniRouteEnabled()) {
-    console.info(`[RAG Pipeline] Invocando OmniRoute Gateway com modelo: ${classification.modelAlias}`)
-    const omniResult = await chamarOmniRouteGateway({
-      model: classification.modelAlias,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: `[LEMBRETE DO SISTEMA: Você deve responder APENAS em PORTUGUÊS DO BRASIL. Não importa o idioma da mensagem abaixo, sua resposta DEVE ser em português.]\n\nMensagem do cliente:\n${mensagemCliente}` }
-      ],
-      temperature: 0.1
-    })
-
-    if (omniResult.success && omniResult.content) {
-      respostaIa = omniResult.content
-      console.info(`[RAG Pipeline] OmniRoute respondeu com sucesso em ${omniResult.latenciaMs}ms (modelo: ${omniResult.modelResoluvel})`)
-    } else {
-      console.warn(`[RAG Pipeline] Falha no OmniRoute Gateway (${omniResult.error}). Verificando fallback...`)
-    }
+  // 6.2 Geração via provedor DeepSeek — único caminho de geração.
+  const apiKey = await obterChaveProvedor()
+  let usarMock = isLlmMockMode(apiKey)
+  const geracaoHabilitada = isLegacyFallbackEnabled()
+  if (usarMock) {
+    console.warn('[RAG Pipeline] PROVEDOR_NAO_CONFIGURADO: chave DeepSeek ausente ou placeholder em configuracoes_sistema/ambiente. Nenhuma resposta será gerada pelo provedor.')
+  } else if (apiKey && !geracaoHabilitada) {
+    console.warn('[RAG Pipeline] GERACAO_DESABILITADA: AI_ROUTING_LEGACY_FALLBACK_ENABLED=false desliga o único caminho de geração por IA. Nenhuma resposta foi gerada.')
   }
 
-  // 6.3 Fallback Legacy (OpenRouter / DeepSeek direto) se OmniRoute não foi executado ou falhou
-  const apiKey = await obterConfiguracaoSistema('OPENROUTER_API_KEY')
-  let usarMock = isOpenRouterMockMode(apiKey)
-
-  if (!respostaIa && !usarMock && apiKey && isLegacyFallbackEnabled()) {
+  if (!respostaIa && !usarMock && apiKey && geracaoHabilitada) {
     try {
-      const isDeepSeek = !apiKey.includes('sk-or-') && apiKey.startsWith('sk-')
-
-      const apiUrl = isDeepSeek
-        ? 'https://api.deepseek.com/chat/completions'
-        : 'https://openrouter.ai/api/v1/chat/completions'
-
-      const model = isDeepSeek
-        ? 'deepseek-chat'
-        : ((await obterConfiguracaoSistema('OPENROUTER_MODEL')) || 'google/gemini-2.5-flash')
-
-      const headers: Record<string, string> = {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json'
-      }
-
-      if (!isDeepSeek) {
-        headers['HTTP-Referer'] = 'https://github.com/wilkin/proyectos/Asados'
-        headers['X-Title'] = 'CRM Casa de Assados Brasa & Sabor'
-      }
-
-      const response = await fetch(apiUrl, {
-        method: 'POST',
-        signal: AbortSignal.timeout(LEGACY_LLM_TIMEOUT_MS),
-        headers,
-        body: JSON.stringify({
-          model: model,
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: `[LEMBRETE DO SISTEMA: Você deve responder APENAS em PORTUGUÊS DO BRASIL. Não importa o idioma da mensagem abaixo, sua resposta DEVE ser em português.]\n\nMensagem do cliente:\n${mensagemCliente}` }
-          ],
-          temperature: 0.1,
-          max_tokens: LEGACY_LLM_MAX_TOKENS
-        })
+      const provedor = await chamarDeepSeekChat({
+        apiKey,
+        model: await resolverModeloDeepSeek(),
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: `[LEMBRETE DO SISTEMA: Você deve responder APENAS em PORTUGUÊS DO BRASIL. Não importa o idioma da mensagem abaixo, sua resposta DEVE ser em português.]\n\nMensagem do cliente:\n${mensagemCliente}` }
+        ],
+        temperature: 0.1,
+        maxTokens: LEGACY_LLM_MAX_TOKENS,
+        timeoutMs: LEGACY_LLM_TIMEOUT_MS,
+        maxResponseBytes: LEGACY_LLM_MAX_RESPONSE_BYTES,
+        maxContentChars: LEGACY_LLM_MAX_CONTENT_CHARS,
       })
 
-      if (!response.ok) {
-        throw new Error(`Erro HTTP ${response.status}: ${response.statusText}`)
+      if (!provedor.success) {
+        throw Object.assign(new Error(provedor.error), { attempts: provedor.attempts ?? 1, retried: provedor.retried ?? false })
       }
 
-      const data = await readLegacyLlmJson(response)
-      const content = data.choices?.[0]?.message?.content
-      if (typeof content !== 'string' || content.length > LEGACY_LLM_MAX_CONTENT_CHARS) {
-        throw new Error('LEGACY_LLM_CONTENT_INVALID')
-      }
-      respostaIa = content.trim()
-
-      if (!respostaIa) {
-        throw new Error('OpenRouter retornou resposta vazia.')
-      }
+      respostaIa = provedor.content
     } catch (err) {
-      console.warn('[RAG Pipeline] Falha ao chamar OpenRouter legacy. Ativando Modo Mock de contingência. Erro:', err)
+      const falha = err as Error & { attempts?: number; retried?: boolean }
+      console.warn(`[RAG Pipeline] PROVEDOR_INDISPONIVEL: a resposta NÃO foi gerada pelo provedor de IA (codigo=${falha.message}, tentativas=${falha.attempts ?? 1}, retentativa=${falha.retried ?? false}). Ativando Modo Mock de contingência.`)
       usarMock = true
     }
   }

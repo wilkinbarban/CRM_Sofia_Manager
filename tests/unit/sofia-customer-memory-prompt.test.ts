@@ -1,7 +1,9 @@
+// @vitest-environment node
+
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import * as omniroute from '@/lib/ai/omniroute'
+import * as deepseek from '@/lib/ai/deepseek'
 import { processarRagPipeline } from '@/lib/ai/openrouter'
 import { agruparFatosParaPrompt } from '@/lib/sofia/customer-memory'
 
@@ -109,12 +111,10 @@ function espionarLogs(): string[] {
 
 /** Assembles the real system prompt through the pipeline and returns its bytes. */
 async function promptDaSofia(mensagem = 'Que horas vocês abrem no domingo?'): Promise<string> {
-  vi.stubEnv('AI_ROUTING_V2_ENABLED', 'true')
-  const modulo = omniroute as any
-  const spy = vi.isMockFunction(modulo.chamarOmniRouteGateway)
-    ? modulo.chamarOmniRouteGateway
-    : vi.spyOn(omniroute, 'chamarOmniRouteGateway')
-  spy.mockResolvedValue({ success: true, content: 'ok', modelResolucvel: 'modelo', latenciaMs: 1 })
+  vi.stubEnv('DEEPSEEK_API_KEY', 'sk-test-deepseek-prompt-key')
+  const spy = vi
+    .spyOn(deepseek, 'chamarDeepSeekChat')
+    .mockResolvedValue({ success: true, content: 'ok' })
   spy.mockClear()
   await processarRagPipeline('conversa-1', mensagem, 'web', true)
   return spy.mock.calls[0][0].messages[0].content

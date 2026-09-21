@@ -1,3 +1,5 @@
+// @vitest-environment node
+
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
@@ -82,7 +84,7 @@ describe('integration fail-closed policy', () => {
     expect(result).toBe(false)
   })
 
-  it('returns unavailable instead of generating a mock answer when OpenRouter is unconfigured outside mock mode', async () => {
+  it('returns unavailable instead of generating a mock answer when DeepSeek is unconfigured outside mock mode', async () => {
     mocks.createAdminClient.mockReturnValue(createPipelineSupabase())
 
     const result = await processarRagPipeline('conversa-1', 'Olá')
@@ -90,15 +92,63 @@ describe('integration fail-closed policy', () => {
     expect(result).toEqual({ sucesso: false, error: 'IA_INDISPONIVEL' })
   })
 
-  it('returns unavailable after an OpenRouter request failure outside mock mode', async () => {
+  it('logs the provider failure with its code and attempt count, and stays fail-closed', async () => {
     mocks.createAdminClient.mockReturnValue(createPipelineSupabase())
     mocks.obterConfiguracaoSistema.mockImplementation(async (key: string) => (
-      key === 'OPENROUTER_API_KEY' ? 'configured-key' : null
+      key === 'DEEPSEEK_API_KEY' ? 'sk-configured-key' : null
+    ))
+    const fetchMock = vi.fn().mockResolvedValue(new Response('{}', { status: 503 }))
+    vi.stubGlobal('fetch', fetchMock)
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+
+    const result = await processarRagPipeline('conversa-1', 'Olá')
+
+    expect(result).toEqual({ sucesso: false, error: 'IA_INDISPONIVEL' })
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+
+    const linha = warn.mock.calls.map((args) => args.map(String).join(' ')).join('\n')
+    expect(linha).toContain('PROVEDOR_INDISPONIVEL')
+    expect(linha).toContain('DEEPSEEK_HTTP_ERROR')
+    expect(linha).toContain('tentativas=2')
+    expect(linha).toContain('retentativa=true')
+    expect(linha).toContain('NÃO foi gerada')
+    expect(linha).not.toContain('sk-configured-key')
+  })
+
+  it('returns unavailable after a DeepSeek request failure outside mock mode', async () => {
+    mocks.createAdminClient.mockReturnValue(createPipelineSupabase())
+    mocks.obterConfiguracaoSistema.mockImplementation(async (key: string) => (
+      key === 'DEEPSEEK_API_KEY' ? 'sk-configured-key' : null
     ))
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('provider unavailable')))
 
     const result = await processarRagPipeline('conversa-1', 'Olá')
 
     expect(result).toEqual({ sucesso: false, error: 'IA_INDISPONIVEL' })
+  })
+
+  it('generates through the DeepSeek endpoint with the configured model and never the OpenRouter endpoint', async () => {
+    mocks.createAdminClient.mockReturnValue(createPipelineSupabase())
+    mocks.obterConfiguracaoSistema.mockImplementation(async (key: string) => {
+      if (key === 'DEEPSEEK_API_KEY') return 'sk-deepseek-configured-key'
+      if (key === 'DEEPSEEK_MODEL') return 'deepseek-v4-pro'
+      return null
+    })
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ choices: [{ message: { content: 'Costela Premium' } }] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await processarRagPipeline('conversa-1', 'Olá', undefined, true)
+
+    expect(result).toEqual({ sucesso: true, canal: undefined, respostaIa: 'Costela Premium' })
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toBe('https://api.deepseek.com/chat/completions')
+    expect(String(init.body)).toContain('deepseek-v4-pro')
+    expect(String(init.body)).not.toContain('openrouter')
   })
 })
