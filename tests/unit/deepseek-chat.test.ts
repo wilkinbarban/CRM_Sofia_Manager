@@ -24,11 +24,13 @@ vi.mock('@/lib/config/sistema', () => ({
 import {
   DEEPSEEK_CHAT_COMPLETIONS_URL,
   DEEPSEEK_CHAT_MAX_ATTEMPTS,
+  DEEPSEEK_CHAT_RETRY_BASE_DELAY_MS,
   DEEPSEEK_DEFAULT_MODEL,
   DEEPSEEK_VISION_MODELS,
   chamarDeepSeekChat,
   isDeepSeekVisionModel,
   normalizarModeloDeepSeek,
+  resolverModeloDeepSeek,
 } from '@/lib/ai/deepseek'
 import { chamarModeloEconomicoJson } from '@/lib/ai/llm-json'
 
@@ -362,6 +364,40 @@ describe('chamarModeloEconomicoJson', () => {
 })
 
 describe('chamarDeepSeekChat — bounded retry', () => {
+  it('pins the exported retry policy so a silent change cannot ship', () => {
+    expect(DEEPSEEK_CHAT_MAX_ATTEMPTS).toBe(2)
+    expect(DEEPSEEK_CHAT_RETRY_BASE_DELAY_MS).toBe(250)
+  })
+
+  it('retries a transient per-attempt timeout once and succeeds on the second attempt', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(new DOMException('The operation was aborted due to timeout', 'TimeoutError'))
+      .mockResolvedValueOnce(chatResponse(completion('Costela Premium')))
+    global.fetch = fetchMock as unknown as typeof fetch
+
+    const result = await chamarDeepSeekChat(baseInput())
+
+    expect(result).toEqual({ success: true, content: 'Costela Premium' })
+    expect(fetchMock).toHaveBeenCalledTimes(DEEPSEEK_CHAT_MAX_ATTEMPTS)
+  })
+
+  it('stops at exactly two requests for a persistent 429 and reports the honest failure', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(chatResponse({}, 429))
+    global.fetch = fetchMock as unknown as typeof fetch
+
+    const result = await chamarDeepSeekChat(baseInput())
+
+    expect(result).toEqual({
+      success: false,
+      error: 'DEEPSEEK_HTTP_ERROR',
+      status: 429,
+      attempts: DEEPSEEK_CHAT_MAX_ATTEMPTS,
+      retried: true,
+    })
+    expect(fetchMock).toHaveBeenCalledTimes(DEEPSEEK_CHAT_MAX_ATTEMPTS)
+  })
+
   it('retries a 429 once and succeeds on the second attempt', async () => {
     const fetchMock = vi
       .fn()
@@ -464,11 +500,46 @@ describe('DeepSeek vision content parts', () => {
 })
 
 describe('DeepSeek model resolution', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks()
+    mocks.obterConfiguracaoSistema.mockResolvedValue(null)
+    process.env = { ...originalEnv }
+    delete process.env.DEEPSEEK_MODEL
+  })
+
+  afterEach(() => {
+    process.env = originalEnv
+    vi.unstubAllGlobals()
+  })
+
   it('falls back to the default for an unusable model id and keeps a usable one', () => {
     for (const impossivel of ['', '   ', 'deepseek flash', undefined]) {
       expect(normalizarModeloDeepSeek(impossivel)).toBe(DEEPSEEK_DEFAULT_MODEL)
     }
 
     expect(normalizarModeloDeepSeek(' deepseek-v4-pro ')).toBe('deepseek-v4-pro')
+  })
+
+  it('prefers a usable stored model over the environment', async () => {
+    mocks.obterConfiguracaoSistema.mockImplementation(async (key: string) => (
+      key === 'DEEPSEEK_MODEL' ? 'deepseek-v4-pro' : null
+    ))
+    process.env.DEEPSEEK_MODEL = 'deepseek-flash'
+
+    await expect(resolverModeloDeepSeek()).resolves.toBe('deepseek-v4-pro')
+  })
+
+  it('falls through an unusable stored model to the environment, then to the default', async () => {
+    // An unusable operator entry never wins over a usable deployment value.
+    mocks.obterConfiguracaoSistema.mockImplementation(async (key: string) => (
+      key === 'DEEPSEEK_MODEL' ? 'deepseek v4 pro' : null
+    ))
+    process.env.DEEPSEEK_MODEL = 'deepseek-v4-flash'
+
+    await expect(resolverModeloDeepSeek()).resolves.toBe('deepseek-v4-flash')
+
+    process.env.DEEPSEEK_MODEL = '   '
+
+    await expect(resolverModeloDeepSeek()).resolves.toBe(DEEPSEEK_DEFAULT_MODEL)
   })
 })

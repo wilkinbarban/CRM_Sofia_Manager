@@ -24,7 +24,7 @@ import {
   agendarPedidoNoCalendario,
   atualizarPedidoNoCalendarioComoPago,
 } from '@/lib/calendar/google'
-import { processarRagPipeline } from '@/lib/ai/openrouter'
+import { processarRagBatchPipeline, processarRagPipeline } from '@/lib/ai/openrouter'
 
 function createPipelineSupabase() {
   return {
@@ -68,6 +68,7 @@ describe('integration fail-closed policy', () => {
   })
 
   afterEach(() => {
+    delete process.env.AI_ROUTING_LEGACY_FALLBACK_ENABLED
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
   })
@@ -82,6 +83,50 @@ describe('integration fail-closed policy', () => {
     const result = await atualizarPedidoNoCalendarioComoPago('pedido-1', 'event-1')
 
     expect(result).toBe(false)
+  })
+
+  it('logs PROVEDOR_NAO_CONFIGURADO and stays fail-closed when the DeepSeek key is unconfigured', async () => {
+    mocks.createAdminClient.mockReturnValue(createPipelineSupabase())
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+
+    const result = await processarRagPipeline('conversa-1', 'Olá')
+
+    expect(result).toEqual({ sucesso: false, error: 'IA_INDISPONIVEL' })
+    expect(fetchMock).not.toHaveBeenCalled()
+
+    const linha = warn.mock.calls.map((args) => args.map(String).join(' ')).join('\n')
+    expect(linha).toContain('PROVEDOR_NAO_CONFIGURADO')
+  })
+
+  it('logs GERACAO_DESABILITADA and fails closed without any provider request when the legacy fallback is disabled', async () => {
+    mocks.createAdminClient.mockReturnValue(createPipelineSupabase())
+    mocks.obterConfiguracaoSistema.mockImplementation(async (key: string) => (
+      key === 'DEEPSEEK_API_KEY' ? 'sk-configured-key' : null
+    ))
+    process.env.AI_ROUTING_LEGACY_FALLBACK_ENABLED = 'false'
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+
+    await expect(processarRagBatchPipeline('conversa-1', 'Olá', 'web')).rejects.toThrow('SOFIA_BATCH_GENERATION_FAILED')
+
+    expect(fetchMock).not.toHaveBeenCalled()
+
+    const linha = warn.mock.calls.map((args) => args.map(String).join(' ')).join('\n')
+    expect(linha).toContain('GERACAO_DESABILITADA')
+    expect(linha).not.toContain('sk-configured-key')
+  })
+
+  it('fails the batch pipeline closed with SOFIA_BATCH_GENERATION_FAILED when the provider is unconfigured', async () => {
+    mocks.createAdminClient.mockReturnValue(createPipelineSupabase())
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(processarRagBatchPipeline('conversa-1', 'Olá', 'web')).rejects.toThrow('SOFIA_BATCH_GENERATION_FAILED')
+
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 
   it('returns unavailable instead of generating a mock answer when DeepSeek is unconfigured outside mock mode', async () => {

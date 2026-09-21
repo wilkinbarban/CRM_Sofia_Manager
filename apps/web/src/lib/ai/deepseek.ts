@@ -168,7 +168,8 @@ export function normalizarModeloDeepSeek(value: unknown): string {
   return modeloValido(value) ?? DEEPSEEK_DEFAULT_MODEL
 }
 
-/** Single resolution path: `configuracoes_sistema`, then `process.env`, then the default. */
+/** Single resolution path: `configuracoes_sistema`, then `process.env`, then the default.
+ * An unusable stored value falls through to the environment by design — a usable deployment value beats an unusable operator entry — instead of going straight to the default. */
 export async function resolverModeloDeepSeek(): Promise<string> {
   const configurado = await obterConfiguracaoSistema('DEEPSEEK_MODEL')
   return modeloValido(configurado) ?? modeloValido(process.env.DEEPSEEK_MODEL) ?? DEEPSEEK_DEFAULT_MODEL

@@ -1766,10 +1766,6 @@ export async function enviarComprovantePagamentoCliente(
     if (downloadError || !fileBlob) return { success: false, error: 'COMPROVANTE_ARQUIVO_INACESSIVEL' }
 
     const deliveryId = `web-${pedidoId}-${payload.urlComprovante}`
-    const [apiKey, model] = await Promise.all([
-      obterConfiguracaoSistema('OPENROUTER_API_KEY'),
-      obterConfiguracaoSistema('OPENROUTER_MODEL'),
-    ])
     const processed = await processCanonicalPaymentProof({
       channel: 'web',
       deliveryId,
@@ -1781,8 +1777,6 @@ export async function enviarComprovantePagamentoCliente(
       mimeType: fileBlob.type,
       db: supabaseAdmin,
       storage: supabaseAdmin.storage.from('payment-proofs'),
-      apiKey,
-      model,
     })
     if (processed.status === 'disabled') return { success: false, error: 'COMPROVANTE_PIPELINE_DESATIVADO' }
     if (processed.status === 'rejected') return { success: false, error: processed.error }

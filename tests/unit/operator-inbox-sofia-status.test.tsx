@@ -80,7 +80,7 @@ function makeStatus(overrides: Partial<SofiaAtendimentoStatus> = {}): SofiaAtend
       },
     },
     credits: {
-      provider: 'openrouter',
+      provider: 'deepseek',
       balanceUsd: 2.5,
       state: 'fresh',
       fetchedAt: '2026-07-10T12:00:00.000Z',
@@ -89,8 +89,8 @@ function makeStatus(overrides: Partial<SofiaAtendimentoStatus> = {}): SofiaAtend
       color: 'green',
     },
     runtime: {
-      provider: 'openrouter',
-      model: 'deepseek/deepseek-chat',
+      provider: 'deepseek',
+      model: 'deepseek-v4-pro',
     },
     permissions: {
       canToggleGlobalSofia: true,

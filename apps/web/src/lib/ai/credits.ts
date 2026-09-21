@@ -1,6 +1,7 @@
 import { obterConfiguracaoSistema } from '@/lib/config/sistema'
 
-export type LlmCreditProvider = 'deepseek' | 'openrouter'
+/** Sofia's only configured LLM provider: the retired second adapter is gone. */
+export type LlmCreditProvider = 'deepseek'
 export type LlmCreditColor = 'green' | 'yellow' | 'red' | 'neutral'
 export type LlmCreditState = 'fresh' | 'stale' | 'unknown'
 
@@ -17,22 +18,23 @@ export type LlmCreditStatus = {
 
 type JsonRecord = Record<string, unknown>
 
-type ProviderResolutionInput = {
-  openRouterApiKey?: string | null
-  deepSeekApiKey?: string | null
-  model?: string | null
-  provider?: string | null
-}
-
-type ProviderResolution = {
-  provider: LlmCreditProvider
-  apiKey: string | null
-}
-
 const THIRTY_MINUTES_MS = 30 * 60 * 1000
-const OPENROUTER_CREDITS_URL = 'https://openrouter.ai/api/v1/credits'
-const OPENROUTER_KEY_URL = 'https://openrouter.ai/api/v1/key'
 const DEEPSEEK_BALANCE_URL = 'https://api.deepseek.com/user/balance'
+
+/**
+ * Placeholder values the operator dashboard is known to persist. These are the
+ * provider-neutral fragments that replaced the retired provider-specific literal,
+ * and detection stays deliberately broad: any known fragment, anywhere in the
+ * value, makes the credential unusable.
+ */
+const PLACEHOLDER_FRAGMENTS = [
+  'placeholder',
+  'your_deepseek_api_key',
+  'your_api_key',
+  'insert_here',
+  'your_key',
+  'your-api-key',
+]
 
 let cachedStatus: LlmCreditStatus | null = null
 
@@ -62,81 +64,11 @@ function readNumber(source: JsonRecord | null, keys: string[]): number | null {
   return null
 }
 
-function nestedData(payload: unknown): JsonRecord | null {
-  const root = asRecord(payload)
-  if (!root) return null
-  return asRecord(root.data) ?? root
-}
-
 function isPlaceholder(value: string | null | undefined): boolean {
   if (!value) return true
 
-  const placeholders = [
-    'placeholder',
-    'your_openrouter_api_key',
-    'insert_here',
-    'your_key',
-    'your-api-key',
-  ]
-
   const lowerValue = value.toLowerCase()
-  return placeholders.some((placeholder) => lowerValue.includes(placeholder))
-}
-
-function isDirectDeepSeekKey(apiKey: string | null | undefined): boolean {
-  return Boolean(apiKey?.startsWith('sk-') && !apiKey.includes('sk-or-'))
-}
-
-function isUsableApiKey(apiKey: string | null | undefined): boolean {
-  return !isPlaceholder(apiKey)
-}
-
-export function resolveLlmCreditProvider(input: ProviderResolutionInput): ProviderResolution {
-  const openRouterApiKey = input.openRouterApiKey?.trim() || null
-  const deepSeekApiKey = input.deepSeekApiKey?.trim() || null
-  const providerHint = input.provider?.toLowerCase() ?? ''
-  const modelHint = input.model?.toLowerCase() ?? ''
-
-  if (isUsableApiKey(openRouterApiKey)) {
-    if (isDirectDeepSeekKey(openRouterApiKey)) {
-      return { provider: 'deepseek', apiKey: openRouterApiKey }
-    }
-
-    return { provider: 'openrouter', apiKey: openRouterApiKey }
-  }
-
-  if (isUsableApiKey(deepSeekApiKey)) {
-    return { provider: 'deepseek', apiKey: deepSeekApiKey }
-  }
-
-  if (providerHint.includes('openrouter') || modelHint.includes('openrouter')) {
-    return { provider: 'openrouter', apiKey: openRouterApiKey }
-  }
-
-  return { provider: 'openrouter', apiKey: openRouterApiKey }
-}
-
-export function parseOpenRouterRemainingUsd(creditsPayload: unknown, keyPayload: unknown): number | null {
-  const credits = nestedData(creditsPayload)
-  const key = nestedData(keyPayload)
-
-  const directKeyRemaining = readNumber(key, [
-    'limit_remaining',
-    'credits_remaining',
-    'remaining_credits',
-    'remaining',
-  ])
-  if (directKeyRemaining != null) return Math.max(0, directKeyRemaining)
-
-  const limit = readNumber(key, ['limit', 'credit_limit', 'credits_limit'])
-  const keyUsage = readNumber(key, ['usage', 'used', 'credits_used'])
-  if (limit != null && keyUsage != null) return Math.max(0, limit - keyUsage)
-
-  const totalCredits = readNumber(credits, ['total_credits', 'credits', 'purchased', 'total_purchased'])
-  const totalUsage = readNumber(credits, ['total_usage', 'usage', 'used', 'credits_used'])
-  if (totalCredits != null && totalUsage != null) return Math.max(0, totalCredits - totalUsage)
-
-  return null
+  return PLACEHOLDER_FRAGMENTS.some((placeholder) => lowerValue.includes(placeholder))
 }
 
 export function parseDeepSeekRemainingUsd(balancePayload: unknown): number | null {
@@ -153,12 +85,12 @@ export function parseDeepSeekRemainingUsd(balancePayload: unknown): number | nul
   return null
 }
 
-function freshStatus(provider: LlmCreditProvider, balanceUsd: number | null, now: Date): LlmCreditStatus {
+function freshStatus(balanceUsd: number | null, now: Date): LlmCreditStatus {
   const fetchedAt = now.toISOString()
   const expiresAt = new Date(now.getTime() + THIRTY_MINUTES_MS).toISOString()
 
   return {
-    provider,
+    provider: 'deepseek',
     balanceUsd,
     state: balanceUsd == null ? 'unknown' : 'fresh',
     fetchedAt,
@@ -168,9 +100,9 @@ function freshStatus(provider: LlmCreditProvider, balanceUsd: number | null, now
   }
 }
 
-function staleStatus(provider: LlmCreditProvider, now: Date, error: string): LlmCreditStatus {
+function staleStatus(now: Date, error: string): LlmCreditStatus {
   return {
-    provider,
+    provider: 'deepseek',
     balanceUsd: null,
     state: cachedStatus ? 'stale' : 'unknown',
     fetchedAt: cachedStatus?.fetchedAt ?? null,
@@ -186,8 +118,8 @@ function isCacheFresh(now: Date): boolean {
   return new Date(cachedStatus.expiresAt).getTime() > now.getTime()
 }
 
-async function fetchJson(url: string, apiKey: string, provider: LlmCreditProvider): Promise<unknown> {
-  const response = await fetch(url, {
+async function fetchDeepSeekBalance(apiKey: string): Promise<unknown> {
+  const response = await fetch(DEEPSEEK_BALANCE_URL, {
     method: 'GET',
     headers: {
       Authorization: `Bearer ${apiKey}`,
@@ -196,7 +128,7 @@ async function fetchJson(url: string, apiKey: string, provider: LlmCreditProvide
   })
 
   if (!response.ok) {
-    throw new Error(`${provider} credits request failed with HTTP ${response.status}`)
+    throw new Error(`deepseek credits request failed with HTTP ${response.status}`)
   }
 
   return response.json()
@@ -209,39 +141,22 @@ export async function getLlmCreditStatus(options: { forceRefresh?: boolean; now?
     return cachedStatus as LlmCreditStatus
   }
 
-  const [openRouterApiKey, configuredDeepSeekApiKey, model] = await Promise.all([
-    obterConfiguracaoSistema('OPENROUTER_API_KEY'),
-    obterConfiguracaoSistema('DEEPSEEK_API_KEY'),
-    obterConfiguracaoSistema('OPENROUTER_MODEL'),
-  ])
-
-  const { provider, apiKey } = resolveLlmCreditProvider({
-    openRouterApiKey,
-    deepSeekApiKey: configuredDeepSeekApiKey || process.env.DEEPSEEK_API_KEY,
-    model,
-  })
+  // Single credential path, exactly like the rest of the server:
+  // `configuracoes_sistema` first, then `process.env`.
+  const configurada = await obterConfiguracaoSistema('DEEPSEEK_API_KEY')
+  const apiKey = configurada?.trim() || process.env.DEEPSEEK_API_KEY?.trim() || null
 
   if (isPlaceholder(apiKey)) {
-    return staleStatus(provider, now, `${provider} API key is not configured`)
+    return staleStatus(now, 'DEEPSEEK_API_KEY is not configured')
   }
 
   try {
-    if (provider === 'deepseek') {
-      const payload = await fetchJson(DEEPSEEK_BALANCE_URL, apiKey as string, provider)
-      const status = freshStatus(provider, parseDeepSeekRemainingUsd(payload), now)
-      cachedStatus = status
-      return status
-    }
-
-    const [creditsPayload, keyPayload] = await Promise.all([
-      fetchJson(OPENROUTER_CREDITS_URL, apiKey as string, provider),
-      fetchJson(OPENROUTER_KEY_URL, apiKey as string, provider),
-    ])
-    const status = freshStatus(provider, parseOpenRouterRemainingUsd(creditsPayload, keyPayload), now)
+    const payload = await fetchDeepSeekBalance(apiKey as string)
+    const status = freshStatus(parseDeepSeekRemainingUsd(payload), now)
     cachedStatus = status
     return status
   } catch (error) {
-    return staleStatus(provider, now, error instanceof Error ? error.message : 'Unknown credit provider error')
+    return staleStatus(now, error instanceof Error ? error.message : 'Unknown DeepSeek credit provider error')
   }
 }
 
