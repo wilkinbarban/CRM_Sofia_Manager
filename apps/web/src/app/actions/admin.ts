@@ -17,6 +17,7 @@ import { resolveOmniRouteAdminTarget } from '@/lib/ai/omniroute-admin-target'
 import {
   isUsableDeepSeekApiKey,
   listDeepSeekModels,
+  probeDeepSeekChat,
   type DeepSeekModelOption,
 } from '@/lib/ai/deepseek'
 import { parseFinancialOperationalMetrics, validateReportingPeriod } from '@/lib/admin/financial-metrics'
@@ -896,6 +897,49 @@ export async function listAuthorizedDeepSeekModels(): Promise<
     }
 
     return { success: true, models: result.models }
+  } catch {
+    return { success: false, error: 'DEEPSEEK_OPERATOR_FAILED' }
+  }
+}
+
+/**
+ * Server Action: testAuthorizedDeepSeekModel
+ * Probes the stored DeepSeek credential against one operator-selected model.
+ *
+ * The caller supplies only a model ID. The key is resolved server-side from the
+ * same precedence as `listAuthorizedDeepSeekModels` (`configuracoes_sistema`
+ * first, environment fallback) so it never travels through the browser, and a
+ * blank or non-string model short-circuits before any key lookup or network
+ * call. The result carries only a stable code plus the requested model: no key,
+ * no provider body and no provider message. The model-list action above is left
+ * untouched.
+ */
+export async function testAuthorizedDeepSeekModel(modelId: unknown): Promise<
+  { success: true; model: string } | { success: false; error: string }
+> {
+  try {
+    const check = await verificarPermissaoOperador()
+    if (!check.authorized || !check.user) {
+      return { success: false, error: check.error || 'ACESSO_NEGADO_NAO_AUTENTICADO' }
+    }
+
+    if (typeof modelId !== 'string' || modelId.trim() === '') {
+      return { success: false, error: 'DEEPSEEK_MODEL_REQUIRED' }
+    }
+
+    const configuredApiKey = await obterConfiguracaoSistema('DEEPSEEK_API_KEY')
+    const apiKey = configuredApiKey || process.env.DEEPSEEK_API_KEY || ''
+
+    if (!isUsableDeepSeekApiKey(apiKey)) {
+      return { success: false, error: 'DEEPSEEK_NOT_CONFIGURED' }
+    }
+
+    const result = await probeDeepSeekChat({ apiKey, model: modelId })
+    if (!result.success) {
+      return { success: false, error: result.error }
+    }
+
+    return { success: true, model: result.model }
   } catch {
     return { success: false, error: 'DEEPSEEK_OPERATOR_FAILED' }
   }

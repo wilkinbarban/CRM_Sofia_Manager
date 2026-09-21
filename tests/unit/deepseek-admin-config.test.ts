@@ -43,6 +43,8 @@ vi.mock('@/lib/config/sistema', async (importOriginal) => {
 
 const CONFIGURED_KEY = 'sk-deepseek-secret-configured-key'
 const ENV_KEY = 'sk-deepseek-secret-env-key'
+const PROVIDER_BODY_MARKER = 'PROVIDER_COMPLETION_BODY_MARKER'
+const CALLER_KEY = 'sk-deepseek-secret-caller-key'
 
 const originalFetch = global.fetch
 const originalEnv = process.env
@@ -94,6 +96,158 @@ async function loadAction() {
   const actionsModule = await import('@/app/actions/admin')
   return actionsModule.listAuthorizedDeepSeekModels
 }
+
+async function loadModelProbeAction() {
+  const actionsModule = await import('@/app/actions/admin')
+  return actionsModule.testAuthorizedDeepSeekModel
+}
+
+function mockChatProbeResponse() {
+  return vi.fn().mockResolvedValue({
+    ok: true,
+    status: 200,
+    statusText: 'OK',
+    json: async () => ({
+      id: 'chatcmpl-1',
+      model: 'deepseek-reasoner',
+      choices: [{ message: { role: 'assistant', content: PROVIDER_BODY_MARKER } }],
+    }),
+    text: async () => PROVIDER_BODY_MARKER,
+  } as unknown as Response)
+}
+
+describe('testAuthorizedDeepSeekModel Server Action', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.restoreAllMocks()
+    process.env = { ...originalEnv }
+    delete process.env.DEEPSEEK_API_KEY
+  })
+
+  afterEach(() => {
+    global.fetch = originalFetch
+    process.env = originalEnv
+  })
+
+  it('rejects a caller without operator permissions before resolving any key', async () => {
+    const fetchMock = vi.fn()
+    global.fetch = fetchMock as unknown as typeof fetch
+    mocks.createClient.mockResolvedValue(makeOperatorClient('cliente'))
+
+    const testAuthorizedDeepSeekModel = await loadModelProbeAction()
+    const result = await testAuthorizedDeepSeekModel('deepseek-chat')
+
+    expect(result).toEqual({ success: false, error: 'ACESSO_NEGADO_PERMISSAO_INSUFICIENTE' })
+    expect(mocks.obterConfiguracaoSistema).not.toHaveBeenCalled()
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('requires a non-empty model id and never probes without one', async () => {
+    const fetchMock = vi.fn()
+    global.fetch = fetchMock as unknown as typeof fetch
+    mocks.createClient.mockResolvedValue(makeOperatorClient('admin'))
+    mocks.obterConfiguracaoSistema.mockResolvedValue(CONFIGURED_KEY)
+
+    const testAuthorizedDeepSeekModel = await loadModelProbeAction()
+
+    for (const model of ['', '   ', null, undefined, 7, {}, ['deepseek-chat']]) {
+      const result = await testAuthorizedDeepSeekModel(model)
+      expect(result).toEqual({ success: false, error: 'DEEPSEEK_MODEL_REQUIRED' })
+    }
+
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('ignores a caller-supplied key: the probe only accepts a model id', async () => {
+    const fetchMock = vi.fn()
+    global.fetch = fetchMock as unknown as typeof fetch
+    mocks.createClient.mockResolvedValue(makeOperatorClient('admin'))
+    mocks.obterConfiguracaoSistema.mockResolvedValue(CONFIGURED_KEY)
+
+    const testAuthorizedDeepSeekModel = await loadModelProbeAction()
+    const result = await testAuthorizedDeepSeekModel({ model: 'deepseek-chat', apiKey: CALLER_KEY })
+
+    expect(result).toEqual({ success: false, error: 'DEEPSEEK_MODEL_REQUIRED' })
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(JSON.stringify(result)).not.toContain(CALLER_KEY)
+  })
+
+  it('returns a stable not-configured error when the stored key is absent or a placeholder', async () => {
+    const fetchMock = vi.fn()
+    global.fetch = fetchMock as unknown as typeof fetch
+    mocks.createClient.mockResolvedValue(makeOperatorClient('supervisor'))
+
+    const testAuthorizedDeepSeekModel = await loadModelProbeAction()
+
+    for (const stored of [null, '', 'sk-your-api-key-placeholder']) {
+      mocks.obterConfiguracaoSistema.mockResolvedValue(stored)
+      const result = await testAuthorizedDeepSeekModel('deepseek-chat')
+      expect(result).toEqual({ success: false, error: 'DEEPSEEK_NOT_CONFIGURED' })
+    }
+
+    expect(mocks.obterConfiguracaoSistema).toHaveBeenCalledWith('DEEPSEEK_API_KEY')
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('probes the selected model with the stored key and returns no secret or provider body', async () => {
+    const fetchMock = mockChatProbeResponse()
+    global.fetch = fetchMock as unknown as typeof fetch
+    mocks.createClient.mockResolvedValue(makeOperatorClient('admin'))
+    mocks.obterConfiguracaoSistema.mockResolvedValue(CONFIGURED_KEY)
+
+    const testAuthorizedDeepSeekModel = await loadModelProbeAction()
+    const result = await testAuthorizedDeepSeekModel('deepseek-reasoner')
+
+    expect(result).toEqual({ success: true, model: 'deepseek-reasoner' })
+    const serialized = JSON.stringify(result)
+    expect(serialized).not.toContain(CONFIGURED_KEY)
+    expect(serialized).not.toContain('secret-configured')
+    expect(serialized).not.toContain(PROVIDER_BODY_MARKER)
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toBe('https://api.deepseek.com/chat/completions')
+    expect(init.headers).toMatchObject({ Authorization: `Bearer ${CONFIGURED_KEY}` })
+    expect(JSON.parse(String(init.body)).model).toBe('deepseek-reasoner')
+  })
+
+  it('falls back to the environment key when the database has no stored value', async () => {
+    process.env.DEEPSEEK_API_KEY = ENV_KEY
+    const fetchMock = mockChatProbeResponse()
+    global.fetch = fetchMock as unknown as typeof fetch
+    mocks.createClient.mockResolvedValue(makeOperatorClient('supervisor'))
+    mocks.obterConfiguracaoSistema.mockResolvedValue(null)
+
+    const testAuthorizedDeepSeekModel = await loadModelProbeAction()
+    const result = await testAuthorizedDeepSeekModel('deepseek-chat')
+
+    expect(result).toEqual({ success: true, model: 'deepseek-chat' })
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(init.headers).toMatchObject({ Authorization: `Bearer ${ENV_KEY}` })
+  })
+
+  it('surfaces only the stable provider failure code when the provider rejects the probe', async () => {
+    const text = vi.fn(async () => `invalid credentials for ${CONFIGURED_KEY}: ${PROVIDER_BODY_MARKER}`)
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 402,
+      statusText: 'Payment Required',
+      text,
+      json: async () => ({ error: { message: `invalid credentials for ${CONFIGURED_KEY}` } }),
+    } as unknown as Response) as unknown as typeof fetch
+    mocks.createClient.mockResolvedValue(makeOperatorClient('admin'))
+    mocks.obterConfiguracaoSistema.mockResolvedValue(CONFIGURED_KEY)
+
+    const testAuthorizedDeepSeekModel = await loadModelProbeAction()
+    const result = await testAuthorizedDeepSeekModel('deepseek-chat')
+
+    expect(result).toEqual({ success: false, error: 'DEEPSEEK_HTTP_ERROR' })
+    const serialized = JSON.stringify(result)
+    expect(serialized).not.toContain(CONFIGURED_KEY)
+    expect(serialized).not.toContain(PROVIDER_BODY_MARKER)
+    expect(serialized).not.toContain('invalid credentials')
+    expect(text).not.toHaveBeenCalled()
+  })
+})
 
 describe('listAuthorizedDeepSeekModels Server Action', () => {
   beforeEach(() => {
