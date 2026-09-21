@@ -190,18 +190,6 @@ export default async function AdminPage({ searchParams }: AdminPageProps) {
   if (!systemConfigs.MERCADO_PAGO_WEBHOOK_SECRET && process.env.MERCADO_PAGO_WEBHOOK_SECRET) {
     systemConfigs.MERCADO_PAGO_WEBHOOK_SECRET = process.env.MERCADO_PAGO_WEBHOOK_SECRET
   }
-  if (!systemConfigs.OMNIROUTE_BASE_URL && process.env.OMNIROUTE_BASE_URL) {
-    systemConfigs.OMNIROUTE_BASE_URL = process.env.OMNIROUTE_BASE_URL
-  }
-  if (!systemConfigs.OMNIROUTE_API_KEY && process.env.OMNIROUTE_API_KEY) {
-    systemConfigs.OMNIROUTE_API_KEY = process.env.OMNIROUTE_API_KEY
-  }
-  if (!systemConfigs.AI_ROUTING_V2_ENABLED && process.env.AI_ROUTING_V2_ENABLED) {
-    systemConfigs.AI_ROUTING_V2_ENABLED = process.env.AI_ROUTING_V2_ENABLED
-  }
-  if (!systemConfigs.AI_ROUTING_LEGACY_FALLBACK_ENABLED && process.env.AI_ROUTING_LEGACY_FALLBACK_ENABLED) {
-    systemConfigs.AI_ROUTING_LEGACY_FALLBACK_ENABLED = process.env.AI_ROUTING_LEGACY_FALLBACK_ENABLED
-  }
 
   // 7. Server-to-client projection: no secret value crosses the boundary
   const clientSystemConfigs = toClientSystemConfigs(systemConfigs)

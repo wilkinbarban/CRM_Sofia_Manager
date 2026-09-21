@@ -6,7 +6,6 @@ import {
   salvarConfiguracaoAdmin,
   listAuthorizedDeepSeekModels,
   testAuthorizedDeepSeekModel,
-  testarConexaoOmniRoute,
   testarConexaoLLM,
 } from '@/app/actions/admin'
 
@@ -14,9 +13,7 @@ vi.mock('@/app/actions/admin', () => ({
   salvarConfiguracaoAdmin: vi.fn(),
   listAuthorizedDeepSeekModels: vi.fn(),
   testAuthorizedDeepSeekModel: vi.fn(),
-  testarConexaoOmniRoute: vi.fn(),
   testarConexaoLLM: vi.fn(),
-  obterModelosDisponiveis: vi.fn(),
 }))
 
 const AUTHORIZED_MODELS = [
@@ -79,8 +76,8 @@ describe('LlmApiCard — integração DeepSeek', () => {
     expect(screen.queryByRole('button', { name: /Testar Frontier/i })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /Conting[êe]ncia/i })).not.toBeInTheDocument()
 
-    // Nenhuma action legada pode ser acionada por este card.
-    expect(vi.mocked(testarConexaoOmniRoute)).not.toHaveBeenCalled()
+    // Nenhuma action legada pode ser acionada por este card. `testarConexaoOmniRoute`
+    // foi removida das actions, então apenas `testarConexaoLLM` ainda exige guarda.
     expect(vi.mocked(testarConexaoLLM)).not.toHaveBeenCalled()
   })
 
