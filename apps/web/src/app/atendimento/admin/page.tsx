@@ -19,6 +19,17 @@ type AdminPageProps = {
  */
 const SECRET_CONFIG_KEY_PATTERN = /(_KEY|_TOKEN|_SECRET)/i
 
+/**
+ * Configuration keys owned by providers this system no longer talks to
+ * (OpenRouter, OmniRoute). Their non-secret settings — a model id, a base URL —
+ * do not match `SECRET_CONFIG_KEY_PATTERN`, so they would otherwise keep
+ * flowing to the client from any legacy or restored `configuracoes_sistema`
+ * row. Nothing renders them today: the rule exists so a retired provider
+ * cannot silently resurface on the operator dashboard just because a row was
+ * left behind in the database.
+ */
+const RETIRED_PROVIDER_CONFIG_KEY_PATTERN = /(OPENROUTER|OMNIROUTE)/i
+
 /** Client-side DeepSeek state marker: the key status without the key itself. */
 const DEEPSEEK_CONFIGURED_KEY = 'DEEPSEEK_CONFIGURED'
 
@@ -28,7 +39,9 @@ const DEEPSEEK_CONFIGURED_KEY = 'DEEPSEEK_CONFIGURED'
  * Every value whose key contains `_KEY`, `_TOKEN`, or `_SECRET` is dropped at
  * this server-to-client boundary — including environment fallbacks — so the
  * dashboard can only render write-only credential inputs instead of prefilled
- * secrets. `DEEPSEEK_CONFIGURED` is the single DeepSeek signal that crosses:
+ * secrets. Stored keys naming a retired provider are dropped as well, secret
+ * or not, so a legacy row cannot put that provider back in front of the
+ * operator. `DEEPSEEK_CONFIGURED` is the single DeepSeek signal that crosses:
  * it is serialized as the string `'true'` because `systemConfigs` is a string
  * map, and it mirrors the same key resolution
  * (`configuracoes_sistema` first, environment fallback, placeholder keys
@@ -39,6 +52,7 @@ function toClientSystemConfigs(systemConfigs: Record<string, string>): Record<st
 
   for (const [key, value] of Object.entries(systemConfigs)) {
     if (SECRET_CONFIG_KEY_PATTERN.test(key)) continue
+    if (RETIRED_PROVIDER_CONFIG_KEY_PATTERN.test(key)) continue
     clientConfigs[key] = value
   }
 
@@ -123,10 +137,8 @@ export default async function AdminPage({ searchParams }: AdminPageProps) {
   const systemConfigs: Record<string, string> = {
     DEEPSEEK_API_KEY: '',
     DEEPSEEK_MODEL: '',
-    OPENROUTER_API_KEY: '',
     WHATSAPP_ACCESS_TOKEN: '',
     WHATSAPP_PHONE_NUMBER_ID: '',
-    OPENROUTER_MODEL: '',
     WHATSAPP_APP_SECRET: '',
     WHATSAPP_VERIFY_TOKEN: '',
     EVOLUTION_API_URL: '',
@@ -147,17 +159,11 @@ export default async function AdminPage({ searchParams }: AdminPageProps) {
   }
 
   // Fallback to environment variables if not present in the database
-  if (!systemConfigs.OPENROUTER_API_KEY && process.env.OPENROUTER_API_KEY) {
-    systemConfigs.OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY
-  }
   if (!systemConfigs.WHATSAPP_ACCESS_TOKEN && process.env.WHATSAPP_ACCESS_TOKEN) {
     systemConfigs.WHATSAPP_ACCESS_TOKEN = process.env.WHATSAPP_ACCESS_TOKEN
   }
   if (!systemConfigs.WHATSAPP_PHONE_NUMBER_ID && process.env.WHATSAPP_PHONE_NUMBER_ID) {
     systemConfigs.WHATSAPP_PHONE_NUMBER_ID = process.env.WHATSAPP_PHONE_NUMBER_ID
-  }
-  if (!systemConfigs.OPENROUTER_MODEL && process.env.OPENROUTER_MODEL) {
-    systemConfigs.OPENROUTER_MODEL = process.env.OPENROUTER_MODEL
   }
   if (!systemConfigs.DEEPSEEK_MODEL && process.env.DEEPSEEK_MODEL) {
     systemConfigs.DEEPSEEK_MODEL = process.env.DEEPSEEK_MODEL

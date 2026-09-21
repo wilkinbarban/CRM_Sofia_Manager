@@ -8,6 +8,10 @@
  * `_TOKEN`, `_SECRET`) must not cross that boundary, not even as environment
  * fallbacks, while the DeepSeek key state must still reach the dashboard as an
  * explicit configured marker so a write-only input can render it later.
+ *
+ * Retired providers are a second invariant on the same boundary: a
+ * `configuracoes_sistema` row left behind by OpenRouter or OmniRoute must not
+ * resurface on the client just because the row is still stored.
  */
 
 import { isValidElement, type ReactElement, type ReactNode } from 'react'
@@ -41,13 +45,11 @@ vi.mock('@/components/operator/OperatorWorkspaceHeader', () => ({
 /** Secret-shaped keys persisted in `configuracoes_sistema`. */
 const DATABASE_SECRETS: Record<string, string> = {
   DEEPSEEK_API_KEY: 'sk-deepseek-database-secret',
-  OPENROUTER_API_KEY: 'sk-openrouter-database-secret',
   WHATSAPP_ACCESS_TOKEN: 'whatsapp-database-access-token',
   WHATSAPP_VERIFY_TOKEN: 'whatsapp-database-verify-token',
   MERCADO_PAGO_ACCESS_TOKEN: 'mercadopago-database-access-token',
   MERCADO_PAGO_PUBLIC_KEY: 'mercadopago-database-public-key',
   TELEGRAM_BOT_TOKEN: 'telegram-database-bot-token',
-  OMNIROUTE_API_KEY: 'omniroute-database-api-key',
   EVOLUTION_API_KEY: 'evolution-database-api-key',
   WHATSAPP_APP_SECRET: 'whatsapp-database-app-secret',
   MERCADO_PAGO_WEBHOOK_SECRET: 'mercadopago-database-webhook-secret',
@@ -56,20 +58,17 @@ const DATABASE_SECRETS: Record<string, string> = {
 /** Secret-shaped keys resolved only through the environment fallback. */
 const ENVIRONMENT_SECRETS: Record<string, string> = {
   DEEPSEEK_API_KEY: 'sk-deepseek-environment-secret',
-  OPENROUTER_API_KEY: 'sk-openrouter-environment-secret',
   WHATSAPP_ACCESS_TOKEN: 'whatsapp-environment-access-token',
   WHATSAPP_VERIFY_TOKEN: 'whatsapp-environment-verify-token',
   MERCADO_PAGO_ACCESS_TOKEN: 'mercadopago-environment-access-token',
   MERCADO_PAGO_PUBLIC_KEY: 'mercadopago-environment-public-key',
   TELEGRAM_BOT_TOKEN: 'telegram-environment-bot-token',
-  OMNIROUTE_API_KEY: 'omniroute-environment-api-key',
   EVOLUTION_API_KEY: 'evolution-environment-api-key',
   WHATSAPP_APP_SECRET: 'whatsapp-environment-app-secret',
   MERCADO_PAGO_WEBHOOK_SECRET: 'mercadopago-environment-webhook-secret',
 }
 
 const DATABASE_PUBLIC_CONFIGS: Record<string, string> = {
-  OPENROUTER_MODEL: 'deepseek/deepseek-chat',
   WHATSAPP_PHONE_NUMBER_ID: '109876543210987',
   WHATSAPP_PROVIDER: 'evolution',
   EVOLUTION_API_URL: 'https://evolution.internal.example',
@@ -82,6 +81,24 @@ const ENVIRONMENT_PUBLIC_CONFIGS: Record<string, string> = {
 
 const SECRET_KEY_PATTERN = /(_KEY|_TOKEN|_SECRET)/i
 const DEEPSEEK_MARKER_KEY = 'DEEPSEEK_CONFIGURED'
+const RETIRED_PROVIDER_KEY_PATTERN = /(OPENROUTER|OMNIROUTE)/i
+
+/**
+ * Rows naming the retired providers, as a legacy or restored database would
+ * still hold them. The retired *model* keys are the ones the secret pattern
+ * cannot catch, so they are the values that must be refused by name.
+ */
+const RETIRED_PROVIDER_DATABASE_CONFIGS: Record<string, string> = {
+  OPENROUTER_MODEL: 'deepseek/deepseek-chat',
+  OMNIROUTE_BASE_URL: 'https://omniroute.retired.example/v1',
+  OPENROUTER_API_KEY: 'sk-openrouter-database-secret',
+  OMNIROUTE_API_KEY: 'omniroute-database-api-key',
+}
+
+const STORED_DEEPSEEK_CONFIGS: Record<string, string> = {
+  DEEPSEEK_API_KEY: DATABASE_SECRETS.DEEPSEEK_API_KEY,
+  DEEPSEEK_MODEL: 'deepseek-flash',
+}
 
 const originalEnv = process.env
 
@@ -294,6 +311,52 @@ describe('admin page server-to-client configuration projection', () => {
     const systemConfigs = await projectAdminDashboardProps()
 
     expect(systemConfigs.DEEPSEEK_MODEL).toBe('deepseek-flash')
+  })
+
+  it('drops the retired provider keys from its defaults and from the environment fallback chain', async () => {
+    applyEnvironment({
+      OPENROUTER_API_KEY: 'sk-openrouter-retired-environment-secret',
+      OPENROUTER_MODEL: 'deepseek/deepseek-chat',
+    })
+    mocks.createClient.mockResolvedValue(supabaseClient({ rows: [] }))
+
+    const systemConfigs = await projectAdminDashboardProps()
+
+    expect(Object.keys(systemConfigs).filter((key) => /openrouter|omniroute/i.test(key))).toEqual([])
+    expect(systemConfigs.OPENROUTER_MODEL).toBeUndefined()
+    expect(JSON.stringify(systemConfigs)).not.toContain('sk-openrouter-retired-environment-secret')
+  })
+
+  it('refuses stored retired provider rows without disturbing the DeepSeek and non-secret projections', async () => {
+    applyEnvironment({})
+    mocks.createClient.mockResolvedValue(
+      supabaseClient({
+        rows: [
+          ...configRows(RETIRED_PROVIDER_DATABASE_CONFIGS),
+          ...configRows(STORED_DEEPSEEK_CONFIGS),
+          ...configRows(DATABASE_PUBLIC_CONFIGS),
+        ],
+      }),
+    )
+
+    const systemConfigs = await projectAdminDashboardProps()
+
+    expect(
+      Object.keys(systemConfigs).filter((key) => RETIRED_PROVIDER_KEY_PATTERN.test(key)),
+      'no stored key naming a retired provider may reach the client',
+    ).toEqual([])
+
+    const serialized = JSON.stringify(systemConfigs)
+    for (const value of Object.values(RETIRED_PROVIDER_DATABASE_CONFIGS)) {
+      expect(serialized).not.toContain(value)
+    }
+
+    // The other projections on this boundary keep working unchanged.
+    expect(systemConfigs[DEEPSEEK_MARKER_KEY]).toBe('true')
+    expect(systemConfigs.DEEPSEEK_MODEL).toBe(STORED_DEEPSEEK_CONFIGS.DEEPSEEK_MODEL)
+    expect(systemConfigs.DEEPSEEK_API_KEY).toBeUndefined()
+    expect(serialized).not.toContain(STORED_DEEPSEEK_CONFIGS.DEEPSEEK_API_KEY)
+    expect(systemConfigs).toMatchObject(DATABASE_PUBLIC_CONFIGS)
   })
 
   it('does not mark DeepSeek as configured when the stored key is a placeholder', async () => {

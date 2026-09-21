@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
@@ -256,5 +257,29 @@ describe('deletarUsuarioAdmin idempotent Auth completion', () => {
     expect(operator.rpc).toHaveBeenCalledTimes(1)
     await expect(deletarUsuarioAdmin('target-1')).resolves.toEqual({ success: true })
     expect(operator.rpc).toHaveBeenCalledTimes(3)
+  })
+})
+
+/**
+ * The retired provider surface must not come back: the OpenRouter model catalog
+ * and the OpenRouter/DeepSeek connection probe are gone from the admin actions,
+ * and with them the `sk-or-` key detection, the OpenRouter attribution headers,
+ * the `openrouter.ai` endpoints and the retired model names.
+ */
+describe('retired provider admin actions stay retired', () => {
+  const source = readFileSync('apps/web/src/app/actions/admin.ts', 'utf8')
+
+  it('exports neither the retired model catalog nor the retired connection probe', async () => {
+    const admin = await import('@/app/actions/admin')
+
+    expect(admin).not.toHaveProperty('obterModelosDisponiveis')
+    expect(admin).not.toHaveProperty('testarConexaoLLM')
+  })
+
+  it('keeps neither the retired endpoint, the retired credential shape nor the retired model literals', () => {
+    expect(source).not.toMatch(/openrouter/i)
+    expect(source).not.toContain('sk-or-')
+    expect(source).not.toContain('deepseek-chat')
+    expect(source).not.toContain('deepseek-reasoner')
   })
 })

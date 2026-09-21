@@ -111,10 +111,8 @@ interface AdminDashboardProps {
   calendarConfig: CalendarConfig
   artigosIniciais: Artigo[]
   systemConfigs: {
-    OPENROUTER_API_KEY?: string
     WHATSAPP_ACCESS_TOKEN?: string
     WHATSAPP_PHONE_NUMBER_ID?: string
-    OPENROUTER_MODEL?: string
     WHATSAPP_APP_SECRET?: string
     WHATSAPP_VERIFY_TOKEN?: string
     EVOLUTION_API_URL?: string
@@ -1757,7 +1755,7 @@ DIRETRIZES RÍGIDAS DE COMPORTAMENTO:
                   onProvedorChange={setProvedorAtivo}
                 />
               </article>
-              <article aria-label="OmniRoute AI Gateway" className="lg:col-span-2">
+              <article aria-label="LLM API" className="lg:col-span-2">
                 <LlmApiCard initialConfigs={systemConfigs} showToast={showToast} />
               </article>
               <article aria-label="Telegram"><TelegramBotCard initialConfigs={systemConfigs} showToast={showToast} /></article>
@@ -2222,7 +2220,7 @@ DIRETRIZES RÍGIDAS DE COMPORTAMENTO:
             <div className="rounded-xl border border-amber-500/10 bg-amber-500/5 p-4 text-xs text-amber-500/80 leading-relaxed shrink-0 flex gap-2">
               <AlertTriangle className="h-4 w-4 shrink-0 text-amber-500 mt-0.5" />
               <div>
-                Este prompt é carregado pelo pipeline de IA do OpenRouter para estruturar as respostas. Ele foi desenhado para assegurar o tom curitibano de atendimento, evitar alucinações técnicas fora da base de conhecimento e garantir o encaminhamento suave ao transbordo humano sempre que necessário.
+                Este prompt é carregado pelo pipeline de IA da DeepSeek para estruturar as respostas. Ele foi desenhado para assegurar o tom curitibano de atendimento, evitar alucinações técnicas fora da base de conhecimento e garantir o encaminhamento suave ao transbordo humano sempre que necessário.
               </div>
             </div>
           </div>

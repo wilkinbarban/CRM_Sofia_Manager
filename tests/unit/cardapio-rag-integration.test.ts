@@ -3,7 +3,7 @@ import { processarRagPipeline } from '@/lib/ai/openrouter'
 import * as adminSupabaseModule from '@/lib/supabase/admin'
 import * as configModule from '@/lib/config/sistema'
 
-describe('Cardápio RAG Integration: Entrega Consultiva no OpenRouter Pipeline', () => {
+describe('Cardápio RAG Integration: Entrega Consultiva no Pipeline DeepSeek', () => {
   let mockSupabase: any
 
   beforeEach(() => {
@@ -22,7 +22,7 @@ describe('Cardápio RAG Integration: Entrega Consultiva no OpenRouter Pipeline',
 
     vi.spyOn(adminSupabaseModule, 'createAdminClient').mockReturnValue(mockSupabase as any)
     vi.spyOn(configModule, 'obterConfiguracaoSistema').mockImplementation(async (key: string) => {
-      if (key === 'OPENROUTER_API_KEY') return 'placeholder'
+      if (key === 'DEEPSEEK_API_KEY') return 'placeholder'
       if (key === 'SOFIA_SYSTEM_PROMPT') return 'Você é a Sofia da churrascaria.'
       return null
     })

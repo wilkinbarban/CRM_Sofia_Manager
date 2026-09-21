@@ -34,8 +34,6 @@ const systemConfigs: Record<string, string> = {
   EVOLUTION_WEBHOOK_SECRET: 'test-secret-token',
   SOFIA_GLOBAL_WHATSAPP_ENABLED: 'true',
   SOFIA_GLOBAL_TELEGRAM_ENABLED: 'true',
-  OPENROUTER_API_KEY: 'sk-test-openrouter-key',
-  OPENROUTER_MODEL: 'deepseek-chat',
   DEEPSEEK_API_KEY: 'sk-test-deepseek-key',
   DEEPSEEK_MODEL: 'deepseek-flash',
   WHATSAPP_PROVIDER: 'evolution',
