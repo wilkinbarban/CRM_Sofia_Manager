@@ -14,6 +14,11 @@ import { revalidatePath } from 'next/cache'
 import { consolidateAdminUsers } from '@/lib/admin/user-list'
 import { obterConfiguracaoSistema } from '@/lib/config/sistema'
 import { resolveOmniRouteAdminTarget } from '@/lib/ai/omniroute-admin-target'
+import {
+  isUsableDeepSeekApiKey,
+  listDeepSeekModels,
+  type DeepSeekModelOption,
+} from '@/lib/ai/deepseek'
 import { parseFinancialOperationalMetrics, validateReportingPeriod } from '@/lib/admin/financial-metrics'
 
 /**
@@ -844,6 +849,44 @@ export async function obterModelosDisponiveis(apiKey: string) {
   } catch (error: any) {
     console.error('Erro na action obterModelosDisponiveis:', error)
     return { success: false, error: error.message || 'ERRO_INTERNO' }
+  }
+}
+
+/**
+ * Server Action: listAuthorizedDeepSeekModels
+ * Lists the DeepSeek models authorized for the configured server key.
+ *
+ * Takes no API key argument on purpose: the key is resolved from the existing
+ * server configuration precedence (`configuracoes_sistema` first, environment
+ * fallback) and never travels through the caller. Absent or placeholder keys
+ * short-circuit to a stable `DEEPSEEK_NOT_CONFIGURED` error, and every
+ * remaining failure keeps the client's stable error code without echoing the
+ * key or the provider body.
+ */
+export async function listAuthorizedDeepSeekModels(): Promise<
+  { success: true; models: DeepSeekModelOption[] } | { success: false; error: string }
+> {
+  try {
+    const check = await verificarPermissaoOperador()
+    if (!check.authorized || !check.user) {
+      return { success: false, error: check.error || 'ACESSO_NEGADO_NAO_AUTENTICADO' }
+    }
+
+    const configuredApiKey = await obterConfiguracaoSistema('DEEPSEEK_API_KEY')
+    const apiKey = configuredApiKey || process.env.DEEPSEEK_API_KEY || ''
+
+    if (!isUsableDeepSeekApiKey(apiKey)) {
+      return { success: false, error: 'DEEPSEEK_NOT_CONFIGURED' }
+    }
+
+    const result = await listDeepSeekModels({ apiKey })
+    if (!result.success) {
+      return { success: false, error: result.error }
+    }
+
+    return { success: true, models: result.models }
+  } catch {
+    return { success: false, error: 'DEEPSEEK_OPERATOR_FAILED' }
   }
 }
 
