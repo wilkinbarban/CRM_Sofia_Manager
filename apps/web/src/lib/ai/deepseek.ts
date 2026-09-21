@@ -74,14 +74,41 @@ export type DeepSeekChatProbeInput = {
   timeoutMs?: number
 }
 
+/** The two content blocks the chat-completions endpoint accepts alongside text. */
+export type DeepSeekChatContentPart =
+  | { type: 'text'; text: string }
+  | { type: 'image_url'; image_url: { url: string } }
+
 export type DeepSeekChatMessage = {
   role: 'system' | 'user' | 'assistant'
-  content: string
+  content: string | DeepSeekChatContentPart[]
+}
+
+/**
+ * Chat-completions ids that accept image content parts, per the official vision
+ * guide (https://api-docs.deepseek.com/guides/vision/) and the pricing page
+ * (https://api-docs.deepseek.com/quick_start/pricing): `deepseek-flash` is the
+ * current chat-completions model and the vision-capable one, while
+ * `deepseek-v4-flash` and `deepseek-v4-flash-vision-exp` are accepted legacy
+ * names that are retired and served by the latest Flash model. Every other id —
+ * `deepseek-v4-pro` included — is text-only.
+ */
+export const DEEPSEEK_VISION_MODELS: readonly string[] = [
+  'deepseek-flash',
+  'deepseek-v4-flash',
+  'deepseek-v4-flash-vision-exp',
+]
+
+/** True only for an exact allowlisted vision id; every other value is text-only. */
+export function isDeepSeekVisionModel(model: unknown): boolean {
+  const id = typeof model === 'string' ? model.trim().toLowerCase() : ''
+  return id.length > 0 && DEEPSEEK_VISION_MODELS.includes(id)
 }
 
 export type DeepSeekChatError =
   | 'DEEPSEEK_SERVER_ONLY'
   | 'DEEPSEEK_MODEL_REQUIRED'
+  | 'DEEPSEEK_VISION_UNSUPPORTED'
   | 'DEEPSEEK_NOT_CONFIGURED'
   | 'DEEPSEEK_TIMEOUT'
   | 'DEEPSEEK_HTTP_ERROR'
@@ -92,7 +119,8 @@ export type DeepSeekChatError =
 
 export type DeepSeekChatResult =
   | { success: true; content: string }
-  // `attempts`/`retried` are additive: `error`/`status` callers stay unaffected.
+  // Every runtime failure return sets `attempts` and `retried`; they are optional
+  // here only so pre-existing callers and test doubles stay assignable.
   | { success: false; error: DeepSeekChatError; status?: number; attempts?: number; retried?: boolean }
 
 export type DeepSeekChatInput = {
@@ -270,29 +298,44 @@ async function readBoundedDeepSeekJson(response: Response, maxResponseBytes: num
   return JSON.parse(new TextDecoder().decode(bytes))
 }
 
+/** True when any message carries an image content part. */
+function carregaImagem(messages: DeepSeekChatMessage[]): boolean {
+  return messages.some((message) => Array.isArray(message.content)
+    && message.content.some((part) => asRecord(part)?.type === 'image_url'))
+}
+
 /**
  * Sends a real conversation and returns the assistant text — the single provider
- * call behind Sofia's generation and the customer-memory JSON extraction.
+ * call behind Sofia's generation, the customer-memory JSON extraction and the
+ * payment-proof advisory.
  *
  * Server-only like the rest of this module, it never echoes the API key and
  * never returns a raw provider body: HTTP, transport, timeout, malformed,
  * empty and oversized responses all collapse onto stable codes. The request body
  * always disables thinking (so `temperature` keeps its documented effect), keeps
  * `stream: false`, and asks for `json_object` only when the caller does.
+ * Content may be a plain string or the `text`/`image_url` blocks, and an image is
+ * refused before any request when the model is not on `DEEPSEEK_VISION_MODELS`.
  * A transient failure (per-attempt timeout, HTTP 429, HTTP 5xx) is retried at
  * most once behind a bounded backoff, never outliving the caller `timeoutMs`.
+ * Every failure — the pre-request refusals included — reports the honest
+ * `attempts` count and whether the call was actually retried.
  */
 export async function chamarDeepSeekChat(input: DeepSeekChatInput): Promise<DeepSeekChatResult> {
   assertServerRuntime()
 
   const apiKey = input.apiKey?.trim() ?? ''
   if (!isUsableDeepSeekApiKey(apiKey)) {
-    return { success: false, error: 'DEEPSEEK_NOT_CONFIGURED' }
+    return { success: false, error: 'DEEPSEEK_NOT_CONFIGURED', attempts: 0, retried: false }
   }
 
   const model = typeof input.model === 'string' ? input.model.trim() : ''
   if (!model) {
-    return { success: false, error: 'DEEPSEEK_MODEL_REQUIRED' }
+    return { success: false, error: 'DEEPSEEK_MODEL_REQUIRED', attempts: 0, retried: false }
+  }
+
+  if (carregaImagem(input.messages) && !isDeepSeekVisionModel(model)) {
+    return { success: false, error: 'DEEPSEEK_VISION_UNSUPPORTED', attempts: 0, retried: false }
   }
 
   const timeoutMs = input.timeoutMs ?? DEEPSEEK_CHAT_TIMEOUT_MS
@@ -360,18 +403,21 @@ export async function chamarDeepSeekChat(input: DeepSeekChatInput): Promise<Deep
     return { success: false, error: falha?.error ?? 'DEEPSEEK_TIMEOUT', status: falha?.status, attempts, retried: attempts > 1 }
   }
 
+  // The retry loop is over: every failure below reports its real attempt count.
+  const retried = attempts > 1
+
   let payload: unknown
   try {
     payload = await readBoundedDeepSeekJson(response, maxResponseBytes)
   } catch (error) {
     const message = error instanceof Error ? error.message : ''
     if (message === 'DEEPSEEK_RESPONSE_TOO_LARGE') {
-      return { success: false, error: 'DEEPSEEK_RESPONSE_TOO_LARGE' }
+      return { success: false, error: 'DEEPSEEK_RESPONSE_TOO_LARGE', attempts, retried }
     }
     if (message === 'DEEPSEEK_EMPTY_BODY') {
-      return { success: false, error: 'DEEPSEEK_EMPTY_RESPONSE' }
+      return { success: false, error: 'DEEPSEEK_EMPTY_RESPONSE', attempts, retried }
     }
-    return { success: false, error: 'DEEPSEEK_INVALID_RESPONSE' }
+    return { success: false, error: 'DEEPSEEK_INVALID_RESPONSE', attempts, retried }
   }
 
   const choices = asRecord(payload)?.choices
@@ -379,15 +425,15 @@ export async function chamarDeepSeekChat(input: DeepSeekChatInput): Promise<Deep
   const content = asRecord(firstChoice?.message)?.content
 
   if (typeof content !== 'string') {
-    return { success: false, error: 'DEEPSEEK_INVALID_RESPONSE' }
+    return { success: false, error: 'DEEPSEEK_INVALID_RESPONSE', attempts, retried }
   }
   if (content.length > maxContentChars) {
-    return { success: false, error: 'DEEPSEEK_RESPONSE_TOO_LARGE' }
+    return { success: false, error: 'DEEPSEEK_RESPONSE_TOO_LARGE', attempts, retried }
   }
 
   const trimmed = content.trim()
   if (!trimmed) {
-    return { success: false, error: 'DEEPSEEK_EMPTY_RESPONSE' }
+    return { success: false, error: 'DEEPSEEK_EMPTY_RESPONSE', attempts, retried }
   }
 
   return { success: true, content: trimmed }

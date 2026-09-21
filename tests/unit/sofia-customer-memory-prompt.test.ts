@@ -117,7 +117,11 @@ async function promptDaSofia(mensagem = 'Que horas vocês abrem no domingo?'): P
     .mockResolvedValue({ success: true, content: 'ok' })
   spy.mockClear()
   await processarRagPipeline('conversa-1', mensagem, 'web', true)
-  return spy.mock.calls[0][0].messages[0].content
+  // The Sofia system prompt is a plain string; only a caller that passes image
+  // content parts could make this an array, which this path never does.
+  const conteudo = spy.mock.calls[0][0].messages[0].content
+  if (typeof conteudo !== 'string') throw new Error('SOFIA_SYSTEM_PROMPT_NOT_TEXT')
+  return conteudo
 }
 
 const abrirMemoria = () => vi.stubEnv('SOFIA_CUSTOMER_MEMORY_ENABLED', 'true')

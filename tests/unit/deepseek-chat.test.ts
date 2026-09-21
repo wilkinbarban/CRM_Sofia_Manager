@@ -25,7 +25,9 @@ import {
   DEEPSEEK_CHAT_COMPLETIONS_URL,
   DEEPSEEK_CHAT_MAX_ATTEMPTS,
   DEEPSEEK_DEFAULT_MODEL,
+  DEEPSEEK_VISION_MODELS,
   chamarDeepSeekChat,
+  isDeepSeekVisionModel,
   normalizarModeloDeepSeek,
 } from '@/lib/ai/deepseek'
 import { chamarModeloEconomicoJson } from '@/lib/ai/llm-json'
@@ -93,7 +95,7 @@ describe('chamarDeepSeekChat', () => {
 
     for (const apiKey of ['', '   ', 'sk-placeholder', null, undefined]) {
       const result = await chamarDeepSeekChat(baseInput({ apiKey }))
-      expect(result).toEqual({ success: false, error: 'DEEPSEEK_NOT_CONFIGURED' })
+      expect(result).toEqual({ success: false, error: 'DEEPSEEK_NOT_CONFIGURED', attempts: 0, retried: false })
     }
 
     expect(fetchMock).not.toHaveBeenCalled()
@@ -105,7 +107,7 @@ describe('chamarDeepSeekChat', () => {
 
     const result = await chamarDeepSeekChat(baseInput({ model: '   ' }))
 
-    expect(result).toEqual({ success: false, error: 'DEEPSEEK_MODEL_REQUIRED' })
+    expect(result).toEqual({ success: false, error: 'DEEPSEEK_MODEL_REQUIRED', attempts: 0, retried: false })
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
@@ -203,7 +205,7 @@ describe('chamarDeepSeekChat', () => {
 
       const result = await chamarDeepSeekChat(baseInput())
 
-      expect(result).toEqual({ success: false, error: 'DEEPSEEK_INVALID_RESPONSE' })
+      expect(result).toEqual({ success: false, error: 'DEEPSEEK_INVALID_RESPONSE', attempts: 1, retried: false })
       expect(JSON.stringify(result)).not.toContain(PROVIDER_BODY_MARKER)
     }
   })
@@ -213,7 +215,7 @@ describe('chamarDeepSeekChat', () => {
 
     const result = await chamarDeepSeekChat(baseInput())
 
-    expect(result).toEqual({ success: false, error: 'DEEPSEEK_EMPTY_RESPONSE' })
+    expect(result).toEqual({ success: false, error: 'DEEPSEEK_EMPTY_RESPONSE', attempts: 1, retried: false })
   })
 
   it('rejects an oversized response from the declared content-length before reading it', async () => {
@@ -226,7 +228,7 @@ describe('chamarDeepSeekChat', () => {
 
     const result = await chamarDeepSeekChat(baseInput({ maxResponseBytes: 1024 }))
 
-    expect(result).toEqual({ success: false, error: 'DEEPSEEK_RESPONSE_TOO_LARGE' })
+    expect(result).toEqual({ success: false, error: 'DEEPSEEK_RESPONSE_TOO_LARGE', attempts: 1, retried: false })
   })
 
   it('rejects a streamed body that overflows the byte cap', async () => {
@@ -236,7 +238,7 @@ describe('chamarDeepSeekChat', () => {
 
     const result = await chamarDeepSeekChat(baseInput({ maxResponseBytes: 64 }))
 
-    expect(result).toEqual({ success: false, error: 'DEEPSEEK_RESPONSE_TOO_LARGE' })
+    expect(result).toEqual({ success: false, error: 'DEEPSEEK_RESPONSE_TOO_LARGE', attempts: 1, retried: false })
     expect(JSON.stringify(result)).not.toContain(PROVIDER_BODY_MARKER)
   })
 
@@ -245,7 +247,7 @@ describe('chamarDeepSeekChat', () => {
 
     const result = await chamarDeepSeekChat(baseInput({ maxContentChars: 3 }))
 
-    expect(result).toEqual({ success: false, error: 'DEEPSEEK_RESPONSE_TOO_LARGE' })
+    expect(result).toEqual({ success: false, error: 'DEEPSEEK_RESPONSE_TOO_LARGE', attempts: 1, retried: false })
   })
 })
 
@@ -381,6 +383,83 @@ describe('chamarDeepSeekChat — bounded retry', () => {
 
     expect(result).toEqual({ success: false, error: 'DEEPSEEK_HTTP_ERROR', status: 401, attempts: 1, retried: false })
     expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('DeepSeek vision content parts', () => {
+  const imageParts = [
+    { type: 'text' as const, text: 'Inspect this untrusted canonical payment-proof image.' },
+    { type: 'image_url' as const, image_url: { url: 'data:image/png;base64,iVBORw0KGgo=' } },
+  ]
+
+  beforeEach(() => {
+    vi.restoreAllMocks()
+    process.env = { ...originalEnv }
+  })
+
+  afterEach(() => {
+    global.fetch = originalFetch
+    process.env = originalEnv
+    vi.unstubAllGlobals()
+  })
+
+  it('refuses an image for a known non-vision model before any request', async () => {
+    const fetchMock = vi.fn()
+    global.fetch = fetchMock as unknown as typeof fetch
+
+    const result = await chamarDeepSeekChat(baseInput({
+      model: 'deepseek-v4-pro',
+      messages: [{ role: 'user', content: imageParts }],
+    }))
+
+    expect(result).toEqual({ success: false, error: 'DEEPSEEK_VISION_UNSUPPORTED', attempts: 0, retried: false })
+    expect(fetchMock).not.toHaveBeenCalled()
+    expectNoSecret(result)
+  })
+
+  it('posts the content-parts body for a vision model', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(chatResponse(completion('{"ok":true}')))
+    global.fetch = fetchMock as unknown as typeof fetch
+
+    const result = await chamarDeepSeekChat(baseInput({
+      model: 'deepseek-flash',
+      messages: [{ role: 'user', content: imageParts }],
+      jsonResponse: true,
+    }))
+
+    expect(result).toEqual({ success: true, content: '{"ok":true}' })
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toBe(DEEPSEEK_CHAT_COMPLETIONS_URL)
+    const body = JSON.parse(String(init.body)) as Record<string, unknown>
+    expect(body.messages).toEqual([{ role: 'user', content: imageParts }])
+    expect(body.response_format).toEqual({ type: 'json_object' })
+    expect(JSON.stringify(body)).not.toContain(OPERATOR_KEY)
+  })
+
+  it('keeps the vision allowlist anchored on the default model and rejects every text-only id', () => {
+    expect(DEEPSEEK_VISION_MODELS).toEqual([
+      'deepseek-flash',
+      'deepseek-v4-flash',
+      'deepseek-v4-flash-vision-exp',
+    ])
+    expect(DEEPSEEK_VISION_MODELS).toContain(DEEPSEEK_DEFAULT_MODEL)
+    for (const modelo of DEEPSEEK_VISION_MODELS) expect(isDeepSeekVisionModel(modelo)).toBe(true)
+    for (const model of ['deepseek-v4-pro', 'deepseek-flash-vision', 'deepseek-vl2', '', '   ', null, undefined, 7]) {
+      expect(isDeepSeekVisionModel(model)).toBe(false)
+    }
+  })
+
+  it('reports the honest attempt count when a retry ends in an invalid body', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(chatResponse({}, 429))
+      .mockResolvedValueOnce(chatResponse({ choices: [{ message: { content: 7 } }] }))
+    global.fetch = fetchMock as unknown as typeof fetch
+
+    const result = await chamarDeepSeekChat(baseInput())
+
+    expect(result).toEqual({ success: false, error: 'DEEPSEEK_INVALID_RESPONSE', attempts: 2, retried: true })
+    expect(fetchMock).toHaveBeenCalledTimes(DEEPSEEK_CHAT_MAX_ATTEMPTS)
   })
 })
 
