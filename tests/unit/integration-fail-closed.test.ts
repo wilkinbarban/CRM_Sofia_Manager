@@ -6,6 +6,10 @@ const mocks = vi.hoisted(() => ({
   allowsIntegrationMock: vi.fn(),
   createAdminClient: vi.fn(),
   obterConfiguracaoSistema: vi.fn(),
+  insert: vi.fn(),
+  whatsappSend: vi.fn(),
+  telegramSend: vi.fn(),
+  sofiaEligible: vi.fn(),
 }))
 
 vi.mock('@/lib/runtime/environment', () => ({
@@ -20,11 +24,28 @@ vi.mock('@/lib/config/sistema', () => ({
   obterConfiguracaoSistema: mocks.obterConfiguracaoSistema,
 }))
 
+vi.mock('@/lib/whatsapp/send', () => ({
+  enviarMensagemWhatsapp: mocks.whatsappSend,
+}))
+
+vi.mock('@/lib/telegram/send', () => ({
+  enviarMensagemTelegram: mocks.telegramSend,
+}))
+
+vi.mock('@/lib/whatsapp/sofia-control', () => ({
+  isWhatsAppInboundEligibleForSofia: mocks.sofiaEligible,
+}))
+
+import * as deepseek from '@/lib/ai/deepseek'
 import {
   agendarPedidoNoCalendario,
   atualizarPedidoNoCalendarioComoPago,
 } from '@/lib/calendar/google'
-import { processarRagBatchPipeline, processarRagPipeline } from '@/lib/ai/openrouter'
+import {
+  isSofiaAiGenerationEnabled,
+  processarRagBatchPipeline,
+  processarRagPipeline,
+} from '@/lib/ai/openrouter'
 
 function createPipelineSupabase() {
   return {
@@ -38,7 +59,7 @@ function createPipelineSupabase() {
                   id: 'conversa-1',
                   cliente_id: 'cliente-1',
                   ia_ativa: true,
-                  clientes: { telefone: '', nome: 'Cliente', telegram_chat_id: '' },
+                  clientes: { telefone: '5541999998888', nome: 'Cliente', telegram_chat_id: 'telegram-999' },
                 },
                 error: null,
               }),
@@ -55,6 +76,7 @@ function createPipelineSupabase() {
             })),
           })),
         })),
+        insert: mocks.insert,
       }
     }),
     rpc: vi.fn().mockResolvedValue({ data: [], error: null }),
@@ -65,10 +87,12 @@ describe('integration fail-closed policy', () => {
   beforeEach(() => {
     mocks.allowsIntegrationMock.mockReturnValue(false)
     mocks.obterConfiguracaoSistema.mockResolvedValue(null)
+    mocks.sofiaEligible.mockResolvedValue({ eligible: true, sleeping: false, iaAtiva: true })
+    mocks.insert.mockReturnValue({ select: () => ({ single: async () => ({ data: { id: 'msg-1' }, error: null }) }) })
   })
 
   afterEach(() => {
-    delete process.env.AI_ROUTING_LEGACY_FALLBACK_ENABLED
+    delete process.env.SOFIA_AI_GENERATION_ENABLED
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
   })
@@ -100,23 +124,55 @@ describe('integration fail-closed policy', () => {
     expect(linha).toContain('PROVEDOR_NAO_CONFIGURADO')
   })
 
-  it('logs GERACAO_DESABILITADA and fails closed without any provider request when the legacy fallback is disabled', async () => {
+  it('fails closed on every channel without contacting the provider when the generation switch is disabled', async () => {
     mocks.createAdminClient.mockReturnValue(createPipelineSupabase())
-    mocks.obterConfiguracaoSistema.mockImplementation(async (key: string) => (
-      key === 'DEEPSEEK_API_KEY' ? 'sk-configured-key' : null
-    ))
-    process.env.AI_ROUTING_LEGACY_FALLBACK_ENABLED = 'false'
+    mocks.obterConfiguracaoSistema.mockImplementation(async (key: string) => (key === 'DEEPSEEK_API_KEY' ? 'sk-configured-key' : null))
+    process.env.SOFIA_AI_GENERATION_ENABLED = 'false'
     const fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
 
+    const web = await processarRagPipeline('conversa-1', 'Olá', 'web')
+    const whatsapp = await processarRagPipeline('conversa-1', 'Olá', 'whatsapp')
+    const telegram = await processarRagPipeline('conversa-1', 'Olá', 'telegram')
     await expect(processarRagBatchPipeline('conversa-1', 'Olá', 'web')).rejects.toThrow('SOFIA_BATCH_GENERATION_FAILED')
 
+    for (const resultado of [web, whatsapp, telegram]) {
+      expect(resultado).toEqual({ sucesso: false, error: 'IA_INDISPONIVEL' })
+    }
     expect(fetchMock).not.toHaveBeenCalled()
+    expect(mocks.insert).not.toHaveBeenCalled()
+    expect([mocks.whatsappSend, mocks.telegramSend].map((m) => m.mock.calls.length)).toEqual([0, 0])
 
     const linha = warn.mock.calls.map((args) => args.map(String).join(' ')).join('\n')
     expect(linha).toContain('GERACAO_DESABILITADA')
+    expect(linha).toContain('SOFIA_AI_GENERATION_ENABLED')
     expect(linha).not.toContain('sk-configured-key')
+  })
+
+  it('enables generation unless the switch is exactly false', () => {
+    delete process.env.SOFIA_AI_GENERATION_ENABLED
+    expect(isSofiaAiGenerationEnabled()).toBe(true)
+
+    for (const valor of ['true', 'True', '1', '0', 'FALSE', 'falsey', '']) {
+      process.env.SOFIA_AI_GENERATION_ENABLED = valor
+      expect(isSofiaAiGenerationEnabled()).toBe(true)
+    }
+
+    process.env.SOFIA_AI_GENERATION_ENABLED = 'false'
+    expect(isSofiaAiGenerationEnabled()).toBe(false)
+  })
+
+  it('fails closed instead of dispatching an empty answer when generation produced no content', async () => {
+    mocks.createAdminClient.mockReturnValue(createPipelineSupabase())
+    mocks.obterConfiguracaoSistema.mockImplementation(async (key: string) => (key === 'DEEPSEEK_API_KEY' ? 'sk-configured-key' : null))
+    const chat = vi.spyOn(deepseek, 'chamarDeepSeekChat').mockResolvedValue({ success: true, content: '' })
+
+    const result = await processarRagPipeline('conversa-1', 'Olá', 'web')
+
+    expect(result).toEqual({ sucesso: false, error: 'IA_INDISPONIVEL' })
+    expect(chat).toHaveBeenCalledTimes(1)
+    expect(mocks.insert).not.toHaveBeenCalled()
   })
 
   it('fails the batch pipeline closed with SOFIA_BATCH_GENERATION_FAILED when the provider is unconfigured', async () => {

@@ -490,7 +490,6 @@ describe('prompt assembly with the customer memory gate', () => {
     const prompt = await promptDaSofia()
 
     expect(prompt).toContain(valorDoFato)
-    expect(logsSucesso.length).toBeGreaterThan(0)
     expect(logsSucesso.join('\n')).not.toContain(valorDoFato)
     expect(logsSucesso.join('\n')).not.toContain('Rua Sigilosa')
     expect(logsSucesso.join('\n')).not.toContain('apto 7')

@@ -114,13 +114,11 @@ printenv | grep '_ENABLED='
 - `asados-evolution-redis`: Redis
 - `asados-supabase-db`: Primary PostgreSQL container (`0bff70962b42...`)
 
-### 6.2 Active Feature Gates (6 true / 12 false)
+### 6.2 Active Feature Gates (4 true / 12 false)
 - `SOFIA_INBOUND_BATCH_EVOLUTION_ENQUEUE_ENABLED=true`
 - `SOFIA_INBOUND_BATCH_PROCESSING_ENABLED=true`
 - `SOFIA_INBOUND_BATCH_RUNTIME_ENABLED=true`
 - `SOFIA_INBOUND_BATCH_TELEGRAM_ENQUEUE_ENABLED=true`
-- `AI_ROUTING_LEGACY_FALLBACK_ENABLED=true`
-- `AI_ROUTING_V2_ENABLED=true`
 - All 8 payment proof gates: `false`
 - All 4 notification gates: `false`
 
@@ -129,3 +127,7 @@ printenv | grep '_ENABLED='
 - Rollback command: `/home/wilkin/proyectos/Asados/scripts/deploy-web.sh rollback`
 - Immediate kill switch for Evolution queue without redeploying:
   Set `SOFIA_INBOUND_BATCH_EVOLUTION_ENQUEUE_ENABLED=false` in `.env` and run `docker compose up -d --no-deps --force-recreate web`.
+
+### 6.4 Shedding and Restoring AI Generation (`SOFIA_AI_GENERATION_ENABLED`)
+
+The generation entry point reads `SOFIA_AI_GENERATION_ENABLED` on every inbound message and only the exact value `false` disables Sofia's conversational generation. Purpose: shed that generation during a DeepSeek outage or a bad rollout without a code change, sending no provider request instead of paying the provider timeout on every inbound message. Outside mock-mode environments it then fails closed at once — `IA_INDISPONIVEL` for a channel message and `SOFIA_BATCH_GENERATION_FAILED` for the batch pipeline — and never dispatches an empty answer; under `NODE_ENV=development` or `test`, where the integration mock is allowed, the disabled switch takes the pipeline's existing contingency branch and answers with the mock text instead. The switch covers Sofia's conversational generation only: the payment-proof advisory and the JSON extraction call DeepSeek under their own gates and are unaffected. Shed it with `SOFIA_AI_GENERATION_ENABLED=false` in the service environment (`.env`) plus `docker compose up -d --no-deps --force-recreate web`, and restore it by removing the variable (or setting `true`) and recreating `web` the same way. The disabled path logs `GERACAO_DESABILITADA` together with the switch name, so the `_ENABLED=` reading rule of section 5 applies. `.env.example` is not updated in this unit: the safety policy refuses that path and the maintainer adds those entries in a later unit, so the variable only needs to exist in the deployment environment.

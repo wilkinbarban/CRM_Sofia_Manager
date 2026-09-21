@@ -123,25 +123,6 @@ describe('Sofia Omnichannel RAG Pipeline — geração via DeepSeek', () => {
 
     const modelos = spy.mock.calls.map(([input]) => input.model)
     expect(modelos).toEqual(['deepseek-v4-pro', 'deepseek-v4-pro', 'deepseek-v4-pro'])
-    for (const alias of ['business-economy', 'business-smart', 'business-frontier']) {
-      expect(modelos).not.toContain(alias)
-    }
-  })
-
-  it('keeps the tier classification in the telemetry log line only', async () => {
-    const logs: string[] = []
-    vi.spyOn(console, 'info').mockImplementation((...args: unknown[]) => {
-      logs.push(args.map(String).join(' '))
-    })
-    const spy = vi
-      .spyOn(deepseek, 'chamarDeepSeekChat')
-      .mockResolvedValue({ success: true, content: 'ok' })
-
-    await processarRagPipeline('conversa-123', MENSAGENS.corporativo, 'web')
-
-    expect(logs.some((linha) => linha.includes('business-frontier'))).toBe(true)
-    expect(spy.mock.calls[0][0].model).toBe('deepseek-v4-pro')
-    expect(spy.mock.calls[0][0].model).not.toBe('business-frontier')
   })
 
   it('falls back to the environment model and then to the literal default', async () => {

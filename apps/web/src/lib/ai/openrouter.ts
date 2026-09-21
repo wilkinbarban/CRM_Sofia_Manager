@@ -1,3 +1,10 @@
+/**
+ * Sofia generation entry point.
+ *
+ * The module name is historical and kept for import stability: its internals
+ * talk only to DeepSeek, through the server-only boundary in
+ * `lib/ai/deepseek.ts`. No other provider is reachable from this module.
+ */
 import { createAdminClient } from '@/lib/supabase/admin'
 import { enviarMensagemWhatsapp } from '@/lib/whatsapp/send'
 import { enviarMensagemTelegram } from '@/lib/telegram/send'
@@ -7,8 +14,6 @@ import { isWhatsAppInboundEligibleForSofia } from '@/lib/whatsapp/sofia-control'
 import { normalizeCuritibaPhone, isCuritibaPhone } from '@/lib/auth/phone'
 import { formatarCardapioResumido } from '@/lib/cardapio/formatar'
 import { gerarCatalogoCardsCompleto, obterCartaoCombo } from '@/lib/cardapio/cards'
-import { classifySofiaRequestTier } from '@/lib/ai/router'
-import { isLegacyFallbackEnabled } from '@/lib/ai/omniroute'
 import {
   chamarDeepSeekChat,
   isUsableDeepSeekApiKey,
@@ -40,6 +45,13 @@ function isLlmMockMode(apiKey: string | null | undefined): boolean {
   if (!trimmed) return true
 
   return !isUsableDeepSeekApiKey(trimmed)
+}
+
+/** Operational switch `SOFIA_AI_GENERATION_ENABLED`: shed Sofia's AI generation
+ * during an outage or a bad rollout by setting it to `false` in the service
+ * environment and restarting the container; every other value keeps it enabled. */
+export function isSofiaAiGenerationEnabled(): boolean {
+  return process.env.SOFIA_AI_GENERATION_ENABLED !== 'false'
 }
 
 /**
@@ -372,24 +384,14 @@ ${regraIdiomaRodape}`
 
   let respostaIa = ''
 
-  // 6.1 Classificação de Negócio em 3 Níveis (Sofia Business Router)
-  // Uso exclusivamente de telemetria: o roteamento por tier não seleciona mais
-  // modelo. O provedor de geração é sempre a DeepSeek com DEEPSEEK_MODEL.
-  const classification = classifySofiaRequestTier({
-    mensagemCliente,
-    valorCarrinhoCentavos: cartAtivo?.total_centavos || 0,
-    itensCarrinhoCount: cartAtivo?.itens_carrinho?.length || 0,
-  })
-  console.info(`[RAG Pipeline] Tier de Negócio classificado: ${classification.tier} (${classification.modelAlias}) - Motivo: ${classification.motivo}`)
-
-  // 6.2 Geração via provedor DeepSeek — único caminho de geração.
+  // 6.1 Geração via provedor DeepSeek — único caminho de geração.
   const apiKey = await obterChaveProvedor()
   let usarMock = isLlmMockMode(apiKey)
-  const geracaoHabilitada = isLegacyFallbackEnabled()
+  const geracaoHabilitada = isSofiaAiGenerationEnabled()
   if (usarMock) {
     console.warn('[RAG Pipeline] PROVEDOR_NAO_CONFIGURADO: chave DeepSeek ausente ou placeholder em configuracoes_sistema/ambiente. Nenhuma resposta será gerada pelo provedor.')
-  } else if (apiKey && !geracaoHabilitada) {
-    console.warn('[RAG Pipeline] GERACAO_DESABILITADA: AI_ROUTING_LEGACY_FALLBACK_ENABLED=false desliga o único caminho de geração por IA. Nenhuma resposta foi gerada.')
+  } else if (!geracaoHabilitada) {
+    console.warn('[RAG Pipeline] GERACAO_DESABILITADA: SOFIA_AI_GENERATION_ENABLED=false desliga a geração por IA; nenhuma requisição foi enviada ao provedor.')
   }
 
   if (!respostaIa && !usarMock && apiKey && geracaoHabilitada) {
@@ -420,7 +422,8 @@ ${regraIdiomaRodape}`
     }
   }
 
-  if (!respostaIa && (usarMock || !apiKey)) {
+  // Sem conteúdo não existe despacho: o único caminho sem provedor é o Modo Mock.
+  if (!respostaIa) {
     if (!allowsIntegrationMock()) {
       console.error('[RAG Pipeline] Provedor de IA indisponível para este ambiente.')
       return { sucesso: false, error: 'IA_INDISPONIVEL' }

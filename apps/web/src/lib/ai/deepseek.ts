@@ -141,7 +141,6 @@ const PLACEHOLDER_FRAGMENTS = [
   'insert_here',
   'your_key',
   'your-api-key',
-  'your_openrouter_api_key',
 ]
 
 /**
