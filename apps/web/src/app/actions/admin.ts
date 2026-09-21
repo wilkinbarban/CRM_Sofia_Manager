@@ -572,7 +572,18 @@ export async function salvarConfiguracaoAdmin(chave: string, valor: string) {
     }
 
     const adminSupabase = createAdminClient()
-    const ehSegredo = chave.toUpperCase().includes('_KEY') || chave.toUpperCase().includes('_TOKEN')
+    const ehSegredo =
+      chave.toUpperCase().includes('_KEY') ||
+      chave.toUpperCase().includes('_TOKEN') ||
+      chave.toUpperCase().includes('_SECRET')
+
+    // Credential inputs are rendered write-only: the server-to-client projection
+    // strips every `_KEY`/`_TOKEN`/`_SECRET` value, so an untouched input submits
+    // a blank string. Treat that as "keep the stored secret" instead of erasing
+    // it. Blank non-secret values are still upserted as before.
+    if (ehSegredo && valor.trim() === '') {
+      return { success: true }
+    }
 
     const { error: upsertError } = await adminSupabase
       .from('configuracoes_sistema')

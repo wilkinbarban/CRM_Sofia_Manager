@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { listarUsuariosAdmin, obterEstatisticasMensagens } from '@/app/actions/admin'
+import { isUsableDeepSeekApiKey } from '@/lib/ai/deepseek'
 import AdminDashboard from '@/components/operator/AdminDashboard'
 import { OperatorWorkspaceHeader } from '@/components/operator/OperatorWorkspaceHeader'
 
@@ -8,6 +9,45 @@ export const dynamic = 'force-dynamic'
 
 type AdminPageProps = {
   searchParams: Promise<{ tab?: string | string[] }>
+}
+
+/**
+ * Secret-shaped configuration keys, matching the `eh_segredo` classification
+ * used by `salvarConfiguracaoAdmin` on the write path. Must stay in sync with
+ * it: a key classified as secret on one side and not the other reopens the
+ * leak this boundary closes.
+ */
+const SECRET_CONFIG_KEY_PATTERN = /(_KEY|_TOKEN|_SECRET)/i
+
+/** Client-side DeepSeek state marker: the key status without the key itself. */
+const DEEPSEEK_CONFIGURED_KEY = 'DEEPSEEK_CONFIGURED'
+
+/**
+ * Projects `configuracoes_sistema` onto the client payload.
+ *
+ * Every value whose key contains `_KEY`, `_TOKEN`, or `_SECRET` is dropped at
+ * this server-to-client boundary — including environment fallbacks — so the
+ * dashboard can only render write-only credential inputs instead of prefilled
+ * secrets. `DEEPSEEK_CONFIGURED` is the single DeepSeek signal that crosses:
+ * it is serialized as the string `'true'` because `systemConfigs` is a string
+ * map, and it mirrors the same key resolution
+ * (`configuracoes_sistema` first, environment fallback, placeholder keys
+ * rejected) that `listAuthorizedDeepSeekModels` uses on the server.
+ */
+function toClientSystemConfigs(systemConfigs: Record<string, string>): Record<string, string> {
+  const clientConfigs: Record<string, string> = {}
+
+  for (const [key, value] of Object.entries(systemConfigs)) {
+    if (SECRET_CONFIG_KEY_PATTERN.test(key)) continue
+    clientConfigs[key] = value
+  }
+
+  const deepSeekApiKey = systemConfigs.DEEPSEEK_API_KEY || process.env.DEEPSEEK_API_KEY
+  if (isUsableDeepSeekApiKey(deepSeekApiKey)) {
+    clientConfigs[DEEPSEEK_CONFIGURED_KEY] = 'true'
+  }
+
+  return clientConfigs
 }
 
 const adminTabs = new Set([
@@ -163,7 +203,10 @@ export default async function AdminPage({ searchParams }: AdminPageProps) {
     systemConfigs.AI_ROUTING_LEGACY_FALLBACK_ENABLED = process.env.AI_ROUTING_LEGACY_FALLBACK_ENABLED
   }
 
-  // 7. Configuração do Google Calendar
+  // 7. Server-to-client projection: no secret value crosses the boundary
+  const clientSystemConfigs = toClientSystemConfigs(systemConfigs)
+
+  // 8. Configuração do Google Calendar
   const calendarConfig = {
     googleCalendarId: process.env.GOOGLE_CALENDAR_ID || null,
     googleClientEmail: process.env.GOOGLE_CLIENT_EMAIL || null,
@@ -193,7 +236,7 @@ export default async function AdminPage({ searchParams }: AdminPageProps) {
           logsIniciais={logs || []}
           calendarConfig={calendarConfig}
           artigosIniciais={artigos || []}
-          systemConfigs={systemConfigs}
+          systemConfigs={clientSystemConfigs}
         />
       </main>
     </div>
