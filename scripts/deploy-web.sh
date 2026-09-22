@@ -21,7 +21,11 @@ resolve_compose_project() {
     printf '%s\n' "$ASADOS_COMPOSE_PROJECT"
     return 0
   fi
-  detected="$(docker inspect crm-sofia-web --format '{{index .Config.Labels "com.docker.compose.project"}}' 2>/dev/null || docker inspect asados-web --format '{{index .Config.Labels "com.docker.compose.project"}}' 2>/dev/null || true)"
+  if docker inspect crm-sofia-web >/dev/null 2>&1; then
+    detected="$(docker inspect crm-sofia-web --format '{{index .Config.Labels "com.docker.compose.project"}}' 2>/dev/null || true)"
+  else
+    detected="$(docker inspect asados-web --format '{{index .Config.Labels "com.docker.compose.project"}}' 2>/dev/null || true)"
+  fi
   if [[ -n "$detected" ]]; then
     printf '%s\n' "$detected"
     return 0
@@ -54,7 +58,13 @@ image_id() {
 wait_healthy() {
   local deadline=$((SECONDS + health_timeout))
   while (( SECONDS < deadline )); do
-    [[ "$(docker inspect crm-sofia-web --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' 2>/dev/null || docker inspect asados-web --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' 2>/dev/null || true)" == healthy ]] && return 0
+    local status=""
+    if docker inspect crm-sofia-web >/dev/null 2>&1; then
+      status="$(docker inspect crm-sofia-web --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' 2>/dev/null || true)"
+    else
+      status="$(docker inspect asados-web --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' 2>/dev/null || true)"
+    fi
+    [[ "$status" == healthy ]] && return 0
     sleep 2
   done
   printf 'Web did not become healthy within %s seconds\n' "$health_timeout" >&2
@@ -160,7 +170,11 @@ case "$action" in
     esac
     require_immutable_local_image "$candidate_ref"
     candidate_id="$(image_id "$candidate_ref")"
-    current_id="$(docker inspect crm-sofia-web --format '{{.Image}}' 2>/dev/null || docker inspect asados-web --format '{{.Image}}')"
+    if docker inspect crm-sofia-web >/dev/null 2>&1; then
+      current_id="$(docker inspect crm-sofia-web --format '{{.Image}}')"
+    else
+      current_id="$(docker inspect asados-web --format '{{.Image}}')"
+    fi
     rollback_ref="asados-web:rollback-${current_id#sha256:}"
     docker image tag "$current_id" "$rollback_ref"
     previous_id="$(image_id "$rollback_ref")"
