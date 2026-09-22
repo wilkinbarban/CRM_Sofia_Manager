@@ -1,4 +1,5 @@
 import { obterConfiguracaoSistema } from '@/lib/config/sistema'
+import { getBusinessProfile, resolveBusinessProfileSync } from '@/lib/config/business-profile'
 import { evolutionHeaders } from '@/lib/whatsapp/evolution-headers'
 
 export interface ProdutoCardapioItem {
@@ -58,17 +59,22 @@ async function postCatalogMessage(path: string, config: { url: string; apiKey: s
   return typeof messageId === 'string' && messageId ? { ok: true as const, messageId } : { ok: false as const, error: 'provider_rejected' as const }
 }
 
-export async function enviarPromptCatalogoWhatsApp(telefone: string): Promise<CatalogDeliveryResult> {
-  const config = await getEvolutionConfig()
-  if (!config) return { success: false, error: 'config_unavailable' }
-  const text = [
+export function formatarPromptCatalogoTexto(profile = resolveBusinessProfileSync()): string {
+  return [
     '🔥 *Cardápio Oficial de Domingo*',
     '',
     'Gostaria de ver os nossos combos oficiais com fotos e valores?',
     'Responda *1* para eu te enviar as fotos! 📸',
     '',
-    '_Casa de Assados Brasa & Sabor · Umbará_',
+    `_${profile.pickupAddress}_`,
   ].join('\n')
+}
+
+export async function enviarPromptCatalogoWhatsApp(telefone: string): Promise<CatalogDeliveryResult> {
+  const config = await getEvolutionConfig()
+  if (!config) return { success: false, error: 'config_unavailable' }
+  const profile = await getBusinessProfile()
+  const text = formatarPromptCatalogoTexto(profile)
   const result = await postCatalogMessage('/message/sendText', config, {
     number: telefone,
     text,
@@ -131,19 +137,21 @@ export function montarPayloadCarrossel(params: EnviarCardapioInput) {
     }
   })
 
+  const profile = resolveBusinessProfileSync()
   return {
     number: params.telefone,
-    body: `🔥 *Cardápio Oficial de Domingo — Casa de Assados Brasa & Sabor*\n_Tradição no Umbará • O que vai querer hoje?_`,
+    body: `🔥 *Cardápio Oficial de Domingo — ${profile.name}*\n_${profile.pickupAddress} • O que vai querer hoje?_`,
     cards,
   }
 }
 
 export function montarPayloadBotoes(params: EnviarCardapioInput) {
+  const profile = resolveBusinessProfileSync()
   return {
     number: params.telefone,
     title: '🔥 Cardápio Oficial de Domingo',
     description: 'Escolha um produto para adicionar ao pedido:',
-    footer: 'Casa de Assados Brasa & Sabor · Umbará',
+    footer: profile.pickupAddress,
     buttons: params.produtos.slice(0, 3).map((produto) => ({
       type: 'reply',
       displayText: produto.nome.slice(0, 20),
@@ -153,11 +161,12 @@ export function montarPayloadBotoes(params: EnviarCardapioInput) {
 }
 
 export function montarPayloadLista(params: EnviarCardapioInput) {
+  const profile = resolveBusinessProfileSync()
   return {
     number: params.telefone,
     title: '🔥 Cardápio Oficial de Domingo',
     description: 'Veja os assados disponíveis e escolha o seu.',
-    footerText: 'Casa de Assados Brasa & Sabor · Umbará',
+    footerText: profile.pickupAddress,
     buttonText: 'Ver cardápio',
     sections: [{
       title: 'Produtos',
@@ -171,6 +180,7 @@ export function montarPayloadLista(params: EnviarCardapioInput) {
 }
 
 export function montarPayloadTexto(params: EnviarCardapioInput) {
+  const profile = resolveBusinessProfileSync()
   const itens = params.produtos.map((produto, index) => [
     `${index + 1}. *${produto.nome}* — ${formatarMoeda(produto.precoCentavos)}`,
     produto.descricao ? `   ${produto.descricao}` : null,
@@ -179,7 +189,7 @@ export function montarPayloadTexto(params: EnviarCardapioInput) {
   return {
     number: params.telefone,
     text: [
-      '🔥 *Cardápio Oficial de Domingo — Casa de Assados Brasa & Sabor*',
+      `🔥 *Cardápio Oficial de Domingo — ${profile.name}*`,
       '',
       ...itens,
       '',

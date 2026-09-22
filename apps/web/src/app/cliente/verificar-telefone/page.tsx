@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { z } from 'zod'
 import { Loader2, Smartphone, KeyRound, MessageSquare, ArrowLeft, RefreshCw, CheckCircle } from 'lucide-react'
 import { BrandLogo } from '@/components/ui/BrandLogo'
+import { resolveBusinessProfileSync } from '@/lib/config/business-profile'
 
 // Phone validation regex for Curitiba DDD 41, prefix 9, and 8 digits (e.g. 55419XXXXXXXX)
 // On client, sanitized phone format will be validated
@@ -391,7 +392,7 @@ export default function VerificarTelefonePage() {
             </div>
             <h2 className="text-2xl font-bold text-white mb-2">{canalEnvio === 'telegram' ? 'Telegram' : 'WhatsApp'} Verificado!</h2>
             <p className="text-zinc-300 max-w-[280px]">
-              Seu telefone foi vinculado com sucesso à sua conta da Casa de Assados Brasa & Sabor.
+              Seu telefone foi vinculado com sucesso à sua conta da {resolveBusinessProfileSync().name}.
             </p>
             <p className="text-xs text-zinc-500 mt-6">
               Carregando suas configurações de cliente...

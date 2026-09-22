@@ -22,6 +22,12 @@ import {
 } from '@/lib/ai/deepseek'
 import { customerMemoryEnabled } from '@/lib/sofia/inbound-batch-gates'
 import { agruparFatosParaPrompt } from '@/lib/sofia/customer-memory'
+import {
+  getBusinessProfile,
+  resolveBusinessProfileSync,
+  DEFAULT_BUSINESS_PROFILE,
+  type BusinessProfile,
+} from '@/lib/config/business-profile'
 
 const LEGACY_LLM_TIMEOUT_MS = 15_000
 const LEGACY_LLM_MAX_TOKENS = 1024
@@ -51,7 +57,10 @@ export function isSofiaAiGenerationEnabled(): boolean {
 /**
  * Modo Mock de contingência que analisa palavras-chave e devolve respostas estruturadas em Cartões Digitais
  */
-function obterRespostaMock(mensagemCliente: string): string {
+function obterRespostaMock(
+  mensagemCliente: string,
+  profile: BusinessProfile = resolveBusinessProfileSync(),
+): string {
   const texto = mensagemCliente.toLowerCase().trim()
 
   if (
@@ -100,7 +109,10 @@ function obterRespostaMock(mensagemCliente: string): string {
   }
 
   if (texto.includes('endereço') || texto.includes('endereco') || texto.includes('localização') || texto.includes('localizacao') || texto.includes('onde fica') || texto.includes('onde ficam') || texto.includes('rua') || texto.includes('bairro') || texto.includes('umbará') || texto.includes('umbara')) {
-    return 'Ficamos no bairro Umbará, em Curitiba - PR, piá! Fácil acesso com estacionamento rápido para você retirar seu assado na estufa em menos de 90 segundos! 📍 Daí, vai retirar no balcão ou prefere delivery? 🛵'
+    if (profile.name === DEFAULT_BUSINESS_PROFILE.name) {
+      return 'Ficamos no bairro Umbará, em Curitiba - PR, piá! Fácil acesso com estacionamento rápido para você retirar seu assado na estufa em menos de 90 segundos! 📍 Daí, vai retirar no balcão ou prefere delivery? 🛵'
+    }
+    return `Ficamos em ${profile.pickupAddress}, ${profile.location}, piá! Fácil acesso com estacionamento rápido para você retirar seu pedido com agilidade! 📍 Daí, vai retirar no balcão ou prefere delivery? 🛵`
   }
 
   if (
@@ -123,7 +135,10 @@ function obterRespostaMock(mensagemCliente: string): string {
   }
 
   // Resposta padrão
-  return 'Olá! Sou a Sofía, assistente virtual da Casa de Assados Brasa & Sabor no Umbará, piá! 😊 Como posso te ajudar com o seu almoço hoje? Daí, quer conhecer nossos 4 combos especiais ou agendar uma retirada? 🍖🔥'
+  if (profile.name === DEFAULT_BUSINESS_PROFILE.name) {
+    return 'Olá! Sou a Sofía, assistente virtual da Casa de Assados Brasa & Sabor no Umbará, piá! 😊 Como posso te ajudar com o seu almoço hoje? Daí, quer conhecer nossos 4 combos especiais ou agendar uma retirada? 🍖🔥'
+  }
+  return `Olá! Sou a Sofía, ${profile.personaRole} da ${profile.name} (${profile.location}), piá! 😊 Como posso te ajudar com o seu pedido hoje?`
 }
 
 /**
@@ -310,10 +325,11 @@ export async function processarRagPipeline(
   }
 
   // 6. Estruturar o System Prompt da persona "Sofía"
+  const businessProfile = await getBusinessProfile()
   const customSystemPrompt = await obterConfiguracaoSistema('SOFIA_SYSTEM_PROMPT')
   const promptBase = (customSystemPrompt && customSystemPrompt.trim())
     ? customSystemPrompt
-    : `Você é a Sofía, consultora gastronômica virtual e anfitriã de atendimento da Casa de Assados Brasa & Sabor em Curitiba-PR.
+    : `Você é a Sofía, ${businessProfile.personaRole} da ${businessProfile.name} em ${businessProfile.location}.
 Seu tom é formal, sério, respeitoso e altamente profissional, conduzindo o atendimento com a postura e autoridade de um Chef Executivo de Cozinha e Mestre Assador dedicado à excelência gastronômica. Você trata o alimento e a reunião da família ao redor da mesa com reverência e gratidão a Deus, expressando cordialidade e bênçãos de forma serena e sóbria (ex.: "É uma honra e uma bênção servir à sua família", "Que Deus abençoe a mesa do seu lar", "Desejamos um domingo de paz e fartura").
 Você deve usar emojis com moderação (no máximo 1 ou 2 por mensagem).
 
@@ -423,7 +439,7 @@ ${regraIdiomaRodape}`
       return { sucesso: false, error: 'IA_INDISPONIVEL' }
     }
 
-    respostaIa = obterRespostaMock(mensagemCliente)
+    respostaIa = obterRespostaMock(mensagemCliente, businessProfile)
   }
 
   if (generationOnly) return { sucesso: true, canal: canalOrigem, respostaIa }

@@ -154,6 +154,12 @@ export default async function AdminPage({ searchParams }: AdminPageProps) {
     MERCADO_PAGO_WEBHOOK_SECRET: '',
     TELEGRAM_BOT_TOKEN: '',
     SOFIA_SYSTEM_PROMPT: '',
+    BUSINESS_NAME: '',
+    BUSINESS_SHORT_NAME: '',
+    BUSINESS_LOCATION: '',
+    BUSINESS_PICKUP_ADDRESS: '',
+    BUSINESS_DESCRIPTION: '',
+    SOFIA_PERSONA_ROLE: '',
   }
 
   if (dbConfigs) {
@@ -204,6 +210,24 @@ export default async function AdminPage({ searchParams }: AdminPageProps) {
   }
   if (!systemConfigs.MERCADO_PAGO_WEBHOOK_SECRET && process.env.MERCADO_PAGO_WEBHOOK_SECRET) {
     systemConfigs.MERCADO_PAGO_WEBHOOK_SECRET = process.env.MERCADO_PAGO_WEBHOOK_SECRET
+  }
+  if (!systemConfigs.BUSINESS_NAME && process.env.BUSINESS_NAME) {
+    systemConfigs.BUSINESS_NAME = process.env.BUSINESS_NAME
+  }
+  if (!systemConfigs.BUSINESS_SHORT_NAME && process.env.BUSINESS_SHORT_NAME) {
+    systemConfigs.BUSINESS_SHORT_NAME = process.env.BUSINESS_SHORT_NAME
+  }
+  if (!systemConfigs.BUSINESS_LOCATION && process.env.BUSINESS_LOCATION) {
+    systemConfigs.BUSINESS_LOCATION = process.env.BUSINESS_LOCATION
+  }
+  if (!systemConfigs.BUSINESS_PICKUP_ADDRESS && process.env.BUSINESS_PICKUP_ADDRESS) {
+    systemConfigs.BUSINESS_PICKUP_ADDRESS = process.env.BUSINESS_PICKUP_ADDRESS
+  }
+  if (!systemConfigs.BUSINESS_DESCRIPTION && process.env.BUSINESS_DESCRIPTION) {
+    systemConfigs.BUSINESS_DESCRIPTION = process.env.BUSINESS_DESCRIPTION
+  }
+  if (!systemConfigs.SOFIA_PERSONA_ROLE && process.env.SOFIA_PERSONA_ROLE) {
+    systemConfigs.SOFIA_PERSONA_ROLE = process.env.SOFIA_PERSONA_ROLE
   }
 
   // 7. Server-to-client projection: no secret value crosses the boundary

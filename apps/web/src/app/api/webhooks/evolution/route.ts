@@ -8,7 +8,8 @@ import { normalizeCuritibaPhone } from '@/lib/auth/phone'
 import { processarStatusContatoInbound } from '@/lib/whatsapp/contact-status'
 import { normalizarMensagemEvolution } from '@/lib/whatsapp/inbound-normalizer'
 import { processarAcaoInterativaWhatsApp } from '@/lib/whatsapp/action-router'
-import { enviarPromptCatalogoWhatsApp } from '@/lib/whatsapp/gateways/catalog-gateway'
+import { enviarPromptCatalogoWhatsApp, formatarPromptCatalogoTexto } from '@/lib/whatsapp/gateways/catalog-gateway'
+import { getBusinessProfile } from '@/lib/config/business-profile'
 import { ingestEvolutionCanonicalPaymentProof } from '@/lib/payment-proofs/canonical-intake'
 import { downloadEvolutionMedia } from '@/lib/whatsapp/evolution-media-download'
 import { evaluateEvolutionPaymentProofCompatibility } from '@/lib/whatsapp/evolution-payment-proof-compatibility'
@@ -541,10 +542,11 @@ export async function POST(request: Request) {
         console.error('[Evolution Webhook] CATALOG_PROMPT_FAILED', prompt.error)
       } else {
         try {
+          const profile = await getBusinessProfile()
           await supabaseAdmin.from('mensagens').insert({
             conversa_id: conversaId,
             remetente: 'ia',
-            conteudo: '🔥 *Cardápio Oficial de Domingo*\n\nGostaria de ver os nossos combos oficiais com fotos e valores?\nResponda *1* para eu te enviar as fotos! 📸\n\n_Casa de Assados Brasa & Sabor · Umbará_',
+            conteudo: formatarPromptCatalogoTexto(profile),
           })
         } catch {
           console.error('[Evolution Webhook] CATALOG_PROMPT_PERSIST_FAILED')

@@ -68,6 +68,7 @@ import WhatsAppCard from './integrations/WhatsAppCard'
 import TelegramBotCard from './integrations/TelegramBotCard'
 import MercadoPagoCard from './integrations/MercadoPagoCard'
 import type { FinancialOperationalMetrics } from '@/lib/admin/financial-metrics'
+import { resolveBusinessProfileSync } from '@/lib/config/business-profile'
 
 interface Usuario {
   id: string
@@ -121,6 +122,12 @@ interface AdminDashboardProps {
     MERCADO_PAGO_WEBHOOK_SECRET?: string
     TELEGRAM_BOT_TOKEN?: string
     SOFIA_SYSTEM_PROMPT?: string
+    BUSINESS_NAME?: string
+    BUSINESS_SHORT_NAME?: string
+    BUSINESS_LOCATION?: string
+    BUSINESS_PICKUP_ADDRESS?: string
+    BUSINESS_DESCRIPTION?: string
+    SOFIA_PERSONA_ROLE?: string
   }
 }
 
@@ -731,7 +738,12 @@ export default function AdminDashboard({
 
   // --- Ações de Prompt ---
 
-  const systemPromptStatic = `Você é a Sofía, assistente virtual amigável da Casa de Assados Brasa & Sabor em Curitiba-PR.
+  const defaultProfile = resolveBusinessProfileSync()
+  const businessName = systemConfigs?.BUSINESS_NAME || defaultProfile.name
+  const businessLocation = systemConfigs?.BUSINESS_LOCATION || defaultProfile.location
+  const personaRole = systemConfigs?.SOFIA_PERSONA_ROLE || (businessName === defaultProfile.name ? 'assistente virtual amigável' : defaultProfile.personaRole)
+
+  const systemPromptStatic = `Você é a Sofía, ${personaRole} da ${businessName} em ${businessLocation}.
 Sua personalidade é acolhedora, simpática, com leve sotaque e gírias curitibanas (use termos como "piá", "daí" de forma natural e sem exageros).
 Você deve usar emojis com moderação (no máximo 1 ou 2 por mensagem).
 

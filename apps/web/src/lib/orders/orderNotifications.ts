@@ -1,4 +1,5 @@
 import { createAdminClient } from '@/lib/supabase/admin'
+import { getBusinessProfile, resolveBusinessProfileSync, type BusinessProfile } from '@/lib/config/business-profile'
 import { enviarMensagemWhatsapp } from '@/lib/whatsapp/send'
 import { enviarMensagemTelegram } from '@/lib/telegram/send'
 import type { SupabaseClient } from '@supabase/supabase-js'
@@ -23,13 +24,17 @@ export interface ResultadoNotificacaoOmnichannel {
   erros?: string[]
 }
 
-export function formatarMensagemNotificacao(params: NotificacaoPedidoParams, nomeCliente?: string): string {
+export function formatarMensagemNotificacao(
+  params: NotificacaoPedidoParams,
+  nomeCliente?: string,
+  profile: BusinessProfile = resolveBusinessProfileSync(),
+): string {
   const saudacao = nomeCliente ? `Olá, *${nomeCliente}*!` : 'Olá!'
 
   if (params.tipo === 'status_pedido') {
     switch (params.novoStatus) {
       case 'confirmado':
-        return `${saudacao}\n\n🥩 *Pedido Confirmado!*\nSeu pedido foi aceito pela nossa equipe e já está sendo preparado com todo o carinho e sabor da Casa de Assados Brasa & Sabor.\n\n⏰ Avisaremos assim que estiver pronto para retirada ou sair para entrega!`
+        return `${saudacao}\n\n🥩 *Pedido Confirmado!*\nSeu pedido foi aceito pela nossa equipe e já está sendo preparado com todo o carinho e sabor da ${profile.name}.\n\n⏰ Avisaremos assim que estiver pronto para retirada ou sair para entrega!`
       case 'entregue':
         return `${saudacao}\n\n✨ *Pedido Concluído!*\nSeu pedido foi finalizado com sucesso. Que Deus abençoe a mesa da sua família e tenham uma excelente refeição!\n\nSeu comprovante de venda digital está disponível no seu painel.`
       case 'cancelado':
@@ -53,7 +58,7 @@ export function formatarMensagemNotificacao(params: NotificacaoPedidoParams, nom
     }
   }
 
-  return `${saudacao}\n\nHá uma nova atualização no seu pedido na Casa de Assados Brasa & Sabor.`
+  return `${saudacao}\n\nHá uma nova atualização no seu pedido na ${profile.name}.`
 }
 
 /**
@@ -114,7 +119,8 @@ export async function notificarClienteAtualizacaoPedido(
       }
     }
 
-    const mensagemTexto = params.mensagem ?? formatarMensagemNotificacao(params, cliente?.nome)
+    const profile = await getBusinessProfile()
+    const mensagemTexto = params.mensagem ?? formatarMensagemNotificacao(params, cliente?.nome, profile)
 
     // 2. Canal WhatsApp (se houver telefone cadastrado)
     if (conversaId && cliente?.telefone) {

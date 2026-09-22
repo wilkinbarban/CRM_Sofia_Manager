@@ -2,6 +2,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { allowsIntegrationMock } from '@/lib/runtime/environment'
 import { processarRagPipeline } from '@/lib/ai/openrouter'
 import { obterConfiguracaoSistema, obterSofiaGlobalChannelConfig } from '@/lib/config/sistema'
+import { getBusinessProfile, type BusinessProfile } from '@/lib/config/business-profile'
 import { verificarHorarioAtendimento } from '@/lib/horarios/verificar'
 import { deriveTelegramMessageKey } from '@/lib/telegram/idempotency'
 import { downloadTelegramDocument } from '@/lib/telegram/document-download'
@@ -43,13 +44,16 @@ async function enviarMensagemDireta(chatId: string, texto: string): Promise<bool
   }
 }
 
-const MENSAGEM_BOAS_VINDAS = `🍖 *Olá! Seja bem-vindo(a) à Asados!*
+function obterMensagemBoasVindasTelegram(profile: BusinessProfile): string {
+  const brand = profile.shortName || profile.name
+  return `🍖 *Olá! Seja bem-vindo(a) à ${brand}!*
 
-Sou a Sofía, assistente virtual da melhor churrascaria de Curitiba. 😊
+Sou a Sofía, assistente virtual da ${profile.name} em ${profile.location}. 😊
 
 Para continuar o atendimento e personalizar sua experiência, preciso que você compartilhe seu número de telefone. É rapidinho!
 
 👇 *Toque no botão abaixo para compartilhar:*`
+}
 
 
 
@@ -654,7 +658,8 @@ Como posso te ajudar com o churrasco hoje? 🥩`
         return Response.json({ ok: false, error: conversationError.message || 'Erro ao preparar conversa' }, { status: 500 })
       }
 
-      await enviarMensagemDireta(telegramChatId, MENSAGEM_BOAS_VINDAS)
+      const profile = await getBusinessProfile()
+      await enviarMensagemDireta(telegramChatId, obterMensagemBoasVindasTelegram(profile))
 
       // Também enviar um keyboard button para facilitar o compartilhamento
       try {

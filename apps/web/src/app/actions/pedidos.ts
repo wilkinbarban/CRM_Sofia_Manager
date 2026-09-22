@@ -11,6 +11,7 @@ import {
 } from '@/lib/orders/revenueEligibility'
 import { notificarClienteAtualizacaoPedido } from '@/lib/orders/orderNotifications'
 import { obterConfiguracaoSistema } from '@/lib/config/sistema'
+import { getBusinessProfile } from '@/lib/config/business-profile'
 import { enviarMensagemWhatsapp } from '@/lib/whatsapp/send'
 import { enviarMensagemTelegram } from '@/lib/telegram/send'
 import { processCanonicalPaymentProof } from '@/lib/payment-proofs/canonical-intake'
@@ -527,7 +528,8 @@ export async function actionCriarPedidoCliente(data: {
       .map((it) => `• ${it.quantidade}x ${it.nome} (${formatarMoeda(it.preco_unitario_centavos * it.quantidade)})`)
       .join('\n')
 
-    const mensagemTexto = `🛒 *Pedido #${pedido.id.substring(0, 8).toUpperCase()} Registrado!*\n\n${itensTexto}\n\n💰 *Total:* ${formatarMoeda(totalProdutosCentavos)}\n🕒 *Horário de Retirada:* ${horarioEfetivo}\n📍 *Local:* Balcão Umbará (Casa de Assados Brasa & Sabor)\n\nOlá! Acabei de enviar esse pedido para o atendimento!`
+    const profile = await getBusinessProfile()
+    const mensagemTexto = `🛒 *Pedido #${pedido.id.substring(0, 8).toUpperCase()} Registrado!*\n\n${itensTexto}\n\n💰 *Total:* ${formatarMoeda(totalProdutosCentavos)}\n🕒 *Horário de Retirada:* ${horarioEfetivo}\n📍 *Local:* ${profile.pickupAddress}\n\nOlá! Acabei de enviar esse pedido para o atendimento!`
 
     let novaMensagem = null
     if (data.conversaId) {
@@ -1581,7 +1583,8 @@ export async function despacharCobrancaPixMulticanal(
       currency: 'BRL',
     })
 
-    const textoMensagem = `Olá, *${nomeCliente}*! 🥩\n\nSeu pedido *#${pedidoShort}* na Casa de Assados Brasa & Sabor está pronto para pagamento!\n\n💰 *Valor Total:* ${valorFormatado}\n\n🔑 *Chave PIX (Copia e Cola):*\n\`\`\`\n${dadosPix.qrCodeCopiaCola}\n\`\`\`\n\n📲 *Como pagar:* Copie o código acima e cole no app do seu banco na opção "PIX Copia e Cola", ou acesse o seu Painel de Pedidos para escanear o QR Code.\n\nApós o pagamento, você pode anexar seu comprovante aqui mesmo na conversa!`
+    const profile = await getBusinessProfile()
+    const textoMensagem = `Olá, *${nomeCliente}*! 🥩\n\nSeu pedido *#${pedidoShort}* na ${profile.name} está pronto para pagamento!\n\n💰 *Valor Total:* ${valorFormatado}\n\n🔑 *Chave PIX (Copia e Cola):*\n\`\`\`\n${dadosPix.qrCodeCopiaCola}\n\`\`\`\n\n📲 *Como pagar:* Copie o código acima e cole no app do seu banco na opção "PIX Copia e Cola", ou acesse o seu Painel de Pedidos para escanear o QR Code.\n\nApós o pagamento, você pode anexar seu comprovante aqui mesmo na conversa!`
 
     const canaisNotificados: string[] = []
     let conversaId = pedido.conversa_id

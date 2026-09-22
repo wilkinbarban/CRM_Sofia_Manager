@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { buildReceiptSvg, type ReceiptSnapshot } from '@/lib/receipts/salesReceipt'
+import { getBusinessProfile } from '@/lib/config/business-profile'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -78,6 +79,8 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
         return new Response('Forbidden', { status: 403 })
       }
 
+      const businessProfile = await getBusinessProfile()
+
       receipt = {
         snapshot: {
           order: {
@@ -104,7 +107,7 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
             status: pedido.status_pagamento,
             method: pedido.meio_pagamento || 'pix',
           },
-          establishment: { name: 'Casa de Assados Brasa & Sabor' },
+          establishment: { name: businessProfile.name },
           issuance: {
             issued_at: pedido.data_criacao || new Date().toISOString(),
             snapshot_version: 1,
