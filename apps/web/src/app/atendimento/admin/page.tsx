@@ -209,13 +209,6 @@ export default async function AdminPage({ searchParams }: AdminPageProps) {
   // 7. Server-to-client projection: no secret value crosses the boundary
   const clientSystemConfigs = toClientSystemConfigs(systemConfigs)
 
-  // 8. Configuração do Google Calendar
-  const calendarConfig = {
-    googleCalendarId: process.env.GOOGLE_CALENDAR_ID || null,
-    googleClientEmail: process.env.GOOGLE_CLIENT_EMAIL || null,
-    googlePrivateKeyConfigured: !!process.env.GOOGLE_PRIVATE_KEY
-  }
-
   return (
     <div className="flex h-screen w-full flex-col bg-zinc-950 text-zinc-50 overflow-hidden font-sans">
       <OperatorWorkspaceHeader
@@ -237,7 +230,6 @@ export default async function AdminPage({ searchParams }: AdminPageProps) {
           usuariosIniciais={usuariosRes.success ? (usuariosRes.data || []) : []}
           estatisticasIniciais={estatisticasRes.success ? (estatisticasRes.data || { totalIa: 0, totalOperador: 0, totalCliente: 0, totalMensagens: 0, taxaAutomacao: 0 }) : { totalIa: 0, totalOperador: 0, totalCliente: 0, totalMensagens: 0, taxaAutomacao: 0 }}
           logsIniciais={logs || []}
-          calendarConfig={calendarConfig}
           artigosIniciais={artigos || []}
           systemConfigs={clientSystemConfigs}
         />

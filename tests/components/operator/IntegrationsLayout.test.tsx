@@ -27,14 +27,12 @@ vi.mock('@/components/operator/integrations/WhatsAppCard', async importOriginal 
   return { ...actual, default: actual.default }
 })
 vi.mock('@/components/operator/integrations/TelegramBotCard', () => ({ default: () => <section aria-label="Telegram card" /> }))
-vi.mock('@/components/operator/integrations/GoogleCalendarCard', () => ({ default: () => <section aria-label="Google Calendar card" /> }))
 vi.mock('@/components/operator/integrations/MercadoPagoCard', () => ({ default: () => <section aria-label="Mercado Pago card" /> }))
 
 const props = {
   usuarioLogado: { id: 'admin-1', nome: 'Admin', funcao: 'admin', ativo: true }, usuariosIniciais: [],
   estatisticasIniciais: { totalIa: 0, totalOperador: 0, totalCliente: 0, totalMensagens: 0, taxaAutomacao: 0 },
-  logsIniciais: [], calendarConfig: { googleCalendarId: null, googleClientEmail: null, googlePrivateKeyConfigured: false },
-  artigosIniciais: [], systemConfigs: {},
+  logsIniciais: [], artigosIniciais: [], systemConfigs: {},
 }
 
 function WhatsAppHarness({ initial = 'meta' as const }) {
@@ -50,7 +48,7 @@ describe('Integrações do Sistema', () => {
     render(<AdminDashboard {...props} />)
     expect(await screen.findByRole('heading', { name: 'Integrações do Sistema' })).toBeInTheDocument()
     const options = screen.getAllByRole('article').map(option => option.getAttribute('aria-label'))
-    expect(options).toEqual(['WhatsApp', 'LLM API', 'Telegram', 'Google Calendar', 'Mercado Pago'])
+    expect(options).toEqual(['WhatsApp', 'LLM API', 'Telegram', 'Mercado Pago'])
     expect(screen.getAllByRole('article').every(option => !option.hasAttribute('draggable'))).toBe(true)
   })
 

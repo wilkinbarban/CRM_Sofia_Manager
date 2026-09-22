@@ -66,9 +66,7 @@ import PaymentProofAdminPanel from './PaymentProofAdminPanel'
 import LlmApiCard from './integrations/LlmApiCard'
 import WhatsAppCard from './integrations/WhatsAppCard'
 import TelegramBotCard from './integrations/TelegramBotCard'
-import GoogleCalendarCard from './integrations/GoogleCalendarCard'
 import MercadoPagoCard from './integrations/MercadoPagoCard'
-import { CalendarConfig } from './integrations/types'
 import type { FinancialOperationalMetrics } from '@/lib/admin/financial-metrics'
 
 interface Usuario {
@@ -108,7 +106,6 @@ interface AdminDashboardProps {
   usuariosIniciais: Usuario[]
   estatisticasIniciais: Estatisticas
   logsIniciais: AuditLog[]
-  calendarConfig: CalendarConfig
   artigosIniciais: Artigo[]
   systemConfigs: {
     WHATSAPP_ACCESS_TOKEN?: string
@@ -136,7 +133,6 @@ export default function AdminDashboard({
   usuariosIniciais,
   estatisticasIniciais,
   logsIniciais,
-  calendarConfig,
   artigosIniciais,
   systemConfigs,
   initialTab = 'operadores',
@@ -843,8 +839,6 @@ DIRETRIZES RÍGIDAS DE COMPORTAMENTO:
     switch (acao) {
       case 'atualizar_perfil':
         return 'Alteração de Perfil'
-      case 'teste_calendario':
-        return 'Teste de Google Calendar'
       default:
         return acao
     }
@@ -1759,9 +1753,6 @@ DIRETRIZES RÍGIDAS DE COMPORTAMENTO:
                 <LlmApiCard initialConfigs={systemConfigs} showToast={showToast} />
               </article>
               <article aria-label="Telegram"><TelegramBotCard initialConfigs={systemConfigs} showToast={showToast} /></article>
-              <article aria-label="Google Calendar">
-                <GoogleCalendarCard initialConfigs={systemConfigs} showToast={showToast} calendarConfig={calendarConfig} />
-              </article>
               <article aria-label="Mercado Pago"><MercadoPagoCard initialConfigs={systemConfigs} showToast={showToast} /></article>
             </div>
           </div>

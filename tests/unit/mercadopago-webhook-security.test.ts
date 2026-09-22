@@ -99,25 +99,6 @@ describe('MercadoPago credential validation', () => {
   })
 })
 
-describe('MercadoPago payment authority result', () => {
-  it('accepts the RPC calendar event identifier as nullable text', async () => {
-    const { normalizarResultadoPagamentoMercadoPago } = await import('@/app/api/webhooks/mercadopago/route')
-
-    expect(normalizarResultadoPagamentoMercadoPago({
-      pedido_id: 'ped-1',
-      status_pagamento: 'aprovado',
-      idempotent: false,
-      google_event_id: 'google-event-1',
-    })).toEqual({ google_event_id: 'google-event-1' })
-    expect(normalizarResultadoPagamentoMercadoPago({
-      pedido_id: 'ped-2',
-      status_pagamento: 'aprovado',
-      idempotent: true,
-      google_event_id: null,
-    })).toEqual({ google_event_id: null })
-  })
-})
-
 describe('MercadoPago webhook endpoint', () => {
   it('rejects unsigned requests before parsing their body', async () => {
     const response = await POST(request())

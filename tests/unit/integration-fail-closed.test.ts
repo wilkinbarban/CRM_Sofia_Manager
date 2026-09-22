@@ -38,10 +38,6 @@ vi.mock('@/lib/whatsapp/sofia-control', () => ({
 
 import * as deepseek from '@/lib/ai/deepseek'
 import {
-  agendarPedidoNoCalendario,
-  atualizarPedidoNoCalendarioComoPago,
-} from '@/lib/calendar/google'
-import {
   isSofiaAiGenerationEnabled,
   processarRagBatchPipeline,
   processarRagPipeline,
@@ -102,18 +98,6 @@ describe('integration fail-closed policy', () => {
     process.env = originalEnv
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
-  })
-
-  it('does not create a calendar event when credentials are missing outside mock mode', async () => {
-    const result = await agendarPedidoNoCalendario('pedido-1')
-
-    expect(result).toBeNull()
-  })
-
-  it('does not mark a calendar event as paid when credentials are missing outside mock mode', async () => {
-    const result = await atualizarPedidoNoCalendarioComoPago('pedido-1', 'event-1')
-
-    expect(result).toBe(false)
   })
 
   it('logs PROVEDOR_NAO_CONFIGURADO and stays fail-closed when the DeepSeek key is unconfigured', async () => {

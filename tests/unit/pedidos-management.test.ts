@@ -24,10 +24,6 @@ vi.mock('next/cache', () => ({
   revalidatePath: vi.fn(),
 }))
 
-vi.mock('@/lib/calendar/google', () => ({
-  agendarPedidoNoCalendario: vi.fn().mockResolvedValue('mock-google-event-id'),
-}))
-
 describe('Gestão de Pedidos - Server Actions (TDD)', () => {
   const mockUser = { id: 'user-op-1', email: 'atendente@crmsofiamanager.com.br' }
   const mockPerfil = { id: 'user-op-1', funcao: 'vendedor', ativo: true }

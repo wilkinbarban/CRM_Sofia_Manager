@@ -4,7 +4,6 @@ import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
-import { agendarPedidoNoCalendario } from '@/lib/calendar/google'
 import {
   projetarElegibilidadeReceita,
   resumirReceitaRealizada,
@@ -757,21 +756,6 @@ export async function confirmarPedidoOperador(pedidoId: string, correlationId = 
     }).single()
     if (stockError || !pedido) return { success: false, error: mapearErroEstoquePedido(stockError || {}) }
 
-    // 2. Agendar no Google Calendar de forma resiliente
-    const googleEventId = await agendarPedidoNoCalendario(pedidoId)
-
-    if (googleEventId) {
-      // Grava o google_event_id no banco
-      const { error: updateCalError } = await supabase
-        .from('pedidos')
-        .update({ google_event_id: googleEventId })
-        .eq('id', pedidoId)
-
-      if (updateCalError) {
-        console.error(`[Pedidos] Erro ao gravar google_event_id no pedido: ${updateCalError.message}`)
-      }
-    }
-
     safeRevalidatePath('/atendimento')
 
     // transicionar_pedido registra o evento canônico; o outbox entrega a notificação.
@@ -1043,7 +1027,6 @@ export async function actionListarPedidos(filtros?: {
         status_pagamento,
         meio_pagamento,
         mercado_pago_preferencia_id,
-        google_event_id,
         data_criacao,
         data_atualizacao,
         cliente_id,

@@ -64,10 +64,6 @@ vi.mock('@/components/operator/integrations/TelegramBotCard', () => ({
   default: () => <div>Telegram isolado</div>,
 }))
 
-vi.mock('@/components/operator/integrations/GoogleCalendarCard', () => ({
-  default: () => <div>Calendar isolado</div>,
-}))
-
 vi.mock('@/components/operator/integrations/MercadoPagoCard', () => ({
   default: () => <div>Mercado Pago isolado</div>,
 }))
@@ -83,11 +79,6 @@ const dashboardProps = {
     taxaAutomacao: 0,
   },
   logsIniciais: [],
-  calendarConfig: {
-    googleCalendarId: null,
-    googleClientEmail: null,
-    googlePrivateKeyConfigured: false,
-  },
   artigosIniciais: [],
   systemConfigs: {},
 }

@@ -5,14 +5,12 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { createClient as createSupabaseClient } from '@supabase/supabase-js'
 import { getSupabaseServerUrl } from '@/lib/supabase/url'
 import { z } from 'zod'
-import { google } from 'googleapis'
 import {
   getEvolutionConnectionState,
   getEvolutionQrCode,
 } from '@/lib/whatsapp/evolution-admin-client'
 import { revalidatePath } from 'next/cache'
 import { consolidateAdminUsers } from '@/lib/admin/user-list'
-import { obterConfiguracaoSistema } from '@/lib/config/sistema'
 import { isRetiredProviderConfigKey } from '@/lib/config/retired-config-keys'
 import {
   isUsableDeepSeekApiKey,
@@ -343,114 +341,6 @@ export async function editarUsuarioAdmin(
     return { success: true }
   } catch (error: any) {
     console.error('Erro na action editarUsuarioAdmin:', error)
-    return { success: false, error: error.message || 'ERRO_INTERNO' }
-  }
-}
-
-/**
- * Server Action 2.5: testarGoogleCalendar
- * Realiza o agendamento de um evento de teste de 15 minutos e registra o resultado em logs_auditoria.
- */
-export async function testarGoogleCalendar(
-  customCalendarId?: string,
-  customClientEmail?: string,
-  customPrivateKey?: string
-) {
-  try {
-    const check = await verificarPermissaoOperador()
-    if (!check.authorized || !check.user) {
-      return { success: false, error: check.error || 'ACESSO_NEGADO_NAO_AUTENTICADO' }
-    }
-
-    const { user } = check
-
-    const clientEmail = customClientEmail || await obterConfiguracaoSistema('GOOGLE_CLIENT_EMAIL')
-    const privateKey = customPrivateKey || await obterConfiguracaoSistema('GOOGLE_PRIVATE_KEY')
-    const calendarId = customCalendarId || await obterConfiguracaoSistema('GOOGLE_CALENDAR_ID')
-
-    const isMockMode =
-      !clientEmail ||
-      !privateKey ||
-      !calendarId ||
-      clientEmail.includes('placeholder') ||
-      privateKey.includes('placeholder') ||
-      calendarId.includes('placeholder')
-
-    let eventId = null
-    let sucesso = false
-    let erroMensagem = null
-
-    if (isMockMode) {
-      console.warn('[Google Calendar Test] Servidor rodando em modo MOCK. Credenciais de calendário ausentes ou placeholders.')
-      // Simular latência de rede (200ms)
-      await new Promise((resolve) => setTimeout(resolve, 200))
-      eventId = `mock-test-event-${Date.now()}`
-      sucesso = true
-    } else {
-      try {
-        const auth = new google.auth.JWT({
-          email: clientEmail,
-          key: privateKey!.replace(/\\n/g, '\n'),
-          scopes: ['https://www.googleapis.com/auth/calendar'],
-        })
-
-        const calendar = google.calendar({ version: 'v3', auth })
-
-        const start = new Date()
-        const end = new Date(start.getTime() + 15 * 60 * 1000) // 15 minutos
-        const timestamp = start.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })
-
-        const response = await calendar.events.insert({
-          calendarId: calendarId,
-          requestBody: {
-            summary: `[TESTE] Conexão Asados - ${timestamp}`,
-            description: 'Evento de teste para validar a integração com o Google Calendar.',
-            start: {
-              dateTime: start.toISOString(),
-              timeZone: 'America/Sao_Paulo',
-            },
-            end: {
-              dateTime: end.toISOString(),
-              timeZone: 'America/Sao_Paulo',
-            },
-          },
-        })
-
-        eventId = response.data.id || 'sem_id'
-        sucesso = true
-      } catch (err: any) {
-        console.error('[Google Calendar Test] Erro ao agendar evento:', err)
-        erroMensagem = err.message || 'Falha técnica ao integrar com a API do Google Calendar'
-      }
-    }
-
-    // Inserir log de auditoria
-    const adminSupabase = createAdminClient()
-    const { error: logError } = await adminSupabase
-      .from('logs_auditoria')
-      .insert({
-        usuario_id: user.id,
-        acao: 'teste_calendario',
-        detalhes: {
-          sucesso,
-          mock: isMockMode,
-          eventId,
-          erro: erroMensagem,
-          calendarId: calendarId || null,
-        },
-      })
-
-    if (logError) {
-      console.error('Erro ao registrar log de teste de calendário:', logError)
-    }
-
-    if (!sucesso) {
-      return { success: false, error: erroMensagem || 'FALHA_CONEXAO' }
-    }
-
-    return { success: true, data: { eventId, mock: isMockMode } }
-  } catch (error: any) {
-    console.error('Erro na action testarGoogleCalendar:', error)
     return { success: false, error: error.message || 'ERRO_INTERNO' }
   }
 }

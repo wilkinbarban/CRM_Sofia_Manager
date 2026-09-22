@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server'
 import crypto from 'node:crypto'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { agendarPedidoNoCalendario, atualizarPedidoNoCalendarioComoPago } from '@/lib/calendar/google'
 import { obterConfiguracaoSistema } from '@/lib/config/sistema'
 import { allowsIntegrationMock } from '@/lib/runtime/environment'
 
@@ -11,13 +10,6 @@ export interface ResultadoPagamentoMercadoPago {
   pedido_id: string
   status_pagamento: 'aprovado' | 'rejeitado' | 'pendente' | 'reembolsado'
   idempotent: boolean
-  google_event_id: string | null
-}
-
-export function normalizarResultadoPagamentoMercadoPago(
-  resultado: ResultadoPagamentoMercadoPago,
-): Pick<ResultadoPagamentoMercadoPago, 'google_event_id'> {
-  return { google_event_id: resultado.google_event_id }
 }
 
 function parseMercadoPagoSignature(header: string | null): { timestamp: string; signature: string } | null {
@@ -90,8 +82,6 @@ function obfuscateId(id: string | null | undefined): string {
  */
 export interface MercadoPagoBackgroundDependencies {
   resolvePayment?: (paymentId: string, pedidoIdMock?: string | null) => Promise<{ status: string | null; pedidoId: string | null }>
-  scheduleCalendar?: (pedidoId: string, supabaseAdmin: ReturnType<typeof createAdminClient>) => Promise<string | null>
-  markCalendarPaid?: (pedidoId: string, googleEventId: string) => Promise<boolean>
   completeDelivery?: (requestId: string, paymentId: string) => Promise<boolean>
   providerDeliveryId?: string
   failDelivery?: (requestId: string, paymentId: string, error: string) => Promise<boolean>
@@ -245,52 +235,16 @@ export async function processarPagamentoBackground(
       return false
     }
 
-    if (!paymentResult) {
+    // The audited payment row is the only evidence this delivery may complete on.
+    const resultadoPagamento = paymentResult as ResultadoPagamentoMercadoPago | null
+
+    if (!resultadoPagamento) {
       console.info(`[MercadoPago Webhook] [BG] Resultado de pagamento ausente para o pedido ${pedidoIdLog}.`)
       await failDelivery('RESULTADO_DE_PAGAMENTO_AUSENTE')
       return false
     }
 
-    const resultadoPagamento = normalizarResultadoPagamentoMercadoPago(
-      paymentResult as ResultadoPagamentoMercadoPago,
-    )
-
     console.log(`[MercadoPago Webhook] [BG] Pagamento auditado para pedido ${pedidoIdLog}.`)
-
-    // Calendar synchronization is deliberately post-commit and cannot roll
-    // back payment evidence if Google is unavailable.
-    if (status === 'approved') {
-      let googleEventId = resultadoPagamento.google_event_id
-
-      if (!googleEventId) {
-        console.log(`[MercadoPago Webhook] [BG] Pedido ${pedidoIdLog} nao possui ID de evento do Google Calendar. Agendando...`)
-        // Passando supabaseAdmin para permitir que o agendador leia o pedido burlado pelo RLS
-        googleEventId = await (dependencies.scheduleCalendar ?? agendarPedidoNoCalendario)(pedidoId, supabaseAdmin)
-        
-        if (googleEventId) {
-          const { error: updateCalError } = await supabaseAdmin
-            .from('pedidos')
-            .update({ google_event_id: googleEventId })
-            .eq('id', pedidoId)
-
-          if (updateCalError) {
-            console.error(`[MercadoPago Webhook] [BG] Erro ao gravar google_event_id no banco para o pedido ${pedidoIdLog}: ${updateCalError.message}`)
-          } else {
-            console.log(`[MercadoPago Webhook] [BG] Google Event ID ${obfuscateId(googleEventId)} salvo com sucesso para o pedido ${pedidoIdLog}`)
-          }
-        }
-      }
-
-      if (googleEventId) {
-        console.log(`[MercadoPago Webhook] [BG] Marcando evento ${obfuscateId(googleEventId)} como PAGO no calendario...`)
-        const success = await (dependencies.markCalendarPaid ?? atualizarPedidoNoCalendarioComoPago)(pedidoId, googleEventId)
-        if (success) {
-          console.log(`[MercadoPago Webhook] [BG] Evento de calendario atualizado para PAGO com sucesso.`)
-        } else {
-          console.warn(`[MercadoPago Webhook] [BG] Falha ao atualizar evento de calendario para o pedido ${pedidoIdLog}.`)
-        }
-      }
-    }
 
     return completeDelivery()
   } catch (error: any) {

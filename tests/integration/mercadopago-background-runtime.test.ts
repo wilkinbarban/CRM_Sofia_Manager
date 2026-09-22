@@ -16,7 +16,7 @@ function loadLocalEnvironment(): LocalEnvironment {
 }
 
 describe('Mercado Pago approved background runtime', () => {
-  it.skipIf(process.env.RUN_LOCAL_MP_RUNTIME !== '1')('commits audited approval before a calendar failure and leaves lifecycle unchanged', async () => {
+  it.skipIf(process.env.RUN_LOCAL_MP_RUNTIME !== '1')('commits the audited payment approval and leaves the order lifecycle unchanged', async () => {
     const environment = loadLocalEnvironment()
     process.env.NEXT_PUBLIC_SUPABASE_URL = 'http://localhost:8000'
     process.env.SUPABASE_SERVICE_ROLE_KEY = environment.SERVICE_ROLE_KEY
@@ -27,9 +27,6 @@ describe('Mercado Pago approved background runtime', () => {
 
     await processarPagamentoBackground('mp-runtime-approved-333', null, {
       resolvePayment: async () => ({ status: 'approved', pedidoId }),
-      scheduleCalendar: async () => {
-        throw new Error('calendar intentionally unavailable')
-      },
     })
 
     const admin = createAdminClient()

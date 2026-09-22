@@ -19,21 +19,6 @@ vi.mock('next/cache', () => ({
   revalidatePath: mocks.revalidatePath,
 }))
 
-vi.mock('googleapis', () => ({
-  google: {
-    auth: {
-      JWT: vi.fn().mockImplementation(() => ({
-        authorize: vi.fn(),
-      })),
-    },
-    calendar: vi.fn().mockReturnValue({
-      events: {
-        insert: vi.fn(),
-      },
-    }),
-  },
-}))
-
 function makeOperatorClient(role = 'admin') {
   return {
     auth: {
