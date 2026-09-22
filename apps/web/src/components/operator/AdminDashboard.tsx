@@ -3,6 +3,7 @@
 import React, { useState } from 'react'
 import {
   Users,
+  Building2,
   Activity,
   BarChart3,
   Calendar,
@@ -61,6 +62,7 @@ import BusinessHoursManager from './BusinessHoursManager'
 import InventoryManager from './InventoryManager'
 import { StorageOrphanReconciliationPanel } from './StorageOrphanReconciliationPanel'
 import PaymentProofAdminPanel from './PaymentProofAdminPanel'
+import BusinessProfileCard from './BusinessProfileCard'
 
 // Import card components and shared types
 import LlmApiCard from './integrations/LlmApiCard'
@@ -131,9 +133,9 @@ interface AdminDashboardProps {
   }
 }
 
-type TabType = 'operadores' | 'integracoes' | 'conhecimento' | 'metricas' | 'auditoria' | 'prompt' | 'horarios' | 'estoque' | 'storage-orphans' | 'comprovantes'
+type TabType = 'operadores' | 'empresa' | 'integracoes' | 'conhecimento' | 'metricas' | 'auditoria' | 'prompt' | 'horarios' | 'estoque' | 'storage-orphans' | 'comprovantes'
 
-const allowedTabs: readonly TabType[] = ['operadores', 'integracoes', 'conhecimento', 'metricas', 'auditoria', 'prompt', 'horarios', 'estoque', 'storage-orphans', 'comprovantes']
+const allowedTabs: readonly TabType[] = ['operadores', 'empresa', 'integracoes', 'conhecimento', 'metricas', 'auditoria', 'prompt', 'horarios', 'estoque', 'storage-orphans', 'comprovantes']
 
 export default function AdminDashboard({
   usuarioLogado,
@@ -1397,6 +1399,18 @@ DIRETRIZES RÍGIDAS DE COMPORTAMENTO:
               </button>
 
               <button
+                onClick={() => setActiveTab('empresa')}
+                className={`flex w-full items-center gap-3 rounded-xl px-3.5 py-2.5 text-xs font-semibold transition-all cursor-pointer ${
+                  activeTab === 'empresa'
+                    ? 'bg-amber-500/15 text-amber-400 border border-amber-500/30 shadow-sm shadow-amber-500/10'
+                    : 'text-zinc-400 hover:bg-zinc-900/60 hover:text-zinc-200'
+                }`}
+              >
+                <Building2 className="h-4 w-4 shrink-0" />
+                <span>Perfil da Empresa</span>
+              </button>
+
+              <button
                 onClick={() => setActiveTab('metricas')}
                 className={`flex w-full items-center gap-3 rounded-xl px-3.5 py-2.5 text-xs font-semibold transition-all cursor-pointer ${
                   activeTab === 'metricas'
@@ -1741,6 +1755,14 @@ DIRETRIZES RÍGIDAS DE COMPORTAMENTO:
         )}
 
         {residualModal && <div className="fixed inset-0 z-[70] grid place-items-center bg-black/80 p-4"><div className="w-full max-w-md rounded-xl bg-zinc-900 p-5"><h3 className="font-bold text-rose-300">Purgar registro anonimizado de teste</h3><p className="mt-2 text-xs text-zinc-300">Somente para limpeza excepcional de um registro já anonimizado por engano/teste. Não há conta Auth associada.</p><code className="mt-2 block text-xs">{residualModal}</code><input aria-label="Senha atual do administrador para residual" autoComplete="current-password" className="mt-3 w-full rounded bg-zinc-950 p-2" onChange={(e) => setResidualPassword(e.target.value)} type="password" value={residualPassword}/><input aria-label="Confirmação de purga residual" className="mt-2 w-full rounded bg-zinc-950 p-2" onChange={(e) => setResidualConfirmation(e.target.value)} placeholder="PURGAR RESIDUAL DEFINITIVAMENTE" value={residualConfirmation}/>{purgeError && <p className="mt-2 text-xs text-rose-300">{purgeError}</p>}<div className="mt-3 flex justify-end gap-2"><button onClick={() => setResidualModal(null)}>Cancelar</button><button disabled={!residualPassword || residualConfirmation !== 'PURGAR RESIDUAL DEFINITIVAMENTE'} onClick={purgeResidual}>Confirmar purga residual</button></div></div></div>}
+
+        {/* TAB: PERFIL DA EMPRESA */}
+        {activeTab === 'empresa' && (
+          <BusinessProfileCard
+            initialConfigs={systemConfigs}
+            showToast={showToast}
+          />
+        )}
 
         {/* TAB 2: INTEGRAÇÕES */}
         {activeTab === 'integracoes' && (

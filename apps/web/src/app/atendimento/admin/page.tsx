@@ -69,7 +69,7 @@ function toClientSystemConfigs(systemConfigs: Record<string, string>): Record<st
 }
 
 const adminTabs = new Set([
-  'operadores', 'integracoes', 'conhecimento', 'metricas', 'auditoria',
+  'operadores', 'empresa', 'integracoes', 'conhecimento', 'metricas', 'auditoria',
   'prompt', 'horarios', 'estoque', 'storage-orphans', 'comprovantes',
 ])
 
