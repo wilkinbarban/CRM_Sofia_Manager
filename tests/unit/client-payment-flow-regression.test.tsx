@@ -5,6 +5,9 @@ const modal = readFileSync('apps/web/src/components/cliente/ModalPagamentoClient
 const dashboard = readFileSync('apps/web/src/components/cliente/ClienteOrdersDashboard.tsx', 'utf8')
 const chat = readFileSync('apps/web/src/components/chat/ChatContainer.tsx', 'utf8')
 const pedidos = readFileSync('apps/web/src/app/actions/pedidos.ts', 'utf8')
+const canonicalIntake = readFileSync('apps/web/src/lib/payment-proofs/canonical-intake.ts', 'utf8')
+const credits = readFileSync('apps/web/src/lib/ai/credits.ts', 'utf8')
+const atendimento = readFileSync('apps/web/src/app/actions/atendimento.ts', 'utf8')
 
 describe('rejected-payment retry flow', () => {
   it('offers gateway retry but not proof upload for rejected payments', () => {
@@ -46,5 +49,38 @@ describe('rejected-payment retry flow', () => {
     expect(canonicalCheck).toBeLessThan(action.indexOf(".from('chat-midias')\n      .download"))
     expect(canonicalCheck).toBeLessThan(action.indexOf('processCanonicalPaymentProof({'))
     expect(action).not.toMatch(/\.from\('conversas'\)[\s\S]{0,300}order\('data_atualizacao'/)
+  })
+})
+
+// The retired OpenRouter surface must not come back: the credential, the model
+// and the two vestigial process-input fields all belong to DeepSeek now.
+describe('retired provider boundary', () => {
+  it('never submits the vestigial provider credential or model with a canonical proof', () => {
+    const call = pedidos.slice(
+      pedidos.indexOf('processCanonicalPaymentProof({'),
+      pedidos.indexOf("if (processed.status === 'disabled')"),
+    )
+    const processInputType = canonicalIntake.slice(
+      canonicalIntake.indexOf('type ProcessInput'),
+      canonicalIntake.indexOf('function proofIdFrom'),
+    )
+
+    expect(call).not.toContain('apiKey')
+    expect(call).not.toContain('model')
+    expect(pedidos).not.toContain('OPENROUTER')
+    expect(processInputType).not.toContain('apiKey')
+    expect(processInputType).not.toContain('model')
+  })
+
+  it('keeps the credit and status surfaces on DeepSeek only', () => {
+    for (const source of [credits, atendimento]) {
+      expect(source).not.toMatch(/openrouter/i)
+      expect(source).not.toContain('sk-or-')
+      expect(source).not.toContain('deepseek-chat')
+      expect(source).not.toContain('deepseek-reasoner')
+    }
+
+    expect(credits).not.toContain('parseOpenRouterRemainingUsd')
+    expect(credits).not.toContain('resolveLlmCreditProvider')
   })
 })

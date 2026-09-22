@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
@@ -16,21 +17,6 @@ vi.mock('@/lib/supabase/admin', () => ({
 
 vi.mock('next/cache', () => ({
   revalidatePath: mocks.revalidatePath,
-}))
-
-vi.mock('googleapis', () => ({
-  google: {
-    auth: {
-      JWT: vi.fn().mockImplementation(() => ({
-        authorize: vi.fn(),
-      })),
-    },
-    calendar: vi.fn().mockReturnValue({
-      events: {
-        insert: vi.fn(),
-      },
-    }),
-  },
 }))
 
 function makeOperatorClient(role = 'admin') {
@@ -119,6 +105,202 @@ describe('obterComprovantes Server Action (Task 2.7)', () => {
   })
 })
 
+describe('salvarConfiguracaoAdmin secret preservation', () => {
+  function makeConfigAdminClient() {
+    const upsert = vi.fn().mockResolvedValue({ error: null })
+    const insert = vi.fn().mockResolvedValue({ error: null })
+    return {
+      client: {
+        from: vi.fn((table: string) =>
+          table === 'configuracoes_sistema' ? { upsert } : { insert }
+        ),
+      },
+      upsert,
+      insert,
+    }
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mocks.createClient.mockResolvedValue(makeOperatorClient('admin'))
+  })
+
+  /**
+   * The admin dashboard renders credential inputs write-only: the page strips
+   * every `_KEY`/`_TOKEN`/`_SECRET` value at the server-to-client boundary, so
+   * an untouched input submits an empty string. Saving the surrounding form
+   * must never overwrite the stored secret with that blank value.
+   */
+  it('preserves the stored secret when the submitted secret value is blank', async () => {
+    const admin = makeConfigAdminClient()
+    mocks.createAdminClient.mockReturnValue(admin.client)
+    const { salvarConfiguracaoAdmin } = await import('@/app/actions/admin')
+
+    const result = await salvarConfiguracaoAdmin('WHATSAPP_ACCESS_TOKEN', '   ')
+
+    expect(result).toEqual({ success: true })
+    expect(admin.upsert).not.toHaveBeenCalled()
+    expect(admin.insert).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['WHATSAPP_APP_SECRET', ''],
+    ['WHATSAPP_APP_SECRET', '   '],
+    ['MERCADO_PAGO_WEBHOOK_SECRET', ''],
+    ['MERCADO_PAGO_WEBHOOK_SECRET', '\n\t'],
+  ])('preserves the stored `%s` secret when %j is submitted', async (chave, valor) => {
+    const admin = makeConfigAdminClient()
+    mocks.createAdminClient.mockReturnValue(admin.client)
+    const { salvarConfiguracaoAdmin } = await import('@/app/actions/admin')
+
+    const result = await salvarConfiguracaoAdmin(chave, valor)
+
+    expect(result).toEqual({ success: true })
+    expect(admin.upsert).not.toHaveBeenCalled()
+    expect(admin.insert).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['WHATSAPP_APP_SECRET', 'rotated-app-secret'],
+    ['MERCADO_PAGO_WEBHOOK_SECRET', 'rotated-webhook-secret'],
+  ])('still persists a `_SECRET` value in %s when the operator submits a real value', async (chave, valor) => {
+    const admin = makeConfigAdminClient()
+    mocks.createAdminClient.mockReturnValue(admin.client)
+    const { salvarConfiguracaoAdmin } = await import('@/app/actions/admin')
+
+    const result = await salvarConfiguracaoAdmin(chave, valor)
+
+    expect(result).toEqual({ success: true })
+    expect(admin.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({ chave, valor, eh_segredo: true }),
+      { onConflict: 'chave' }
+    )
+  })
+
+  it('still persists a secret when the operator submits a real value', async () => {
+    const admin = makeConfigAdminClient()
+    mocks.createAdminClient.mockReturnValue(admin.client)
+    const { salvarConfiguracaoAdmin } = await import('@/app/actions/admin')
+
+    const result = await salvarConfiguracaoAdmin('WHATSAPP_ACCESS_TOKEN', 'rotated-token')
+
+    expect(result).toEqual({ success: true })
+    expect(admin.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({ chave: 'WHATSAPP_ACCESS_TOKEN', valor: 'rotated-token', eh_segredo: true }),
+      { onConflict: 'chave' }
+    )
+  })
+
+  it('preserves a `_TOKEN` secret for any case and non-space whitespace', async () => {
+    const admin = makeConfigAdminClient()
+    mocks.createAdminClient.mockReturnValue(admin.client)
+    const { salvarConfiguracaoAdmin } = await import('@/app/actions/admin')
+
+    const result = await salvarConfiguracaoAdmin('telegram_bot_token', '\n\t')
+
+    expect(result).toEqual({ success: true })
+    expect(admin.upsert).not.toHaveBeenCalled()
+  })
+
+  it('keeps writing a blank non-secret configuration value', async () => {
+    const admin = makeConfigAdminClient()
+    mocks.createAdminClient.mockReturnValue(admin.client)
+    const { salvarConfiguracaoAdmin } = await import('@/app/actions/admin')
+
+    const result = await salvarConfiguracaoAdmin('EVOLUTION_API_URL', '')
+
+    expect(result).toEqual({ success: true })
+    expect(admin.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({ chave: 'EVOLUTION_API_URL', valor: '', eh_segredo: false }),
+      { onConflict: 'chave' }
+    )
+  })
+})
+
+/**
+ * The retired provider surface must stay unwritable, not only unreadable.
+ * `configuracoes_sistema` rows naming OpenRouter or OmniRoute are hidden by the
+ * server-to-client projection, but a dashboard still holding the old form (or
+ * a restored dump) could otherwise recreate exactly the rows the projection
+ * works to hide. The refusal happens after the operator authorization check
+ * and before any database work, and every other key keeps saving as before.
+ */
+describe('salvarConfiguracaoAdmin retired provider refusal', () => {
+  const RETIRED_PROVIDER_WRITES: [string, string][] = [
+    ['OPENROUTER_MODEL', 'deepseek/deepseek-chat'],
+    ['OMNIROUTE_BASE_URL', 'https://omniroute.retired.example/v1'],
+    ['openrouter_model', 'deepseek/deepseek-chat'],
+    ['OPENROUTER_API_KEY', 'sk-openrouter-rotated'],
+    ['OMNIROUTE_API_KEY', 'omniroute-rotated'],
+    // A blank secret-shaped value is no exception either: there is no stored
+    // value worth preserving for a provider this system no longer talks to.
+    ['OPENROUTER_API_KEY', ''],
+  ]
+
+  function makeConfigAdminClient() {
+    const upsert = vi.fn().mockResolvedValue({ error: null })
+    const insert = vi.fn().mockResolvedValue({ error: null })
+    return {
+      client: {
+        from: vi.fn((table: string) =>
+          table === 'configuracoes_sistema' ? { upsert } : { insert }
+        ),
+      },
+      upsert,
+      insert,
+    }
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mocks.createClient.mockResolvedValue(makeOperatorClient('admin'))
+  })
+
+  it.each(RETIRED_PROVIDER_WRITES)('refuses to persist the retired provider key %s with %o', async (chave, valor) => {
+    const admin = makeConfigAdminClient()
+    mocks.createAdminClient.mockReturnValue(admin.client)
+    const { salvarConfiguracaoAdmin } = await import('@/app/actions/admin')
+
+    const result = await salvarConfiguracaoAdmin(chave, valor)
+
+    expect(result).toEqual({ success: false, error: 'CHAVE_DE_PROVEDOR_DESCONTINUADO' })
+    // No client, no upsert, no audit log and no revalidation: the refusal is a
+    // pure read of the key name.
+    expect(mocks.createAdminClient).not.toHaveBeenCalled()
+    expect(admin.upsert).not.toHaveBeenCalled()
+    expect(admin.insert).not.toHaveBeenCalled()
+    expect(mocks.revalidatePath).not.toHaveBeenCalled()
+  })
+
+  it('checks operator authorization before the retirement rule', async () => {
+    mocks.createClient.mockResolvedValue(makeOperatorClient('cliente'))
+    const { salvarConfiguracaoAdmin } = await import('@/app/actions/admin')
+
+    const result = await salvarConfiguracaoAdmin('OPENROUTER_MODEL', 'deepseek/deepseek-chat')
+
+    expect(result.success).toBe(false)
+    expect(result.error).toContain('ACESSO_NEGADO')
+  })
+
+  it.each([
+    ['DEEPSEEK_MODEL', 'deepseek-v4-pro', false],
+    ['EVOLUTION_API_URL', 'https://evolution.internal.example', false],
+    ['DEEPSEEK_API_KEY', 'sk-deepseek-rotated', true],
+  ])('still persists the legitimate key %s after the refusal rule exists', async (chave, valor, ehSegredo) => {
+    const admin = makeConfigAdminClient()
+    mocks.createAdminClient.mockReturnValue(admin.client)
+    const { salvarConfiguracaoAdmin } = await import('@/app/actions/admin')
+
+    const result = await salvarConfiguracaoAdmin(chave, valor)
+
+    expect(result).toEqual({ success: true })
+    expect(admin.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({ chave, valor, eh_segredo: ehSegredo }),
+      { onConflict: 'chave' }
+    )
+  })
+})
+
 describe('deletarUsuarioAdmin idempotent Auth completion', () => {
   it('completes a pending anonymisation when Auth already reports the user absent', async () => {
     const operator = makeOperatorClient('admin') as any
@@ -144,5 +326,29 @@ describe('deletarUsuarioAdmin idempotent Auth completion', () => {
     expect(operator.rpc).toHaveBeenCalledTimes(1)
     await expect(deletarUsuarioAdmin('target-1')).resolves.toEqual({ success: true })
     expect(operator.rpc).toHaveBeenCalledTimes(3)
+  })
+})
+
+/**
+ * The retired provider surface must not come back: the OpenRouter model catalog
+ * and the OpenRouter/DeepSeek connection probe are gone from the admin actions,
+ * and with them the `sk-or-` key detection, the OpenRouter attribution headers,
+ * the `openrouter.ai` endpoints and the retired model names.
+ */
+describe('retired provider admin actions stay retired', () => {
+  const source = readFileSync('apps/web/src/app/actions/admin.ts', 'utf8')
+
+  it('exports neither the retired model catalog nor the retired connection probe', async () => {
+    const admin = await import('@/app/actions/admin')
+
+    expect(admin).not.toHaveProperty('obterModelosDisponiveis')
+    expect(admin).not.toHaveProperty('testarConexaoLLM')
+  })
+
+  it('keeps neither the retired endpoint, the retired credential shape nor the retired model literals', () => {
+    expect(source).not.toMatch(/openrouter/i)
+    expect(source).not.toContain('sk-or-')
+    expect(source).not.toContain('deepseek-chat')
+    expect(source).not.toContain('deepseek-reasoner')
   })
 })

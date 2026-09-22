@@ -22,10 +22,9 @@ type EvolutionIntakeInput = Omit<IntakeInput, 'customerId' | 'conversationId'> &
   displayName: string
 }
 
-type ProcessInput = IntakeInput & {
-  apiKey?: string | null
-  model?: string | null
-}
+// The processor entry point takes the same intake shape: the retired provider
+// credential and model fields it used to accept were never read anywhere.
+type ProcessInput = IntakeInput
 
 function proofIdFrom(data: unknown): string | null {
   if (typeof data === 'string') return data

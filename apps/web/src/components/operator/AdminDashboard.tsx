@@ -3,6 +3,7 @@
 import React, { useState } from 'react'
 import {
   Users,
+  Building2,
   Activity,
   BarChart3,
   Calendar,
@@ -61,15 +62,15 @@ import BusinessHoursManager from './BusinessHoursManager'
 import InventoryManager from './InventoryManager'
 import { StorageOrphanReconciliationPanel } from './StorageOrphanReconciliationPanel'
 import PaymentProofAdminPanel from './PaymentProofAdminPanel'
+import BusinessProfileCard from './BusinessProfileCard'
 
 // Import card components and shared types
 import LlmApiCard from './integrations/LlmApiCard'
 import WhatsAppCard from './integrations/WhatsAppCard'
 import TelegramBotCard from './integrations/TelegramBotCard'
-import GoogleCalendarCard from './integrations/GoogleCalendarCard'
 import MercadoPagoCard from './integrations/MercadoPagoCard'
-import { CalendarConfig } from './integrations/types'
 import type { FinancialOperationalMetrics } from '@/lib/admin/financial-metrics'
+import { resolveBusinessProfileSync } from '@/lib/config/business-profile'
 
 interface Usuario {
   id: string
@@ -108,13 +109,10 @@ interface AdminDashboardProps {
   usuariosIniciais: Usuario[]
   estatisticasIniciais: Estatisticas
   logsIniciais: AuditLog[]
-  calendarConfig: CalendarConfig
   artigosIniciais: Artigo[]
   systemConfigs: {
-    OPENROUTER_API_KEY?: string
     WHATSAPP_ACCESS_TOKEN?: string
     WHATSAPP_PHONE_NUMBER_ID?: string
-    OPENROUTER_MODEL?: string
     WHATSAPP_APP_SECRET?: string
     WHATSAPP_VERIFY_TOKEN?: string
     EVOLUTION_API_URL?: string
@@ -126,19 +124,24 @@ interface AdminDashboardProps {
     MERCADO_PAGO_WEBHOOK_SECRET?: string
     TELEGRAM_BOT_TOKEN?: string
     SOFIA_SYSTEM_PROMPT?: string
+    BUSINESS_NAME?: string
+    BUSINESS_SHORT_NAME?: string
+    BUSINESS_LOCATION?: string
+    BUSINESS_PICKUP_ADDRESS?: string
+    BUSINESS_DESCRIPTION?: string
+    SOFIA_PERSONA_ROLE?: string
   }
 }
 
-type TabType = 'operadores' | 'integracoes' | 'conhecimento' | 'metricas' | 'auditoria' | 'prompt' | 'horarios' | 'estoque' | 'storage-orphans' | 'comprovantes'
+type TabType = 'operadores' | 'empresa' | 'integracoes' | 'conhecimento' | 'metricas' | 'auditoria' | 'prompt' | 'horarios' | 'estoque' | 'storage-orphans' | 'comprovantes'
 
-const allowedTabs: readonly TabType[] = ['operadores', 'integracoes', 'conhecimento', 'metricas', 'auditoria', 'prompt', 'horarios', 'estoque', 'storage-orphans', 'comprovantes']
+const allowedTabs: readonly TabType[] = ['operadores', 'empresa', 'integracoes', 'conhecimento', 'metricas', 'auditoria', 'prompt', 'horarios', 'estoque', 'storage-orphans', 'comprovantes']
 
 export default function AdminDashboard({
   usuarioLogado,
   usuariosIniciais,
   estatisticasIniciais,
   logsIniciais,
-  calendarConfig,
   artigosIniciais,
   systemConfigs,
   initialTab = 'operadores',
@@ -737,7 +740,12 @@ export default function AdminDashboard({
 
   // --- Ações de Prompt ---
 
-  const systemPromptStatic = `Você é a Sofía, assistente virtual amigável da Casa de Assados Brasa & Sabor em Curitiba-PR.
+  const defaultProfile = resolveBusinessProfileSync()
+  const businessName = systemConfigs?.BUSINESS_NAME || defaultProfile.name
+  const businessLocation = systemConfigs?.BUSINESS_LOCATION || defaultProfile.location
+  const personaRole = systemConfigs?.SOFIA_PERSONA_ROLE || (businessName === defaultProfile.name ? 'assistente virtual amigável' : defaultProfile.personaRole)
+
+  const systemPromptStatic = `Você é a Sofía, ${personaRole} da ${businessName} em ${businessLocation}.
 Sua personalidade é acolhedora, simpática, com leve sotaque e gírias curitibanas (use termos como "piá", "daí" de forma natural e sem exageros).
 Você deve usar emojis com moderação (no máximo 1 ou 2 por mensagem).
 
@@ -845,8 +853,6 @@ DIRETRIZES RÍGIDAS DE COMPORTAMENTO:
     switch (acao) {
       case 'atualizar_perfil':
         return 'Alteração de Perfil'
-      case 'teste_calendario':
-        return 'Teste de Google Calendar'
       default:
         return acao
     }
@@ -1393,6 +1399,18 @@ DIRETRIZES RÍGIDAS DE COMPORTAMENTO:
               </button>
 
               <button
+                onClick={() => setActiveTab('empresa')}
+                className={`flex w-full items-center gap-3 rounded-xl px-3.5 py-2.5 text-xs font-semibold transition-all cursor-pointer ${
+                  activeTab === 'empresa'
+                    ? 'bg-amber-500/15 text-amber-400 border border-amber-500/30 shadow-sm shadow-amber-500/10'
+                    : 'text-zinc-400 hover:bg-zinc-900/60 hover:text-zinc-200'
+                }`}
+              >
+                <Building2 className="h-4 w-4 shrink-0" />
+                <span>Perfil da Empresa</span>
+              </button>
+
+              <button
                 onClick={() => setActiveTab('metricas')}
                 className={`flex w-full items-center gap-3 rounded-xl px-3.5 py-2.5 text-xs font-semibold transition-all cursor-pointer ${
                   activeTab === 'metricas'
@@ -1738,6 +1756,14 @@ DIRETRIZES RÍGIDAS DE COMPORTAMENTO:
 
         {residualModal && <div className="fixed inset-0 z-[70] grid place-items-center bg-black/80 p-4"><div className="w-full max-w-md rounded-xl bg-zinc-900 p-5"><h3 className="font-bold text-rose-300">Purgar registro anonimizado de teste</h3><p className="mt-2 text-xs text-zinc-300">Somente para limpeza excepcional de um registro já anonimizado por engano/teste. Não há conta Auth associada.</p><code className="mt-2 block text-xs">{residualModal}</code><input aria-label="Senha atual do administrador para residual" autoComplete="current-password" className="mt-3 w-full rounded bg-zinc-950 p-2" onChange={(e) => setResidualPassword(e.target.value)} type="password" value={residualPassword}/><input aria-label="Confirmação de purga residual" className="mt-2 w-full rounded bg-zinc-950 p-2" onChange={(e) => setResidualConfirmation(e.target.value)} placeholder="PURGAR RESIDUAL DEFINITIVAMENTE" value={residualConfirmation}/>{purgeError && <p className="mt-2 text-xs text-rose-300">{purgeError}</p>}<div className="mt-3 flex justify-end gap-2"><button onClick={() => setResidualModal(null)}>Cancelar</button><button disabled={!residualPassword || residualConfirmation !== 'PURGAR RESIDUAL DEFINITIVAMENTE'} onClick={purgeResidual}>Confirmar purga residual</button></div></div></div>}
 
+        {/* TAB: PERFIL DA EMPRESA */}
+        {activeTab === 'empresa' && (
+          <BusinessProfileCard
+            initialConfigs={systemConfigs}
+            showToast={showToast}
+          />
+        )}
+
         {/* TAB 2: INTEGRAÇÕES */}
         {activeTab === 'integracoes' && (
           <div className="flex flex-col h-full space-y-6 overflow-y-auto pr-6 pb-10">
@@ -1757,13 +1783,10 @@ DIRETRIZES RÍGIDAS DE COMPORTAMENTO:
                   onProvedorChange={setProvedorAtivo}
                 />
               </article>
-              <article aria-label="OmniRoute AI Gateway" className="lg:col-span-2">
+              <article aria-label="LLM API" className="lg:col-span-2">
                 <LlmApiCard initialConfigs={systemConfigs} showToast={showToast} />
               </article>
               <article aria-label="Telegram"><TelegramBotCard initialConfigs={systemConfigs} showToast={showToast} /></article>
-              <article aria-label="Google Calendar">
-                <GoogleCalendarCard initialConfigs={systemConfigs} showToast={showToast} calendarConfig={calendarConfig} />
-              </article>
               <article aria-label="Mercado Pago"><MercadoPagoCard initialConfigs={systemConfigs} showToast={showToast} /></article>
             </div>
           </div>
@@ -2222,7 +2245,7 @@ DIRETRIZES RÍGIDAS DE COMPORTAMENTO:
             <div className="rounded-xl border border-amber-500/10 bg-amber-500/5 p-4 text-xs text-amber-500/80 leading-relaxed shrink-0 flex gap-2">
               <AlertTriangle className="h-4 w-4 shrink-0 text-amber-500 mt-0.5" />
               <div>
-                Este prompt é carregado pelo pipeline de IA do OpenRouter para estruturar as respostas. Ele foi desenhado para assegurar o tom curitibano de atendimento, evitar alucinações técnicas fora da base de conhecimento e garantir o encaminhamento suave ao transbordo humano sempre que necessário.
+                Este prompt é carregado pelo pipeline de IA da DeepSeek para estruturar as respostas. Ele foi desenhado para assegurar o tom curitibano de atendimento, evitar alucinações técnicas fora da base de conhecimento e garantir o encaminhamento suave ao transbordo humano sempre que necessário.
               </div>
             </div>
           </div>

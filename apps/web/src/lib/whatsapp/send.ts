@@ -1,4 +1,5 @@
 import { obterConfiguracaoSistema } from '@/lib/config/sistema'
+import { getBusinessProfile } from '@/lib/config/business-profile'
 import { allowsIntegrationMock } from '@/lib/runtime/environment'
 import { ProvedorWhatsApp, EnviarMensagemPayload, ResultadoEnvio, obterProvedorAtivo, validarJanelaEnvio, inferirTipoMidia, shouldPersistOutbound } from './provider'
 import { validarEnvioWhatsAppSafety } from './safety'
@@ -220,6 +221,8 @@ export async function sendOtpMeta(
       return { sucesso: true, whatsappMensagemId: mockId }
     }
 
+    const profile = await getBusinessProfile()
+    const brand = profile.shortName || profile.name
     const url = `https://graph.facebook.com/v18.0/${phoneId}/messages`
     const bodyData = {
       messaging_product: 'whatsapp',
@@ -228,7 +231,7 @@ export async function sendOtpMeta(
       type: 'text',
       text: {
         preview_url: false,
-        body: `🔐 Código de Verificação — Asados\n\nSeu código é: ${code}\n\n⏳ Válido por 10 minutos.`
+        body: `🔐 Código de Verificação — ${brand}\n\nSeu código é: ${code}\n\n⏳ Válido por 10 minutos.`
       }
     }
 

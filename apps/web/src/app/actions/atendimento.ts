@@ -12,10 +12,10 @@ import {
   deriveSofiaChannelAvailability,
   type SofiaChannelAvailability,
   type SofiaGlobalChannel,
-  obterConfiguracaoSistema,
   obterSofiaGlobalStatusConfig,
   salvarSofiaGlobalChannelConfig,
 } from '@/lib/config/sistema'
+import { resolverModeloDeepSeek } from '@/lib/ai/deepseek'
 import { verificarOperadorAutorizado } from '@/lib/auth/operador'
 
 const FUNCOES_SOFIA_GLOBAL_GESTAO = ['admin', 'supervisor']
@@ -57,7 +57,7 @@ export async function obterStatusSofiaAtendimento() {
       obterSofiaGlobalStatusConfig(),
       getLlmCreditStatus(),
       verificarHorarioAtendimento(),
-      obterConfiguracaoSistema('OPENROUTER_MODEL'),
+      resolverModeloDeepSeek(),
     ])
 
     const data: SofiaAtendimentoStatus = {
@@ -76,7 +76,7 @@ export async function obterStatusSofiaAtendimento() {
       credits,
       runtime: {
         provider: credits.provider,
-        model: model?.trim() || null,
+        model,
       },
       permissions: {
         canToggleGlobalSofia: podeGerenciarSofiaGlobal(check.perfil.funcao),

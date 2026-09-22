@@ -1,6 +1,7 @@
 import { Worker } from 'node:worker_threads'
 import { createHash } from 'node:crypto'
 import { pathToFileURL } from 'node:url'
+import { DEEPSEEK_DEFAULT_MODEL } from '@/lib/ai/deepseek'
 import { classifyPaymentProof } from './advisory-extraction'
 import { renderPaymentProofPageOne, type PaymentProofRender } from './render-png'
 
@@ -112,7 +113,7 @@ export async function processPaymentProofJob(input:{proofId:string;db:any;apiKey
     if (!image) try{text=await extractPdfText(bytes)}catch{}
     try {
       const classify=input.classify??classifyPaymentProof
-      await classify({proofId:input.proofId,extractedText:text,imageDataUrl:image?.dataUrl,apiKey:input.apiKey?.trim()||'',model:input.model?.trim()||'google/gemini-2.5-flash',maxAttempts:input.apiKey?2:1,persist:async(result)=>{const saved=await input.db.rpc('record_payment_proof_advisory',{p_proof_id:input.proofId,p_attempt_key:`initial:${proof.sha256}`,p_disposition:result.disposition,p_likely:result.likelyPaymentProof,p_confidence:result.confidence,p_suggested_cents:result.suggestedAmountCents,p_reason_code:result.reasonCode,p_model:result.model});if(saved.error)throw new Error('persist')}})
+      await classify({proofId:input.proofId,extractedText:text,imageDataUrl:image?.dataUrl,apiKey:input.apiKey?.trim()||'',model:input.model?.trim()||DEEPSEEK_DEFAULT_MODEL,persist:async(result)=>{const saved=await input.db.rpc('record_payment_proof_advisory',{p_proof_id:input.proofId,p_attempt_key:`initial:${proof.sha256}`,p_disposition:result.disposition,p_likely:result.likelyPaymentProof,p_confidence:result.confidence,p_suggested_cents:result.suggestedAmountCents,p_reason_code:result.reasonCode,p_model:result.model});if(saved.error)throw new Error('persist')}})
     } catch { return {ok:false as const,stage:'classifier' as const} }
   }
   return {ok:true as const}

@@ -132,11 +132,6 @@ const defaultProps = {
       data_criacao: new Date().toISOString(),
     },
   ],
-  calendarConfig: {
-    googleCalendarId: null,
-    googleClientEmail: null,
-    googlePrivateKeyConfigured: false,
-  },
   artigosIniciais: [],
   systemConfigs: {},
 }

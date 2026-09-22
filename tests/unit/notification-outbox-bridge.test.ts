@@ -9,7 +9,6 @@ const mocks = vi.hoisted(() => ({
 vi.mock('@/lib/supabase/server', () => ({ createClient: mocks.createClient }))
 vi.mock('@/lib/supabase/admin', () => ({ createAdminClient: mocks.createAdminClient }))
 vi.mock('@/lib/orders/orderNotifications', () => ({ notificarClienteAtualizacaoPedido: mocks.notify }))
-vi.mock('@/lib/calendar/google', () => ({ agendarPedidoNoCalendario: vi.fn().mockResolvedValue(null) }))
 vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }))
 
 import {

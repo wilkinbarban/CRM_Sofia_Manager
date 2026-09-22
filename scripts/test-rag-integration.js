@@ -19,8 +19,9 @@ process.env.NEXT_PUBLIC_SUPABASE_URL = SUPABASE_URL;
 process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = ANON_KEY;
 process.env.SUPABASE_SERVICE_ROLE_KEY = SERVICE_ROLE_KEY;
 
-// Force OpenRouter mock mode and WhatsApp mock mode
-process.env.OPENROUTER_API_KEY = 'placeholder';
+// Force DeepSeek mock mode and WhatsApp mock mode
+// (`openrouter.ts` keeps its historical name; the provider it reads is DeepSeek)
+process.env.DEEPSEEK_API_KEY = 'placeholder';
 process.env.WHATSAPP_ACCESS_TOKEN = 'placeholder';
 process.env.WHATSAPP_PHONE_NUMBER_ID = 'placeholder';
 

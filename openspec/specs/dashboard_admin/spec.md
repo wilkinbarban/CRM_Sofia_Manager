@@ -7,7 +7,7 @@
 ---
 
 ## 1. Descrição Executiva
-Este documento especifica os requisitos de negócio e técnicos para o Painel Administrativo do portal da churrascaria **Asados**. O módulo centraliza a gestão de permissões e do status de ativação dos usuários do sistema, o teste de integração do Google Calendar, a exibição de métricas comparativas de atendimento (Humano vs. Inteligência Artificial), a auditoria de ações críticas por meio de logs imutáveis e a visualização do Master Prompt da assistente virtual Sofía.
+Este documento especifica os requisitos de negócio e técnicos para o Painel Administrativo do portal da churrascaria **Asados**. O módulo centraliza a gestão de permissões e do status de ativação dos usuários do sistema, a exibição de métricas comparativas de atendimento (Humano vs. Inteligência Artificial), a auditoria de ações críticas por meio de logs imutáveis e a visualização do Master Prompt da assistente virtual Sofía.
 
 ---
 
@@ -27,23 +27,17 @@ Este documento especifica os requisitos de negócio e técnicos para o Painel Ad
 *   **REQ-ADM-009**: O sistema MUST impedir que o operador autenticado desative o seu próprio perfil (auto-desativação) ou altere a sua própria função, prevenindo perda acidental de acesso administrativo (lockout).
 *   **REQ-ADM-010**: O sistema MUST validar que exista pelo menos um perfil de usuário ativo com a função `'admin'` no banco de dados antes de permitir qualquer desativação ou alteração de cargo que reduza o número de administradores ativos a zero.
 
-### 2.3 Integração com Google Calendar e Painel de Testes
-*   **REQ-ADM-011**: O painel administrativo MUST expor uma área de visualização do status das credenciais da integração com o Google Calendar.
-*   **REQ-ADM-012**: O status da configuração das chaves de ambiente `GOOGLE_CALENDAR_ID`, `GOOGLE_CLIENT_EMAIL` e `GOOGLE_PRIVATE_KEY` MUST ser exibido de forma mascarada (ex: exibindo apenas se a variável está "Configurada" ou "Não Configurada"), e as chaves privadas nunca SHALL ser enviadas ao navegador do cliente ou expostas na UI.
-*   **REQ-ADM-013**: O sistema MUST disponibilizar um botão de ação com o rótulo "Testar Calendário" para administradores e supervisores.
-*   **REQ-ADM-014**: Ao acionar "Testar Calendário", o sistema MUST invocar uma Server Action que dispara o envio de um evento de teste de curta duração (ex: 15 minutos) para a conta do calendário configurado.
-*   **REQ-ADM-015**: O evento de teste enviado ao Google Calendar MUST conter no título a indicação explícita de teste (ex: `"[TESTE] Conexão Asados - [Timestamp]"`) e uma descrição genérica que não inclua dados pessoais de clientes reais.
-*   **REQ-ADM-016**: A Server Action de teste MUST retornar um status de sucesso ou uma mensagem de erro detalhada e amigável à interface do usuário. A ação e seu resultado final MUST ser registrados na tabela de logs de auditoria.
+### 2.3 Painel de Testes de Integração
+*   **REQ-ADM-016**: A Server Action de teste de integração MUST retornar um status de sucesso ou uma mensagem de erro detalhada e amigável à interface do usuário. A ação e seu resultado final MUST ser registrados na tabela de logs de auditoria.
 
 ### 2.4 Registros de Auditoria e Estatísticas de Uso da IA
 *   **REQ-ADM-017**: Todas as ações administrativas críticas listadas abaixo MUST ser registradas de forma indelével na tabela `public.logs_auditoria`:
     *   Alteração do status de ativação (`ativo`) de um usuário.
     *   Alteração da função (`funcao`) de um usuário.
-    *   Execução do teste de integração com o Google Calendar.
 *   **REQ-ADM-018**: A tabela `public.logs_auditoria` MUST possuir as seguintes colunas e tipos:
     *   `id`: `UUID` (PRIMARY KEY, default `gen_random_uuid()`)
     *   `usuario_id`: `UUID` (REFERENCES `public.perfis(id)` ON DELETE SET NULL) — ID do administrador/supervisor que realizou a ação.
-    *   `acao`: `VARCHAR(100)` (NOT NULL) — O identificador técnico da ação realizada (ex: `'alteracao_status_usuario'`, `'alteracao_funcao_usuario'`, `'teste_conexao_calendario'`).
+    *   `acao`: `VARCHAR(100)` (NOT NULL) — O identificador técnico da ação realizada (ex: `'alteracao_status_usuario'`, `'alteracao_funcao_usuario'`).
     *   `detalhes`: `JSONB` (NOT NULL) — Contém os detalhes da ação (ex: `{ "usuario_alvo_id": "UUID", "valor_anterior": "admin", "valor_novo": "supervisor" }`).
     *   `data_criacao`: `TIMESTAMPTZ` (NOT NULL, default `now()`).
 *   **REQ-ADM-019**: As políticas RLS para a tabela `public.logs_auditoria` MUST permitir leitura (`SELECT`) apenas para usuários ativos com papéis `'admin'` e `'supervisor'`.
@@ -53,7 +47,7 @@ Este documento especifica os requisitos de negócio e técnicos para o Painel Ad
 *   **REQ-ADM-023**: O dashboard estatístico MUST calcular e apresentar de forma clara a proporção (taxa/razão) de mensagens respondidas de forma automática pela IA Sofía contra as intervenções humanas dos operadores.
 
 ### 2.5 Visualizador do Master Prompt da IA
-*   **REQ-ADM-024**: O painel administrativo MUST expor uma área contendo o texto e diretrizes do Master System Prompt do assistente virtual Sofía (utilizado para interagir com a API de LLM via OpenRouter).
+*   **REQ-ADM-024**: O painel administrativo MUST expor uma área contendo o texto e diretrizes do Master System Prompt do assistente virtual Sofía (utilizado para interagir com a API de LLM via DeepSeek).
 *   **REQ-ADM-025**: A área de visualização do Master Prompt MUST ser puramente de leitura (`read-only`), servindo estritamente para auditoria visual da persona e diretrizes de comportamento do robô. A edição do prompt via interface administrativa SHALL ser proibida neste release para evitar descalibração acidental do pipeline RAG.
 
 ### 2.6 Exclusão de Usuários e Clientes (deletarUsuarioAdmin)
@@ -69,7 +63,7 @@ Este documento especifica os requisitos de negócio e técnicos para o Painel Ad
 *   **REQ-ADM-033**: Após o logout, o sistema MUST redirecionar automaticamente o usuário para a página de login em `/login`.
 
 ### 2.8 Gerenciamento Dinâmico de API Keys
-*   **REQ-ADM-034**: Administradores MUST poder visualizar, editar e salvar chaves de API (Meta WhatsApp Cloud API e LLM/OpenRouter) dinamicamente pelo dashboard.
+*   **REQ-ADM-034**: Administradores MUST poder visualizar, editar e salvar chaves de API (Meta WhatsApp Cloud API e LLM/DeepSeek) dinamicamente pelo dashboard.
 *   **REQ-ADM-035**: As configurações de chaves de API e tokens MUST ser salvas na tabela de configurações do sistema (ex: `public.configuracoes_sistema`).
 *   **REQ-ADM-036**: O sistema MUST ler essas chaves em tempo de execução utilizando uma função utilitária com fallback automático para as variáveis de ambiente (`.env`) no servidor caso o registro no banco não esteja presente.
 *   **REQ-ADM-037**: Para segurança, as chaves sensíveis (segredos/tokens) MUST ser exibidas de forma mascarada (ex: exibindo apenas caracteres iniciais e asteriscos) na interface do usuário e nunca SHALL ser impressas em texto claro nos logs de auditoria.
@@ -81,20 +75,18 @@ Este documento especifica os requisitos de negócio e técnicos para o Painel Ad
 *   **REQ-ADM-041**: A interface incorporada MUST permitir a realização de todas as operações de criação, leitura, atualização e exclusão (CRUD) de artigos diretamente de dentro do Dashboard Administrativo.
 
 ### 2.10 Painel de Integrações Modular
-*   **REQ-ADM-042**: A aba de Integrações no painel administrativo MUST ser reestruturada de um formulário monolítico para 5 cartões de gerenciamento independentes localizados em `src/components/operator/integrations/`:
+*   **REQ-ADM-042**: A aba de Integrações no painel administrativo MUST ser reestruturada de um formulário monolítico para 4 cartões de gerenciamento independentes localizados em `src/components/operator/integrations/`:
     *   `LlmApiCard.tsx` (Gestão LLM API - Modelo da Sofía)
-    *   `MetaWhatsAppCard.tsx` (Gestão WhatsApp API - Meta Cloud)
-    *   `EvolutionApiCard.tsx` (Gestão WhatsApp QR - Evolution API)
-    *   `GoogleCalendarCard.tsx` (Gestão Google Calendar API - Apenas leitura)
+    *   `WhatsAppCard.tsx` (Gestão WhatsApp API - Meta Cloud e QR - Evolution API)
+    *   `TelegramBotCard.tsx` (Gestão Telegram Bot)
     *   `MercadoPagoCard.tsx` (Gestão Mercado Pago API)
-    *   E o arquivo `index.ts` para exportações (barrel exports).
-*   **REQ-ADM-043**: Cada componente de cartão MUST seguir a mesma interface padrão: receber `configInicial` (`Record<string, string>`) e `onToastMessage` (`(tipo: 'success' | 'error', msg: string) => void`), gerenciando seu próprio estado local de carregamento, validação e formulário.
+    *   E o arquivo `types.ts` para as interfaces compartilhadas dos cartões.
+*   **REQ-ADM-043**: Cada componente de cartão MUST seguir a mesma interface padrão: receber `initialConfigs` (`Record<string, string>`) e `showToast` (`(tipo: 'success' | 'error', msg: string) => void`), gerenciando seu próprio estado local de carregamento, validação e formulário.
 *   **REQ-ADM-044**: Cada cartão MUST funcionar de forma independente, de modo que a edição ou salvamento em um cartão não afete nem submeta o estado dos outros.
-*   **REQ-ADM-045**: O cartão de LLM API MUST gerenciar `OPENROUTER_API_KEY` (campo tipo password) e `OPENROUTER_MODEL` (select dropdown), oferecendo ações de Testar Conexão (`testarConexaoLLM`), Sincronizar Modelos (`obterModelosDisponiveis`) e Salvar LLM (`salvarConfiguracaoSistema`). Se a chave não estiver configurada, o dropdown deve exibir modelos padrão (Gemini 2.5 Flash, Gemini 2.5 Pro, DeepSeek Chat, LLaMA 3.3).
+*   **REQ-ADM-045**: O cartão de LLM API MUST gerenciar `DEEPSEEK_API_KEY` (campo tipo password) e `DEEPSEEK_MODEL` (select dropdown), oferecendo ações de Testar Conexão (`testAuthorizedDeepSeekModel`), Sincronizar Modelos (`listAuthorizedDeepSeekModels`) e Salvar LLM (`salvarConfiguracaoAdmin`). A lista de modelos MUST vir exclusivamente da ação de servidor autorizada, sem catálogo embutido no cliente: quando nenhum modelo autorizado for retornado para a chave configurada, o dropdown MUST exibir a opção "Nenhum modelo disponível" em vez de modelos padrão.
 *   **REQ-ADM-046**: O cartão de WhatsApp API (Meta Cloud) MUST gerenciar as chaves `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_APP_SECRET` e `WHATSAPP_VERIFY_TOKEN`, com ações para Testar Conexão Meta e Salvar.
 *   **REQ-ADM-047**: O cartão de WhatsApp QR (Evolution API) MUST gerenciar `EVOLUTION_API_URL`, `EVOLUTION_API_KEY` e `EVOLUTION_INSTANCE_NAME`, exibindo uma área de QR Code base64 obtida de `obterQrCodeEvolution` quando não conectado, e suportando o botão "Atualizar QR Code".
 *   **REQ-ADM-048**: O cartão de Evolution API MUST conter o seletor `WHATSAPP_PROVIDER` (provedor ativo de WhatsApp) na parte inferior, representado como um interruptor/toggle com opções "Meta Cloud API" (`meta`) e "Evolution API" (`evolution`). A alteração do switch MUST exibir um aviso de confirmação e persistir imediatamente no banco de dados.
-*   **REQ-ADM-049**: O cartão do Google Calendar MUST ser mantido em modo leitura, exibindo `GOOGLE_CALENDAR_ID` e `GOOGLE_CLIENT_EMAIL` mascarados, com o status de `GOOGLE_PRIVATE_KEY` (configurado/não configurado) e ação de Testar Conexão, sem botão de Salvar.
 *   **REQ-ADM-050**: O cartão do Mercado Pago MUST gerenciar `MERCADO_PAGO_ACCESS_TOKEN` e `MERCADO_PAGO_PUBLIC_KEY`, contendo ação de testar conexão via endpoint `GET https://api.mercadopago.com/v1/payment_methods`.
 
 ### 2.11 Grade Responsiva no Dashboard de Integrações
@@ -105,7 +97,7 @@ Este documento especifica os requisitos de negócio e técnicos para o Painel Ad
 
 ### 2.12 Editor de Prompt do Sistema Mestre
 *   **REQ-PRM-001**: O sistema de RAG Sofía MUST parar de carregar a Persona da IA e as instruções operacionais de arquivos estáticos ou variáveis de ambiente locais.
-*   **REQ-PRM-002**: O pipeline de RAG MUST carregar o system prompt a ser enviado na requisição do OpenRouter a partir do valor registrado na tabela `public.configuracoes_sistema` sob a chave `'SOFIA_SYSTEM_PROMPT'`.
+*   **REQ-PRM-002**: O pipeline de RAG MUST carregar o system prompt a ser enviado na requisição da DeepSeek a partir do valor registrado na tabela `public.configuracoes_sistema` sob a chave `'SOFIA_SYSTEM_PROMPT'`.
 *   **REQ-PRM-003**: A aba "Prompt da IA" do painel `AdminDashboard` MUST exibir um editor de texto interativo (textarea) com a carga inicial de `'SOFIA_SYSTEM_PROMPT'`.
 *   **REQ-PRM-004**: Ao clicar em "Salvar", o sistema MUST realizar uma operação de `upsert` na tabela `public.configuracoes_sistema` gravando o novo texto sob a chave `'SOFIA_SYSTEM_PROMPT'` com `eh_segredo = FALSE`.
 *   **REQ-PRM-005**: A ação de salvar o Prompt do Sistema mestre MUST disparar a inclusão de um log de auditoria na tabela `public.logs_auditoria` identificando a ação `'atualizar_prompt_sistema'` e registrando o ID do operador.
@@ -180,28 +172,6 @@ Este documento especifica os requisitos de negócio e técnicos para o Painel Ad
 
 ---
 
-### 3.3. Teste do Google Calendar
-
-#### Cenário 1: Teste de Conexão com Sucesso
-*   **Given** que o administrador está no painel de Integrações em `/atendimento/admin`,
-*   **And** as variáveis de ambiente da Service Account do Google Calendar estão configuradas corretamente no servidor,
-*   **When** ele clica no botão "Testar Calendário",
-*   **Then** o sistema executa a Server Action de teste,
-*   **And** envia um evento temporário com título `"[TESTE] Conexão Asados"` para o Google Calendar,
-*   **And** ao receber a resposta de sucesso da API do Google, exibe um alerta de sucesso na UI: "Integração validada com sucesso! Evento de teste criado.",
-*   **And** insere um registro na tabela `public.logs_auditoria` documentando a realização do teste com status de sucesso.
-
-#### Cenário 2: Teste de Conexão com Erro de Credenciais
-*   **Given** que o administrador aciona o botão de teste de integração,
-*   **And** as chaves de integração do Google Calendar no `.env` contêm credenciais inválidas ou expiradas,
-*   **When** o teste é processado,
-*   **Then** a chamada à API do Google retorna erro de autenticação,
-*   **And** a Server Action captura a falha e retorna o detalhe do erro técnico (ex: "401 Unauthorized - Invalid Credentials"),
-*   **And** exibe uma mensagem de falha na tela: "Falha na conexão com o Google Calendar. Verifique as credenciais no arquivo .env. Detalhes: [Erro]",
-*   **And** cria um registro na tabela `public.logs_auditoria` com `acao = 'teste_conexao_calendario'` e os detalhes da falha.
-
----
-
 ### 3.4. Auditoria de Segurança, Estatísticas e Prompt
 
 #### Cenário 1: Imutabilidade de Logs de Auditoria
@@ -255,7 +225,7 @@ Este documento especifica os requisitos de negócio e técnicos para o Painel Ad
 
 #### Cenário 1: Visualização e atualização de chaves de API pelo administrador
 *   **Given** que o administrador está autenticado no painel administrativo na aba "Integrações",
-*   **When** ele preenche novos valores para o token da Meta e chave de API do OpenRouter e clica em "Salvar",
+*   **When** ele preenche novos valores para o token da Meta e chave de API da DeepSeek e clica em "Salvar",
 *   **Then** o sistema executa uma Server Action que valida as entradas e as persiste na tabela `public.configuracoes_sistema`,
 *   **And** mascara a exibição da chave na interface do usuário após a gravação bem-sucedida,
 *   **And** registra a ação na tabela de logs de auditoria sem expor os valores literais das chaves de API.
@@ -272,7 +242,7 @@ Este documento especifica os requisitos de negócio e técnicos para o Painel Ad
 
 #### Cenário 1: Salvamento independente do cartão de LLM
 *   **Given** que o operador está na aba de Integrações,
-*   **And** o cartão de LLM exibe os campos `OPENROUTER_API_KEY` e `OPENROUTER_MODEL`,
+*   **And** o cartão de LLM exibe os campos `DEEPSEEK_API_KEY` e `DEEPSEEK_MODEL`,
 *   **When** o operador modifica a chave de API do LLM e clica em "Salvar LLM",
 *   **Then** apenas as chaves do LLM são salvas na tabela `configuracoes_sistema`,
 *   **And** nenhuma outra configuração de integração é submetida ou alterada,
@@ -342,7 +312,7 @@ const EsqueletoAtualizacaoUsuario = {
 1.  **Imutabilidade da Auditoria**:
     *   A tabela `public.logs_auditoria` MUST ser estritamente protegida por políticas de RLS e triggers. Permissões de escrita direta por usuários via API do Supabase MUST ser desabilitadas para operações `UPDATE` e `DELETE`.
 2.  **Segurança de Credenciais**:
-    *   Credenciais de API e chaves privadas do Google Calendar MUST ser mantidas exclusivamente no servidor (variáveis de ambiente do arquivo `.env`) e nunca transmitidas ao navegador.
+    *   Credenciais de API e chaves privadas MUST ser mantidas exclusivamente no servidor e nunca transmitidas ao navegador.
 3.  **Conformidade com a LGPD**:
     *   Toda saída de logs de auditoria visual ou técnica não MUST expor dados sensíveis não mascarados. A listagem de emails do painel de controle MUST ser restrita apenas a usuários com papéis administrativos verificados em sessões seguras no lado do servidor.
 4.  **Localização**:

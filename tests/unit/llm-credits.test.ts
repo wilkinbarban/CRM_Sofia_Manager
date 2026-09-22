@@ -3,10 +3,11 @@ import {
   getLlmCreditColor,
   getLlmCreditStatus,
   parseDeepSeekRemainingUsd,
-  parseOpenRouterRemainingUsd,
   resetLlmCreditStatusCacheForTests,
-  resolveLlmCreditProvider,
+  type LlmCreditProvider,
 } from '@/lib/ai/credits'
+
+const DEEPSEEK_BALANCE_URL = 'https://api.deepseek.com/user/balance'
 
 const mocks = vi.hoisted(() => ({
   obterConfiguracaoSistema: vi.fn(),
@@ -16,10 +17,25 @@ vi.mock('@/lib/config/sistema', () => ({
   obterConfiguracaoSistema: mocks.obterConfiguracaoSistema,
 }))
 
+const originalEnv = process.env
+
+function balanceResponse(totalBalance = '2.5'): Response {
+  return new Response(JSON.stringify({
+    balance_infos: [{ currency: 'USD', total_balance: totalBalance }],
+  }), { status: 200 })
+}
+
+function mockDeepSeekKey(stored: string | null) {
+  mocks.obterConfiguracaoSistema.mockImplementation(async (key: string) => (
+    key === 'DEEPSEEK_API_KEY' ? stored : null
+  ))
+}
+
 afterEach(() => {
   resetLlmCreditStatusCacheForTests()
   vi.unstubAllGlobals()
   vi.clearAllMocks()
+  process.env = originalEnv
 })
 
 describe('LLM credit helpers', () => {
@@ -31,38 +47,10 @@ describe('LLM credit helpers', () => {
     expect(getLlmCreditColor(null)).toBe('neutral')
   })
 
-  it('detects direct DeepSeek keys stored in the legacy OpenRouter key slot', () => {
-    expect(resolveLlmCreditProvider({
-      openRouterApiKey: 'sk-direct-deepseek-key',
-      model: 'deepseek-reasoner',
-    })).toEqual({ provider: 'deepseek', apiKey: 'sk-direct-deepseek-key' })
-  })
+  it('exposes DeepSeek as the only credit provider', () => {
+    const provider: LlmCreditProvider = 'deepseek'
 
-  it('uses OpenRouter when both OpenRouter and fallback DeepSeek keys are available', () => {
-    expect(resolveLlmCreditProvider({
-      openRouterApiKey: 'sk-or-openrouter-key',
-      deepSeekApiKey: 'sk-deepseek-key',
-    })).toEqual({ provider: 'openrouter', apiKey: 'sk-or-openrouter-key' })
-  })
-
-  it.each([
-    'placeholder',
-    'your_openrouter_api_key',
-    'insert_here',
-    'your_key',
-    'your-api-key',
-  ])('uses DeepSeek fallback when OpenRouter key is unusable: %s', (openRouterApiKey) => {
-    expect(resolveLlmCreditProvider({
-      openRouterApiKey,
-      deepSeekApiKey: 'sk-deepseek-key',
-    })).toEqual({ provider: 'deepseek', apiKey: 'sk-deepseek-key' })
-  })
-
-  it('keeps OpenRouter keys on the OpenRouter credit adapter', () => {
-    expect(resolveLlmCreditProvider({
-      openRouterApiKey: 'sk-or-openrouter-key',
-      model: 'openrouter/deepseek/deepseek-r1',
-    })).toEqual({ provider: 'openrouter', apiKey: 'sk-or-openrouter-key' })
+    expect(provider).toBe('deepseek')
   })
 
   it('parses DeepSeek USD balances when present', () => {
@@ -82,41 +70,96 @@ describe('LLM credit helpers', () => {
     })).toBeNull()
   })
 
-  it('prefers OpenRouter key remaining credits when available', () => {
-    expect(parseOpenRouterRemainingUsd(
-      { data: { total_credits: 10, total_usage: 7 } },
-      { data: { limit_remaining: 4.5 } },
-    )).toBe(4.5)
+  it('resolves the balance from the DeepSeek credential stored in configuracoes_sistema', async () => {
+    mockDeepSeekKey('sk-deepseek-database-key')
+    process.env = { ...originalEnv, DEEPSEEK_API_KEY: 'sk-deepseek-environment-key' }
+    const fetchMock = vi.fn(async () => balanceResponse('2.5'))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const status = await getLlmCreditStatus({ now: new Date('2026-07-10T12:00:00.000Z') })
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit]
+    expect(url).toBe(DEEPSEEK_BALANCE_URL)
+    expect(init.headers).toMatchObject({ Authorization: 'Bearer sk-deepseek-database-key' })
+    expect(status).toMatchObject({
+      provider: 'deepseek',
+      balanceUsd: 2.5,
+      state: 'fresh',
+      color: 'green',
+      fetchedAt: '2026-07-10T12:00:00.000Z',
+    })
   })
 
-  it('falls back to purchased minus used credits', () => {
-    expect(parseOpenRouterRemainingUsd(
-      { data: { total_credits: '12.25', total_usage: '3.25' } },
-      { data: {} },
-    )).toBe(9)
+  it('falls back to the environment credential and consults only the DeepSeek key', async () => {
+    mockDeepSeekKey(null)
+    process.env = { ...originalEnv, DEEPSEEK_API_KEY: 'sk-deepseek-environment-key' }
+    const fetchMock = vi.fn(async () => balanceResponse('4'))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const status = await getLlmCreditStatus({ now: new Date('2026-07-10T12:00:00.000Z') })
+
+    expect(status).toMatchObject({ provider: 'deepseek', balanceUsd: 4, state: 'fresh' })
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit]
+    expect(init.headers).toMatchObject({ Authorization: 'Bearer sk-deepseek-environment-key' })
+    expect(mocks.obterConfiguracaoSistema.mock.calls.map((args) => args[0])).toEqual(['DEEPSEEK_API_KEY'])
   })
 
-  it('does not invent an OpenRouter balance when provider payload shape is unknown', () => {
-    expect(parseOpenRouterRemainingUsd({ data: { balance: 'unknown' } }, { data: {} })).toBeNull()
+  it('rejects a stored placeholder credential without any provider request', async () => {
+    process.env = { ...originalEnv }
+    delete process.env.DEEPSEEK_API_KEY
+    mockDeepSeekKey('your_deepseek_api_key')
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+
+    const status = await getLlmCreditStatus({ now: new Date('2026-07-10T12:00:00.000Z') })
+
+    expect(status).toMatchObject({
+      provider: 'deepseek',
+      balanceUsd: null,
+      state: 'unknown',
+      color: 'neutral',
+      fetchedAt: null,
+    })
+    expect(status.error).toContain('DEEPSEEK_API_KEY')
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('reads the balance with the environment credential when the stored value is an unusable placeholder', async () => {
+    mockDeepSeekKey('sk-your-api-key-placeholder')
+    process.env = { ...originalEnv, DEEPSEEK_API_KEY: 'sk-deepseek-environment-key' }
+    const fetchMock = vi.fn(async () => balanceResponse('3'))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const status = await getLlmCreditStatus({ now: new Date('2026-07-10T12:00:00.000Z') })
+
+    expect(status).toMatchObject({ provider: 'deepseek', balanceUsd: 3, state: 'fresh', color: 'green' })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit]
+    expect(url).toBe(DEEPSEEK_BALANCE_URL)
+    expect(init.headers).toMatchObject({ Authorization: 'Bearer sk-deepseek-environment-key' })
+  })
+
+  it('treats a whitespace-only stored credential as unusable and uses the environment one', async () => {
+    mockDeepSeekKey('   ')
+    process.env = { ...originalEnv, DEEPSEEK_API_KEY: '  sk-deepseek-padded-environment-key  ' }
+    const fetchMock = vi.fn(async () => balanceResponse('1.5'))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const status = await getLlmCreditStatus({ now: new Date('2026-07-10T12:00:00.000Z') })
+
+    expect(status).toMatchObject({ provider: 'deepseek', balanceUsd: 1.5, state: 'fresh', color: 'yellow' })
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit]
+    expect(init.headers).toMatchObject({ Authorization: 'Bearer sk-deepseek-padded-environment-key' })
   })
 
   it('returns neutral stale status without presenting cached balance as current when refresh fails', async () => {
-    mocks.obterConfiguracaoSistema.mockImplementation(async (key: string) => {
-      if (key === 'OPENROUTER_API_KEY') return 'sk-or-openrouter-key'
-      if (key === 'OPENROUTER_MODEL') return 'openrouter/deepseek/deepseek-chat'
-      return null
-    })
-
-    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
-      if (url.endsWith('/key')) {
-        return new Response(JSON.stringify({ data: { limit_remaining: 2.5 } }), { status: 200 })
-      }
-
-      return new Response(JSON.stringify({ data: {} }), { status: 200 })
-    }))
+    mockDeepSeekKey('sk-deepseek-database-key')
+    vi.stubGlobal('fetch', vi.fn(async () => balanceResponse('2.5')))
 
     const fresh = await getLlmCreditStatus({ now: new Date('2026-07-10T12:00:00.000Z') })
     expect(fresh).toMatchObject({
+      provider: 'deepseek',
       balanceUsd: 2.5,
       state: 'fresh',
       color: 'green',
@@ -131,6 +174,7 @@ describe('LLM credit helpers', () => {
     })
 
     expect(stale).toMatchObject({
+      provider: 'deepseek',
       balanceUsd: null,
       state: 'stale',
       color: 'neutral',

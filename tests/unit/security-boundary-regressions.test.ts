@@ -38,7 +38,13 @@ describe('validated security boundary regressions', () => {
   it('bounds the legacy LLM fallback', () => {
     const source = read('apps/web/src/lib/ai/openrouter.ts')
     expect(source).toContain('LEGACY_LLM_MAX_RESPONSE_BYTES')
-    expect(source).toContain('max_tokens: LEGACY_LLM_MAX_TOKENS')
+    expect(source).toContain('maxTokens: LEGACY_LLM_MAX_TOKENS')
+    // The byte cap is enforced by the DeepSeek boundary the generation path now
+    // delegates to: the declared length is rejected up front and an oversized
+    // stream cancels the reader instead of buffering the whole body.
+    const boundary = read('apps/web/src/lib/ai/deepseek.ts')
+    expect(boundary).toContain('maxResponseBytes')
+    expect(boundary).toContain('reader.cancel()')
   })
 
   it('ships forward-only database hardening', () => {

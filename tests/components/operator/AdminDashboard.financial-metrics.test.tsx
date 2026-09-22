@@ -17,10 +17,9 @@ vi.mock('@/components/operator/InventoryManager', () => ({ default: () => null }
 vi.mock('@/components/operator/integrations/LlmApiCard', () => ({ default: () => null }))
 vi.mock('@/components/operator/integrations/WhatsAppCard', () => ({ default: () => null }))
 vi.mock('@/components/operator/integrations/TelegramBotCard', () => ({ default: () => null }))
-vi.mock('@/components/operator/integrations/GoogleCalendarCard', () => ({ default: () => null }))
 vi.mock('@/components/operator/integrations/MercadoPagoCard', () => ({ default: () => null }))
 
-const props = { usuarioLogado: { id: 'admin', nome: 'Admin', funcao: 'admin', ativo: true }, usuariosIniciais: [], estatisticasIniciais: { totalIa: 0, totalOperador: 0, totalCliente: 0, totalMensagens: 0, taxaAutomacao: 0 }, logsIniciais: [], calendarConfig: { googleCalendarId: null, googleClientEmail: null, googlePrivateKeyConfigured: false }, artigosIniciais: [], systemConfigs: {}, initialTab: 'metricas' as const }
+const props = { usuarioLogado: { id: 'admin', nome: 'Admin', funcao: 'admin', ativo: true }, usuariosIniciais: [], estatisticasIniciais: { totalIa: 0, totalOperador: 0, totalCliente: 0, totalMensagens: 0, taxaAutomacao: 0 }, logsIniciais: [], artigosIniciais: [], systemConfigs: {}, initialTab: 'metricas' as const }
 const metrics = { period: { startAt: '2026-08-01T00:00:00.000Z', endAt: '2026-08-31T00:00:00.000Z' }, ordersCreated: 4, approvedSalesCount: 2, refundedSalesCount: 1, grossApprovedCents: 12000, refundsCents: 2000, netOperationalRevenueCents: 10000, averageApprovedTicketCents: 6000, providerGrossCents: 11000, providerFeesCents: 500, providerNetCents: 10500, openReceivablesCount: 1, openReceivablesCents: 3000, cashSessionsOpened: 2, cashSessionsClosed: 1, cashDifferenceCents: -50, bankReconciledCount: 1, bankReconciledCents: 6000, bankUnreconciledCount: 1, bankUnreconciledCents: 4500, marginAvailable: false as const }
 
 describe('AdminDashboard financial metrics', () => {

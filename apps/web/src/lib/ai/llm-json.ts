@@ -1,18 +1,20 @@
 /**
  * Chamada JSON ao modelo economico — usado pela extracao de memoria de cliente.
  *
- * Resolve o provedor do mesmo modo que `openrouter.ts`: OmniRoute quando
- * `AI_ROUTING_V2_ENABLED === 'true'`, senao o caminho legado OpenRouter/DeepSeek
- * com a mesma deteccao de `sk-or-` e `OPENROUTER_MODEL` de
- * `obterConfiguracaoSistema`. O JSON e pedido pelo prompt nos dois caminhos, de
- * modo que o parser e a unica autoridade de schema.
+ * Resolve a chave e o modelo DeepSeek pela mesma precedência única usada no
+ * resto do servidor (`configuracoes_sistema` primeiro, `process.env` depois,
+ * modelo padrão `deepseek-flash`) através de `resolverChaveDeepSeek` e
+ * `resolverModeloDeepSeek`, e delega a chamada de provedor a
+ * `chamarDeepSeekChat`, o único ponto de contato com a DeepSeek. O JSON e pedido
+ * por `response_format` e pelo prompt, de modo que o parser e a unica autoridade
+ * de schema.
  *
- * Nunca lanca: qualquer falha (provedor indisponivel, HTTP, timeout, corpo
- * invalido) devolve `null`, e quem chama decide o que registrar.
+ * Nunca lanca: qualquer falha (chave ausente, HTTP, timeout, corpo invalido,
+ * resposta vazia ou grande demais) devolve `null`, e quem chama decide o que
+ * registrar.
  */
 
-import { chamarOmniRouteGateway, isOmniRouteEnabled } from '@/lib/ai/omniroute'
-import { obterConfiguracaoSistema } from '@/lib/config/sistema'
+import { chamarDeepSeekChat, isUsableDeepSeekApiKey, resolverChaveDeepSeek, resolverModeloDeepSeek } from '@/lib/ai/deepseek'
 
 export interface ModeloEconomicoJsonParams {
   system: string
@@ -21,70 +23,33 @@ export interface ModeloEconomicoJsonParams {
   timeoutMs: number
 }
 
-async function chamarLegadoJson(params: ModeloEconomicoJsonParams): Promise<string | null> {
-  const apiKey = await obterConfiguracaoSistema('OPENROUTER_API_KEY')
-  if (!apiKey) return null
+/**
+ * Resolve a chave DeepSeek pela regra única do restante do servidor: um valor
+ * armazenado utilizável primeiro, um valor de ambiente utilizável depois, vazio
+ * por último. Um valor armazenado inutilizável (vazio, só espaços ou placeholder
+ * conhecido) é tratado como ausente e cede a vez ao ambiente.
+ */
+export async function chamarModeloEconomicoJson(
+  params: ModeloEconomicoJsonParams,
+): Promise<string | null> {
+  try {
+    const apiKey = await resolverChaveDeepSeek()
+    if (!isUsableDeepSeekApiKey(apiKey)) return null
 
-  const isDeepSeek = !apiKey.includes('sk-or-') && apiKey.startsWith('sk-')
-
-  const apiUrl = isDeepSeek
-    ? 'https://api.deepseek.com/chat/completions'
-    : 'https://openrouter.ai/api/v1/chat/completions'
-
-  const model = isDeepSeek
-    ? 'deepseek-chat'
-    : (await obterConfiguracaoSistema('OPENROUTER_MODEL')) || 'google/gemini-2.5-flash'
-
-  const headers: Record<string, string> = {
-    Authorization: `Bearer ${apiKey}`,
-    'Content-Type': 'application/json',
-  }
-
-  if (!isDeepSeek) {
-    headers['HTTP-Referer'] = 'https://github.com/wilkin/proyectos/Asados'
-    headers['X-Title'] = 'CRM Casa de Assados Brasa & Sabor'
-  }
-
-  const response = await fetch(apiUrl, {
-    method: 'POST',
-    signal: AbortSignal.timeout(params.timeoutMs),
-    headers,
-    body: JSON.stringify({
-      model,
+    const resultado = await chamarDeepSeekChat({
+      apiKey,
+      model: await resolverModeloDeepSeek(),
       messages: [
         { role: 'system', content: params.system },
         { role: 'user', content: params.user },
       ],
       temperature: 0,
-      max_tokens: params.maxTokens,
-    }),
-  })
+      maxTokens: params.maxTokens,
+      timeoutMs: params.timeoutMs,
+      jsonResponse: true,
+    })
 
-  if (!response.ok) return null
-
-  const data = await response.json()
-  const content = data?.choices?.[0]?.message?.content
-  return typeof content === 'string' && content.trim() !== '' ? content.trim() : null
-}
-
-export async function chamarModeloEconomicoJson(
-  params: ModeloEconomicoJsonParams,
-): Promise<string | null> {
-  try {
-    if (isOmniRouteEnabled()) {
-      const resultado = await chamarOmniRouteGateway({
-        model: 'business-economy',
-        messages: [
-          { role: 'system', content: params.system },
-          { role: 'user', content: params.user },
-        ],
-        temperature: 0,
-        maxTokens: params.maxTokens,
-      })
-      return resultado.success && resultado.content ? resultado.content : null
-    }
-
-    return await chamarLegadoJson(params)
+    return resultado.success ? resultado.content : null
   } catch {
     return null
   }

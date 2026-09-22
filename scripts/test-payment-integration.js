@@ -1,6 +1,6 @@
 /**
  * Integration & Security Test Suite - Épica 7 (Pedidos & Mercado Pago Integration)
- * Tests Preference Generation (Mock/Real), Webhook Processing, Google Calendar Sync,
+ * Tests Preference Generation (Mock/Real), Webhook Processing,
  * RLS Security Policies, and LGPD Log Auditing.
  */
 
@@ -141,15 +141,6 @@ async function runTests() {
     loggedOutputs.push(args.join(' '));
     originalConsoleLog.apply(console, args);
   };
-
-  // Mock Google Calendar variables in environment to ensure mock fallback triggers
-  const oldClientEmail = process.env.GOOGLE_CLIENT_EMAIL;
-  const oldPrivateKey = process.env.GOOGLE_PRIVATE_KEY;
-  const oldCalendarId = process.env.GOOGLE_CALENDAR_ID;
-
-  process.env.GOOGLE_CLIENT_EMAIL = 'placeholder';
-  process.env.GOOGLE_PRIVATE_KEY = 'placeholder';
-  process.env.GOOGLE_CALENDAR_ID = 'placeholder';
 
   // Mock Mercado Pago variables
   const oldMpAccessToken = process.env.MERCADO_PAGO_ACCESS_TOKEN;
@@ -413,16 +404,14 @@ async function runTests() {
     // Assert database changes via service role
     const { data: finalOrderApproved } = await adminClient
       .from('pedidos')
-      .select('status, status_pagamento, google_event_id')
+      .select('status, status_pagamento')
       .eq('id', orderApproved.id)
       .single();
 
     assert.strictEqual(finalOrderApproved.status_pagamento, 'aprovado', 'Webhook did not update status_pagamento to aprovado');
     assert.strictEqual(finalOrderApproved.status, 'confirmado', 'Webhook did not update status to confirmado');
-    assert.ok(finalOrderApproved.google_event_id, 'Google Calendar event was not scheduled/updated');
-    assert.ok(finalOrderApproved.google_event_id.includes('mock-event-id'), 'Event ID does not contain mock-event-id prefix');
 
-    logSuccess('Webhook approved flow and Google Calendar sync verified successfully.');
+    logSuccess('Webhook approved flow verified successfully.');
 
     // ----------------------------------------------------
     // Scenario 4: Webhook Simulation - Rejected Payment
@@ -470,14 +459,13 @@ async function runTests() {
     // Assert database changes
     const { data: finalOrderRejected } = await adminClient
       .from('pedidos')
-      .select('status, status_pagamento, google_event_id')
+      .select('status, status_pagamento')
       .eq('id', orderRejected.id)
       .single();
 
     assert.strictEqual(finalOrderRejected.status_pagamento, 'rejeitado', 'Webhook did not update status_pagamento to rejeitado');
     // Rejected payments should NOT modify the order confirmation status (stays 'novo')
     assert.strictEqual(finalOrderRejected.status, 'novo', 'Order status was incorrectly changed for rejected payment');
-    assert.strictEqual(finalOrderRejected.google_event_id, null, 'Event should not be scheduled for rejected payment');
 
     logSuccess('Webhook rejected flow verified successfully.');
 
@@ -518,7 +506,7 @@ async function runTests() {
     }
     logSuccess('Standard client is prevented from reading other clients\' orders.');
 
-    // 2. Verify standard client cannot update status, payment status, preference ID, or calendar event ID directly
+    // 2. Verify standard client cannot update status, payment status, or preference ID directly
     console.log('Verifying standard client cannot update critical order fields directly...');
     
     const { data: updateRes, error: updateError } = await clientA
@@ -526,8 +514,7 @@ async function runTests() {
       .update({
         status_pagamento: 'aprovado',
         status: 'confirmado',
-        mercado_pago_preferencia_id: 'hacked_pref',
-        google_event_id: 'hacked_event'
+        mercado_pago_preferencia_id: 'hacked_pref'
       })
       .eq('id', orderMock.id)
       .select();
@@ -535,13 +522,12 @@ async function runTests() {
     // RLS in Supabase blocks client update entirely (either throws or returns 0 rows updated)
     const { data: checkOrderMock } = await adminClient
       .from('pedidos')
-      .select('status_pagamento, status, mercado_pago_preferencia_id, google_event_id')
+      .select('status_pagamento, status, mercado_pago_preferencia_id')
       .eq('id', orderMock.id)
       .single();
 
     assert.strictEqual(checkOrderMock.status_pagamento, 'pendente', 'RLS Violation: client modified status_pagamento');
     assert.strictEqual(checkOrderMock.mercado_pago_preferencia_id, `mock_pref_${orderMock.id}`, 'RLS Violation: client modified preference ID');
-    assert.strictEqual(checkOrderMock.google_event_id, null, 'RLS Violation: client modified google_event_id');
 
     logSuccess('Standard client is prevented from altering critical columns directly.');
 
@@ -580,9 +566,6 @@ async function runTests() {
     console.log = originalConsoleLog;
 
     // Restore environment variables
-    process.env.GOOGLE_CLIENT_EMAIL = oldClientEmail;
-    process.env.GOOGLE_PRIVATE_KEY = oldPrivateKey;
-    process.env.GOOGLE_CALENDAR_ID = oldCalendarId;
     process.env.MERCADO_PAGO_ACCESS_TOKEN = oldMpAccessToken;
 
     // ----------------------------------------------------

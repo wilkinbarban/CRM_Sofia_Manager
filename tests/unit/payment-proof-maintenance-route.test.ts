@@ -155,6 +155,25 @@ describe('payment-proof maintenance route', () => {
     expect(rpc).toHaveBeenCalledWith('complete_payment_proof_maintenance',{p_kind:'processing',p_id:'proof-1',p_disposition:'success',p_error:null,p_lease_token:'lease-b',p_attempt:1})
   })
 
+  it('resolves the DeepSeek credential and model for a claimed processing job', async () => {
+    const { db } = client([{ kind:'processing',id:'proof-1',attempt:1,lease_token:'lease-d' }])
+    mocks.createAdminClient.mockReturnValue(db)
+    mocks.config.mockImplementation(async (key: string) => key === 'PAYMENT_PROOF_MAINTENANCE_SECRET' ? 'maintenance-secret' : key === 'DEEPSEEK_API_KEY' ? 'sk-deepseek-route-key' : null)
+    process.env.DEEPSEEK_MODEL = 'deepseek-flash'
+
+    try {
+      await POST(request())
+    } finally {
+      delete process.env.DEEPSEEK_MODEL
+    }
+
+    expect(mocks.config).toHaveBeenCalledWith('DEEPSEEK_API_KEY')
+    expect(mocks.config).toHaveBeenCalledWith('DEEPSEEK_MODEL')
+    expect(mocks.config).not.toHaveBeenCalledWith('OPENROUTER_API_KEY')
+    expect(mocks.config).not.toHaveBeenCalledWith('OPENROUTER_MODEL')
+    expect(mocks.process).toHaveBeenCalledWith(expect.objectContaining({ apiKey:'sk-deepseek-route-key', model:'deepseek-flash' }))
+  })
+
   it('completes an unexpected processing exception with a fixed non-null stage', async () => {
     const { db, rpc } = client([{ kind:'processing',id:'proof-1',attempt:5,lease_token:'lease-e' }])
     mocks.createAdminClient.mockReturnValue(db)

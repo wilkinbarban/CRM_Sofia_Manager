@@ -1,7 +1,6 @@
 /**
  * Integration & Security Test Suite - Épica 6 (CRM & Sales Integration)
- * Tests CRM Updates, Operator Orders creation, Google Calendar Mock and Resilient failure paths,
- * and RLS security enforcement.
+ * Tests CRM Updates, Operator Orders creation and RLS security enforcement.
  */
 
 const { createClient } = require('@supabase/supabase-js');
@@ -94,7 +93,7 @@ function setSessionCookies(session) {
 }
 
 async function runTests() {
-  logSection('Starting CRM, Sales, and Google Calendar Integration Tests (Épica 6)');
+  logSection('Starting CRM, Sales and Orders Integration Tests (Épica 6)');
 
   const testOperatorEmail = `op_${Date.now()}@crmsofiamanager.com.br`;
   const testAdminEmail = `admin_${Date.now()}@crmsofiamanager.com.br`;
@@ -115,7 +114,6 @@ async function runTests() {
   let picanhaProduto = null;
   let garlicBreadProduto = null;
   let firstPedido = null;
-  let secondPedido = null;
 
   // Track logs during execution to verify LGPD Audit (no PII leaking in logs)
   let loggedOutputs = [];
@@ -338,21 +336,16 @@ async function runTests() {
     logSuccess('Order created successfully. Calculated totals verified in centavos (R$ 185,00 total).');
 
     // ----------------------------------------------------
-    // Scenario 3: Confirm Order & Google Calendar (Mock Mode)
+    // Scenario 3: Confirm Order
     // ----------------------------------------------------
-    logSection('Scenario 3: Confirm Order in Calendar Mock Mode');
-
-    // Ensure we are in Mock Mode for this test scenario
-    process.env.GOOGLE_CLIENT_EMAIL = 'placeholder-email';
-    process.env.GOOGLE_PRIVATE_KEY = 'placeholder-key';
-    process.env.GOOGLE_CALENDAR_ID = 'placeholder-id';
+    logSection('Scenario 3: Confirm Order');
 
     const confirmRes = await confirmarPedidoOperador(firstPedido.id);
     if (!confirmRes.success) {
-      throw new Error(`Failed to confirm order in mock mode: ${confirmRes.error}`);
+      throw new Error(`Failed to confirm order: ${confirmRes.error}`);
     }
 
-    // Verify status updated to 'confirmado' and google_event_id populated
+    // Verify status updated to 'confirmado'
     const { data: confirmedOrder, error: confErr } = await adminClient
       .from('pedidos')
       .select('*')
@@ -363,58 +356,8 @@ async function runTests() {
     if (confirmedOrder.status !== 'confirmado') {
       throw new Error(`Expected status 'confirmado', got ${confirmedOrder.status}`);
     }
-    if (!confirmedOrder.google_event_id || !confirmedOrder.google_event_id.startsWith('mock-event-id-')) {
-      throw new Error(`Expected mock google_event_id starting with 'mock-event-id-', got ${confirmedOrder.google_event_id}`);
-    }
 
-    logSuccess(`Order confirmed and scheduled in Mock Mode. google_event_id: ${confirmedOrder.google_event_id}`);
-
-    // ----------------------------------------------------
-    // Scenario 4: Resilient Google Calendar Failure handling
-    // ----------------------------------------------------
-    logSection('Scenario 4: Calendar Failure Resilience (Invalid Environment Keys)');
-
-    // Create a second order to test failure
-    const secondOrderRes = await criarPedidoOperador({
-      cliente_id: clientRecord.id,
-      tipo_entrega: 'retirada',
-      taxa_entrega_centavos: 0,
-      meio_pagamento: 'dinheiro',
-      itens: [
-        { produto_id: picanhaProduto.id, quantidade: 2 } // 24000 centavos
-      ]
-    });
-    if (!secondOrderRes.success) throw new Error(`Failed to create second order: ${secondOrderRes.error}`);
-    secondPedido = secondOrderRes.data;
-
-    // Force API Call to run but fail with invalid credentials (not placeholder, so it doesn't trigger mock mode)
-    process.env.GOOGLE_CLIENT_EMAIL = 'invalid-email-format-not-mock@crmsofiamanager.com.br';
-    process.env.GOOGLE_PRIVATE_KEY = 'invalid-key-data-not-mock';
-    process.env.GOOGLE_CALENDAR_ID = 'invalid-calendar-id-not-mock';
-
-    console.log('Attempting to confirm order with corrupted/invalid Calendar environment keys...');
-    
-    const confirmFailRes = await confirmarPedidoOperador(secondPedido.id);
-    if (!confirmFailRes.success) {
-      throw new Error(`Resilience Failure: Action returned error instead of recovering: ${confirmFailRes.error}`);
-    }
-
-    // Verify order is STILL confirmed in database and google_event_id is NULL
-    const { data: resilientOrder, error: resErr } = await adminClient
-      .from('pedidos')
-      .select('*')
-      .eq('id', secondPedido.id)
-      .single();
-
-    if (resErr || !resilientOrder) throw resErr;
-    if (resilientOrder.status !== 'confirmado') {
-      throw new Error(`Expected status 'confirmado' for resilient order, got ${resilientOrder.status}`);
-    }
-    if (resilientOrder.google_event_id !== null) {
-      throw new Error(`Expected google_event_id = null for failed API connection, got ${resilientOrder.google_event_id}`);
-    }
-
-    logSuccess('Resilience Verified: The order status updated to confirmed even though Google Calendar connection failed.');
+    logSuccess('Order confirmed through the lifecycle RPC.');
 
     // ----------------------------------------------------
     // Scenario 5: Security Blocks & RLS Policies
@@ -494,7 +437,7 @@ async function runTests() {
 
     logSuccess('Compliance Audit Passed: Absolutely zero customer PII was found in logs.');
 
-    logSection('All Integration, Security, and Resilience Tests Passed (100% SUCCESS)');
+    logSection('All Integration and Security Tests Passed (100% SUCCESS)');
 
   } catch (err) {
     logError('An integration test failed!', err.message || err);
@@ -513,9 +456,6 @@ async function runTests() {
       // 1. Delete orders (will cascade and delete items_pedido)
       if (firstPedido) {
         await adminClient.from('pedidos').delete().eq('id', firstPedido.id);
-      }
-      if (secondPedido) {
-        await adminClient.from('pedidos').delete().eq('id', secondPedido.id);
       }
 
       // 2. Delete products

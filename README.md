@@ -29,7 +29,7 @@ O **CRM Sofia Manager** é uma solução completa desenvolvida para transformar 
 3. **Console de Atendimento em Tempo Real** para atendentes e supervisores com filas separadas (Fila IA / Fila Humana), alertas sonoros nativos via Web Audio API e indicadores de clientes em espera (+5 min).
 4. **Gestão Transacional de Estoque Finito** com RPCs atômicas no PostgreSQL, garantindo que nenhum frango, costela ou maionese seja vendido além da capacidade das assadeiras, com estorno automático em caso de cancelamento.
 5. **Pagamentos Integrados (Pix & Mercado Pago)** com conciliação automática via webhooks idempotentes.
-6. **Agendamento Inteligente de Retirada e Delivery** sincronizado com o Google Calendar.
+6. **Agendamento Inteligente de Retirada e Delivery** com controle de capacidade e horários.
 
 ---
 
@@ -56,7 +56,7 @@ flowchart TD
 
     subgraph Core["Núcleo da Aplicação (Next.js 16 + Node.js)"]
         SRV["🚀 Server Actions & API Routes"]
-        RAG["🧠 Sofia RAG Pipeline (OpenRouter / DeepSeek)"]
+        RAG["🧠 Sofia RAG Pipeline (DeepSeek)"]
         SEC["🛡️ Security & Phone OTP Gateways"]
     end
 
@@ -68,7 +68,6 @@ flowchart TD
 
     subgraph Integracoes["Serviços Externos"]
         MP["💳 Mercado Pago (Pix & Cartão)"]
-        GCAL["📅 Google Calendar API"]
     end
 
     subgraph Operador["Console de Operações"]
@@ -85,7 +84,6 @@ flowchart TD
     DB --> RT
     RT --> DASH
     SRV --> MP
-    SRV --> GCAL
     DASH --> SRV
 ```
 
@@ -127,10 +125,9 @@ flowchart TD
 | **Estilização** | Tailwind CSS 3.4 & Lucide Icons | Design system escuro, denso e responsivo |
 | **Banco de Dados** | Supabase PostgreSQL 15 com RLS & RPCs | Persistência transacional e isolamento multilocatário |
 | **Realtime** | Supabase Realtime | Atualização em tempo real de mensagens e pedidos |
-| **Inteligência Artificial** | OpenRouter (DeepSeek Chat) | Pipeline RAG com injeção dinâmica de estoque e cardápio |
+| **Inteligência Artificial** | DeepSeek | Pipeline RAG com injeção dinâmica de estoque e cardápio |
 | **WhatsApp Gateway** | Evolution API v2 | Comunicação com clientes via WhatsApp |
 | **Pagamentos** | Mercado Pago SDK | Processamento de Pix instantâneo e Checkout Pro |
-| **Agenda** | Google Calendar API v3 | Controle de capacidade e horários de retirada |
 | **Testes** | Vitest & Playwright | Testes unitários, de integração e ponta a ponta (E2E) |
 
 ---

@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { ArrowLeft } from 'lucide-react'
 import { createClient } from '@/lib/supabase/server'
+import { getBusinessProfile } from '@/lib/config/business-profile'
 
 export default async function ProdutosLayout({
   children,
@@ -32,15 +33,18 @@ export default async function ProdutosLayout({
     redirect('/atendimento')
   }
 
+  const profile = await getBusinessProfile()
+  const initialLetter = (profile.shortName || profile.name || 'A').charAt(0).toUpperCase()
+
   return (
     <div className="flex h-screen w-full flex-col bg-zinc-950 text-zinc-50 overflow-hidden font-sans">
       {/* Cabeçalho Unificado do Operador */}
       <header className="flex h-16 items-center justify-between border-b border-zinc-800 bg-zinc-900/30 px-6 shrink-0 backdrop-blur-md z-10">
         <div className="flex items-center gap-3">
           <div className="flex h-8 w-8 items-center justify-center rounded bg-amber-500 font-bold text-zinc-950 shadow-md shadow-amber-500/10 select-none">
-            A
+            {initialLetter}
           </div>
-          <span className="font-semibold text-zinc-100 tracking-tight font-sans">Console de Atendimento Asados</span>
+          <span className="font-semibold text-zinc-100 tracking-tight font-sans">Console de Atendimento {profile.shortName}</span>
         </div>
 
         {/* Ações / Perfil no Cabeçalho */}

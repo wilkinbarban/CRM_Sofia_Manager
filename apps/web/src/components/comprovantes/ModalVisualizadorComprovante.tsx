@@ -27,6 +27,7 @@ import {
   approvePaymentProofDirectly,
   rejectPaymentProofDirectly,
 } from '@/app/actions/payment-proof-admin'
+import { resolveBusinessProfileSync } from '@/lib/config/business-profile'
 
 export interface ModalVisualizadorComprovanteProps {
   isOpen: boolean
@@ -842,7 +843,7 @@ export default function ModalVisualizadorComprovante({
         <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-zinc-800/80 shrink-0">
           <div className="flex items-center gap-2">
             <span className="text-[11px] text-zinc-400">
-              Casa de Assados Brasa & Sabor • Visualizador de comprovante
+              {resolveBusinessProfileSync().name} • Visualizador de comprovante
             </span>
           </div>
 

@@ -31,6 +31,7 @@ import { createClient } from '@/lib/supabase/client';
 import { novaMensagemSchema } from '@/lib/validation/chat';
 import { admitirMensagemSofiaWeb, obterSofiaPresence, processarIaChat } from '@/app/actions/chat';
 import { BrandLogo } from '@/components/ui/BrandLogo';
+import { resolveBusinessProfileSync } from '@/lib/config/business-profile';
 import ModalVisualizadorComprovante from '@/components/comprovantes/ModalVisualizadorComprovante';
 import { PaymentProofChatCard } from '@/components/chat/PaymentProofChatCard';
 import ModalPagamentoCliente from '@/components/cliente/ModalPagamentoCliente';
@@ -1096,7 +1097,7 @@ export default function ChatContainer({
               </div>
               <h3 className="text-zinc-200 font-semibold">Olá, {clienteNome}!</h3>
               <p className="text-sm text-zinc-500 max-w-xs">
-                Seja bem-vindo à Casa de Assados Brasa & Sabor! Escolha seus assados no cardápio ao lado para montar seu pedido personalizado.
+                Seja bem-vindo à {resolveBusinessProfileSync().name}! Escolha seus assados no cardápio ao lado para montar seu pedido personalizado.
               </p>
             </div>
           ) : (

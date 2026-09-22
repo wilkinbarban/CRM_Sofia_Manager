@@ -4,7 +4,6 @@ import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
-import { agendarPedidoNoCalendario } from '@/lib/calendar/google'
 import {
   projetarElegibilidadeReceita,
   resumirReceitaRealizada,
@@ -12,6 +11,7 @@ import {
 } from '@/lib/orders/revenueEligibility'
 import { notificarClienteAtualizacaoPedido } from '@/lib/orders/orderNotifications'
 import { obterConfiguracaoSistema } from '@/lib/config/sistema'
+import { getBusinessProfile } from '@/lib/config/business-profile'
 import { enviarMensagemWhatsapp } from '@/lib/whatsapp/send'
 import { enviarMensagemTelegram } from '@/lib/telegram/send'
 import { processCanonicalPaymentProof } from '@/lib/payment-proofs/canonical-intake'
@@ -528,7 +528,8 @@ export async function actionCriarPedidoCliente(data: {
       .map((it) => `• ${it.quantidade}x ${it.nome} (${formatarMoeda(it.preco_unitario_centavos * it.quantidade)})`)
       .join('\n')
 
-    const mensagemTexto = `🛒 *Pedido #${pedido.id.substring(0, 8).toUpperCase()} Registrado!*\n\n${itensTexto}\n\n💰 *Total:* ${formatarMoeda(totalProdutosCentavos)}\n🕒 *Horário de Retirada:* ${horarioEfetivo}\n📍 *Local:* Balcão Umbará (Casa de Assados Brasa & Sabor)\n\nOlá! Acabei de enviar esse pedido para o atendimento!`
+    const profile = await getBusinessProfile()
+    const mensagemTexto = `🛒 *Pedido #${pedido.id.substring(0, 8).toUpperCase()} Registrado!*\n\n${itensTexto}\n\n💰 *Total:* ${formatarMoeda(totalProdutosCentavos)}\n🕒 *Horário de Retirada:* ${horarioEfetivo}\n📍 *Local:* ${profile.pickupAddress}\n\nOlá! Acabei de enviar esse pedido para o atendimento!`
 
     let novaMensagem = null
     if (data.conversaId) {
@@ -756,21 +757,6 @@ export async function confirmarPedidoOperador(pedidoId: string, correlationId = 
       p_reason: null,
     }).single()
     if (stockError || !pedido) return { success: false, error: mapearErroEstoquePedido(stockError || {}) }
-
-    // 2. Agendar no Google Calendar de forma resiliente
-    const googleEventId = await agendarPedidoNoCalendario(pedidoId)
-
-    if (googleEventId) {
-      // Grava o google_event_id no banco
-      const { error: updateCalError } = await supabase
-        .from('pedidos')
-        .update({ google_event_id: googleEventId })
-        .eq('id', pedidoId)
-
-      if (updateCalError) {
-        console.error(`[Pedidos] Erro ao gravar google_event_id no pedido: ${updateCalError.message}`)
-      }
-    }
 
     safeRevalidatePath('/atendimento')
 
@@ -1043,7 +1029,6 @@ export async function actionListarPedidos(filtros?: {
         status_pagamento,
         meio_pagamento,
         mercado_pago_preferencia_id,
-        google_event_id,
         data_criacao,
         data_atualizacao,
         cliente_id,
@@ -1598,7 +1583,8 @@ export async function despacharCobrancaPixMulticanal(
       currency: 'BRL',
     })
 
-    const textoMensagem = `Olá, *${nomeCliente}*! 🥩\n\nSeu pedido *#${pedidoShort}* na Casa de Assados Brasa & Sabor está pronto para pagamento!\n\n💰 *Valor Total:* ${valorFormatado}\n\n🔑 *Chave PIX (Copia e Cola):*\n\`\`\`\n${dadosPix.qrCodeCopiaCola}\n\`\`\`\n\n📲 *Como pagar:* Copie o código acima e cole no app do seu banco na opção "PIX Copia e Cola", ou acesse o seu Painel de Pedidos para escanear o QR Code.\n\nApós o pagamento, você pode anexar seu comprovante aqui mesmo na conversa!`
+    const profile = await getBusinessProfile()
+    const textoMensagem = `Olá, *${nomeCliente}*! 🥩\n\nSeu pedido *#${pedidoShort}* na ${profile.name} está pronto para pagamento!\n\n💰 *Valor Total:* ${valorFormatado}\n\n🔑 *Chave PIX (Copia e Cola):*\n\`\`\`\n${dadosPix.qrCodeCopiaCola}\n\`\`\`\n\n📲 *Como pagar:* Copie o código acima e cole no app do seu banco na opção "PIX Copia e Cola", ou acesse o seu Painel de Pedidos para escanear o QR Code.\n\nApós o pagamento, você pode anexar seu comprovante aqui mesmo na conversa!`
 
     const canaisNotificados: string[] = []
     let conversaId = pedido.conversa_id
@@ -1766,10 +1752,6 @@ export async function enviarComprovantePagamentoCliente(
     if (downloadError || !fileBlob) return { success: false, error: 'COMPROVANTE_ARQUIVO_INACESSIVEL' }
 
     const deliveryId = `web-${pedidoId}-${payload.urlComprovante}`
-    const [apiKey, model] = await Promise.all([
-      obterConfiguracaoSistema('OPENROUTER_API_KEY'),
-      obterConfiguracaoSistema('OPENROUTER_MODEL'),
-    ])
     const processed = await processCanonicalPaymentProof({
       channel: 'web',
       deliveryId,
@@ -1781,8 +1763,6 @@ export async function enviarComprovantePagamentoCliente(
       mimeType: fileBlob.type,
       db: supabaseAdmin,
       storage: supabaseAdmin.storage.from('payment-proofs'),
-      apiKey,
-      model,
     })
     if (processed.status === 'disabled') return { success: false, error: 'COMPROVANTE_PIPELINE_DESATIVADO' }
     if (processed.status === 'rejected') return { success: false, error: processed.error }

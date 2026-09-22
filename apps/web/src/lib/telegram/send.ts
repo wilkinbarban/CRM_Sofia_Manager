@@ -1,5 +1,6 @@
 import { createAdminClient } from '@/lib/supabase/admin'
 import { obterConfiguracaoSistema } from '@/lib/config/sistema'
+import { getBusinessProfile } from '@/lib/config/business-profile'
 import { deriveTelegramMessageKey } from '@/lib/telegram/idempotency'
 import {
   buildTelegramCatalogCard,
@@ -305,12 +306,15 @@ export async function enviarOtpTelegram(
       return { success: false, error: 'TELEGRAM_BOT_TOKEN não configurado.' }
     }
 
+    const profile = await getBusinessProfile()
+    const brand = profile.shortName || profile.name
+
     const response = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         chat_id: telegramChatId,
-        text: `🔐 *Código de Verificação — Asados*\n\nSeu código OTP é: *${codigo}*\n\n⏳ Ele expira em *10 minutos*.\n\nSe você não solicitou este código, ignore esta mensagem.`,
+        text: `🔐 *Código de Verificação — ${brand}*\n\nSeu código OTP é: *${codigo}*\n\n⏳ Ele expira em *10 minutos*.\n\nSe você não solicitou este código, ignore esta mensagem.`,
         parse_mode: 'Markdown'
       })
     })

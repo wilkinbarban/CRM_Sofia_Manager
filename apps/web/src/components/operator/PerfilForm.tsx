@@ -14,6 +14,7 @@ import {
   EyeOff
 } from 'lucide-react'
 import { atualizarPerfilProprio, atualizarSenhaPropria } from '@/app/actions/perfil'
+import { resolveBusinessProfileSync } from '@/lib/config/business-profile'
 
 interface OperatorInfo {
   id: string
@@ -135,7 +136,7 @@ export default function PerfilForm({ operatorInfo }: PerfilFormProps) {
             Meu Perfil de Operador
           </h1>
           <p className="mt-1 text-xs text-zinc-400">
-            Gerencie suas informações de acesso e configurações de segurança na Casa de Assados Brasa & Sabor.
+            Gerencie suas informações de acesso e configurações de segurança na {resolveBusinessProfileSync().name}.
           </p>
         </div>
       </section>

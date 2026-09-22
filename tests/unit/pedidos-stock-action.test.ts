@@ -1,10 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 
-const mocks = vi.hoisted(() => ({ createClient: vi.fn(), revalidatePath: vi.fn(), calendar: vi.fn() }))
+const mocks = vi.hoisted(() => ({ createClient: vi.fn(), revalidatePath: vi.fn() }))
 vi.mock('@/lib/supabase/server', () => ({ createClient: mocks.createClient }))
 vi.mock('next/cache', () => ({ revalidatePath: mocks.revalidatePath }))
-vi.mock('@/lib/calendar/google', () => ({ agendarPedidoNoCalendario: mocks.calendar }))
 
 function client(error: unknown = null) {
   const rpc = vi.fn().mockReturnValue({ single: vi.fn().mockResolvedValue({ data: error ? null : { estado: 'aplicado' }, error }) })
@@ -13,7 +12,7 @@ function client(error: unknown = null) {
 }
 
 describe('order stock actions', () => {
-  beforeEach(() => { vi.clearAllMocks(); mocks.calendar.mockResolvedValue(null) })
+  beforeEach(() => { vi.clearAllMocks() })
 
   it('sends only trusted order and correlation payloads to lifecycle RPCs', async () => {
     const c = client(); mocks.createClient.mockResolvedValue(c.value)

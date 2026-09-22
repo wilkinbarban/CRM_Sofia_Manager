@@ -19,7 +19,6 @@ beforeEach(() => {
       pedido_id: 'order-refund-first',
       status_pagamento: 'reembolsado',
       idempotent: false,
-      google_event_id: null,
     },
     error: null,
   })

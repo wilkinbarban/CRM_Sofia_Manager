@@ -5,15 +5,20 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { createClient as createSupabaseClient } from '@supabase/supabase-js'
 import { getSupabaseServerUrl } from '@/lib/supabase/url'
 import { z } from 'zod'
-import { google } from 'googleapis'
 import {
   getEvolutionConnectionState,
   getEvolutionQrCode,
 } from '@/lib/whatsapp/evolution-admin-client'
 import { revalidatePath } from 'next/cache'
 import { consolidateAdminUsers } from '@/lib/admin/user-list'
-import { obterConfiguracaoSistema } from '@/lib/config/sistema'
-import { resolveOmniRouteAdminTarget } from '@/lib/ai/omniroute-admin-target'
+import { isRetiredProviderConfigKey } from '@/lib/config/retired-config-keys'
+import {
+  isUsableDeepSeekApiKey,
+  listDeepSeekModels,
+  probeDeepSeekChat,
+  resolverChaveDeepSeek,
+  type DeepSeekModelOption,
+} from '@/lib/ai/deepseek'
 import { parseFinancialOperationalMetrics, validateReportingPeriod } from '@/lib/admin/financial-metrics'
 
 /**
@@ -341,114 +346,6 @@ export async function editarUsuarioAdmin(
 }
 
 /**
- * Server Action 2.5: testarGoogleCalendar
- * Realiza o agendamento de um evento de teste de 15 minutos e registra o resultado em logs_auditoria.
- */
-export async function testarGoogleCalendar(
-  customCalendarId?: string,
-  customClientEmail?: string,
-  customPrivateKey?: string
-) {
-  try {
-    const check = await verificarPermissaoOperador()
-    if (!check.authorized || !check.user) {
-      return { success: false, error: check.error || 'ACESSO_NEGADO_NAO_AUTENTICADO' }
-    }
-
-    const { user } = check
-
-    const clientEmail = customClientEmail || await obterConfiguracaoSistema('GOOGLE_CLIENT_EMAIL')
-    const privateKey = customPrivateKey || await obterConfiguracaoSistema('GOOGLE_PRIVATE_KEY')
-    const calendarId = customCalendarId || await obterConfiguracaoSistema('GOOGLE_CALENDAR_ID')
-
-    const isMockMode =
-      !clientEmail ||
-      !privateKey ||
-      !calendarId ||
-      clientEmail.includes('placeholder') ||
-      privateKey.includes('placeholder') ||
-      calendarId.includes('placeholder')
-
-    let eventId = null
-    let sucesso = false
-    let erroMensagem = null
-
-    if (isMockMode) {
-      console.warn('[Google Calendar Test] Servidor rodando em modo MOCK. Credenciais de calendário ausentes ou placeholders.')
-      // Simular latência de rede (200ms)
-      await new Promise((resolve) => setTimeout(resolve, 200))
-      eventId = `mock-test-event-${Date.now()}`
-      sucesso = true
-    } else {
-      try {
-        const auth = new google.auth.JWT({
-          email: clientEmail,
-          key: privateKey!.replace(/\\n/g, '\n'),
-          scopes: ['https://www.googleapis.com/auth/calendar'],
-        })
-
-        const calendar = google.calendar({ version: 'v3', auth })
-
-        const start = new Date()
-        const end = new Date(start.getTime() + 15 * 60 * 1000) // 15 minutos
-        const timestamp = start.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })
-
-        const response = await calendar.events.insert({
-          calendarId: calendarId,
-          requestBody: {
-            summary: `[TESTE] Conexão Asados - ${timestamp}`,
-            description: 'Evento de teste para validar a integração com o Google Calendar.',
-            start: {
-              dateTime: start.toISOString(),
-              timeZone: 'America/Sao_Paulo',
-            },
-            end: {
-              dateTime: end.toISOString(),
-              timeZone: 'America/Sao_Paulo',
-            },
-          },
-        })
-
-        eventId = response.data.id || 'sem_id'
-        sucesso = true
-      } catch (err: any) {
-        console.error('[Google Calendar Test] Erro ao agendar evento:', err)
-        erroMensagem = err.message || 'Falha técnica ao integrar com a API do Google Calendar'
-      }
-    }
-
-    // Inserir log de auditoria
-    const adminSupabase = createAdminClient()
-    const { error: logError } = await adminSupabase
-      .from('logs_auditoria')
-      .insert({
-        usuario_id: user.id,
-        acao: 'teste_calendario',
-        detalhes: {
-          sucesso,
-          mock: isMockMode,
-          eventId,
-          erro: erroMensagem,
-          calendarId: calendarId || null,
-        },
-      })
-
-    if (logError) {
-      console.error('Erro ao registrar log de teste de calendário:', logError)
-    }
-
-    if (!sucesso) {
-      return { success: false, error: erroMensagem || 'FALHA_CONEXAO' }
-    }
-
-    return { success: true, data: { eventId, mock: isMockMode } }
-  } catch (error: any) {
-    console.error('Erro na action testarGoogleCalendar:', error)
-    return { success: false, error: error.message || 'ERRO_INTERNO' }
-  }
-}
-
-/**
  * Server Action 2.6: obterEstatisticasMensagens
  * Busca a contagem total de mensagens filtradas por remetente e computa a taxa percentual de automação.
  */
@@ -566,8 +463,26 @@ export async function salvarConfiguracaoAdmin(chave: string, valor: string) {
       return { success: false, error: check.error || 'ACESSO_NEGADO_NAO_AUTENTICADO' }
     }
 
+    // A key naming a retired provider has no write path at all: the dashboard no
+    // longer renders it, and the server-to-client projection hides any legacy
+    // row, so accepting a write here would only recreate what was removed.
+    if (isRetiredProviderConfigKey(chave)) {
+      return { success: false, error: 'CHAVE_DE_PROVEDOR_DESCONTINUADO' }
+    }
+
     const adminSupabase = createAdminClient()
-    const ehSegredo = chave.toUpperCase().includes('_KEY') || chave.toUpperCase().includes('_TOKEN')
+    const ehSegredo =
+      chave.toUpperCase().includes('_KEY') ||
+      chave.toUpperCase().includes('_TOKEN') ||
+      chave.toUpperCase().includes('_SECRET')
+
+    // Credential inputs are rendered write-only: the server-to-client projection
+    // strips every `_KEY`/`_TOKEN`/`_SECRET` value, so an untouched input submits
+    // a blank string. Treat that as "keep the stored secret" instead of erasing
+    // it. Blank non-secret values are still upserted as before.
+    if (ehSegredo && valor.trim() === '') {
+      return { success: true }
+    }
 
     const { error: upsertError } = await adminSupabase
       .from('configuracoes_sistema')
@@ -775,297 +690,82 @@ export async function deletarUsuarioAdmin(usuarioAlvoId: string) {
 }
 
 /**
- * Server Action: obterModelosDisponiveis
- * Busca dinamicamente os modelos disponíveis em OpenRouter ou DeepSeek de acordo com a API Key informada.
+ * Server Action: listAuthorizedDeepSeekModels
+ * Lists the DeepSeek models authorized for the configured server key.
+ *
+ * Takes no API key argument on purpose: the key is resolved through the single
+ * server credential rule (`resolverChaveDeepSeek`: a usable
+ * `configuracoes_sistema` value, then a usable environment value, then `''`)
+ * and never travels through the caller. Absent or placeholder keys
+ * short-circuit to a stable `DEEPSEEK_NOT_CONFIGURED` error, and every
+ * remaining failure keeps the client's stable error code without echoing the
+ * key or the provider body.
  */
-export async function obterModelosDisponiveis(apiKey: string) {
+export async function listAuthorizedDeepSeekModels(): Promise<
+  { success: true; models: DeepSeekModelOption[] } | { success: false; error: string }
+> {
   try {
     const check = await verificarPermissaoOperador()
     if (!check.authorized || !check.user) {
       return { success: false, error: check.error || 'ACESSO_NEGADO_NAO_AUTENTICADO' }
     }
 
-    if (!apiKey || apiKey.trim() === '' || apiKey.toLowerCase().includes('placeholder') || apiKey.toLowerCase().includes('insert_here')) {
-      return {
-        success: true,
-        models: [
-          { id: 'google/gemini-2.5-flash', name: 'Google: Gemini 2.5 Flash' },
-          { id: 'google/gemini-2.5-pro', name: 'Google: Gemini 2.5 Pro' },
-          { id: 'deepseek/deepseek-chat', name: 'DeepSeek: DeepSeek Chat' },
-          { id: 'meta-llama/llama-3.3-70b-instruct', name: 'Llama 3.3 70b Instruct' }
-        ]
-      }
+    const apiKey = await resolverChaveDeepSeek()
+
+    if (!isUsableDeepSeekApiKey(apiKey)) {
+      return { success: false, error: 'DEEPSEEK_NOT_CONFIGURED' }
     }
 
-    const isDeepSeek = !apiKey.includes('sk-or-') && apiKey.startsWith('sk-')
-
-    if (isDeepSeek) {
-      return {
-        success: true,
-        models: [
-          { id: 'deepseek-chat', name: 'DeepSeek Chat (v3)' },
-          { id: 'deepseek-reasoner', name: 'DeepSeek Reasoner (R1)' }
-        ]
-      }
-    } else {
-      try {
-        const response = await fetch('https://openrouter.ai/api/v1/models', {
-          method: 'GET',
-          headers: {
-            'Authorization': `Bearer ${apiKey}`,
-            'Content-Type': 'application/json'
-          }
-        })
-        if (response.ok) {
-          const json = await response.json()
-          if (json && Array.isArray(json.data)) {
-            const modelsList = json.data.map((m: any) => ({
-              id: m.id,
-              name: m.name || m.id
-            }))
-            return { success: true, models: modelsList }
-          }
-        }
-        throw new Error(`Resposta HTTP ${response.status}: ${response.statusText}`)
-      } catch (err: any) {
-        console.warn('Erro ao buscar modelos do OpenRouter, retornando fallback estático:', err.message)
-        return {
-          success: true,
-          models: [
-            { id: 'google/gemini-2.5-flash', name: 'Google: Gemini 2.5 Flash' },
-            { id: 'google/gemini-2.5-pro', name: 'Google: Gemini 2.5 Pro' },
-            { id: 'deepseek/deepseek-chat', name: 'DeepSeek: DeepSeek Chat' },
-            { id: 'meta-llama/llama-3.3-70b-instruct', name: 'Llama 3.3 70b Instruct' },
-            { id: 'qwen/qwen-2.5-72b-instruct', name: 'Qwen 2.5 72b Instruct' }
-          ]
-        }
-      }
+    const result = await listDeepSeekModels({ apiKey })
+    if (!result.success) {
+      return { success: false, error: result.error }
     }
-  } catch (error: any) {
-    console.error('Erro na action obterModelosDisponiveis:', error)
-    return { success: false, error: error.message || 'ERRO_INTERNO' }
+
+    return { success: true, models: result.models }
+  } catch {
+    return { success: false, error: 'DEEPSEEK_OPERATOR_FAILED' }
   }
 }
 
 /**
- * Server Action: testarConexaoLLM
- * Executa uma chamada simples (1 palavra) para testar a validade da API Key e do modelo informados.
+ * Server Action: testAuthorizedDeepSeekModel
+ * Probes the stored DeepSeek credential against one operator-selected model.
+ *
+ * The caller supplies only a model ID. The key is resolved server-side through
+ * the single credential rule (`resolverChaveDeepSeek`), the same one
+ * `listAuthorizedDeepSeekModels` uses, so it never travels through the browser,
+ * and a blank or non-string model short-circuits before any key lookup or network
+ * call. The result carries only a stable code plus the requested model: no key,
+ * no provider body and no provider message. The model-list action above is left
+ * untouched.
  */
-export async function testarConexaoLLM(apiKey: string, model: string) {
+export async function testAuthorizedDeepSeekModel(modelId: unknown): Promise<
+  { success: true; model: string } | { success: false; error: string }
+> {
   try {
     const check = await verificarPermissaoOperador()
     if (!check.authorized || !check.user) {
       return { success: false, error: check.error || 'ACESSO_NEGADO_NAO_AUTENTICADO' }
     }
 
-    if (!apiKey || apiKey.trim() === '' || apiKey.toLowerCase().includes('placeholder') || apiKey.toLowerCase().includes('insert_here')) {
-      return { success: false, error: 'A API Key não pode estar vazia ou conter placeholder para o teste.' }
+    if (typeof modelId !== 'string' || modelId.trim() === '') {
+      return { success: false, error: 'DEEPSEEK_MODEL_REQUIRED' }
     }
 
-    const isDeepSeek = !apiKey.includes('sk-or-') && apiKey.startsWith('sk-')
-    const apiUrl = isDeepSeek
-      ? 'https://api.deepseek.com/chat/completions'
-      : 'https://openrouter.ai/api/v1/chat/completions'
+    const apiKey = await resolverChaveDeepSeek()
 
-    const headers: Record<string, string> = {
-      'Authorization': `Bearer ${apiKey}`,
-      'Content-Type': 'application/json'
+    if (!isUsableDeepSeekApiKey(apiKey)) {
+      return { success: false, error: 'DEEPSEEK_NOT_CONFIGURED' }
     }
 
-    if (!isDeepSeek) {
-      headers['HTTP-Referer'] = 'https://github.com/wilkin/proyectos/Asados'
-      headers['X-Title'] = 'CRM Casa de Assados Brasa & Sabor Test'
+    const result = await probeDeepSeekChat({ apiKey, model: modelId })
+    if (!result.success) {
+      return { success: false, error: result.error }
     }
 
-    const response = await fetch(apiUrl, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        model: model || (isDeepSeek ? 'deepseek-chat' : 'google/gemini-2.5-flash'),
-        messages: [
-          { role: 'user', content: 'responda apenas com a palavra OK' }
-        ],
-        max_tokens: 150,
-        temperature: 0.1
-      })
-    })
-
-    if (!response.ok) {
-      const text = await response.text()
-      throw new Error(`HTTP ${response.status} - ${text || response.statusText}`)
-    }
-
-    const data = await response.json()
-    const content = data.choices?.[0]?.message?.content?.trim() || ''
-
-    // Criar entrada no log de auditoria
-    const adminSupabase = createAdminClient()
-    const keyMasked = apiKey.length > 4 ? apiKey.substring(0, 4) + '***' : '***'
-    await adminSupabase.from('logs_auditoria').insert({
-      usuario_id: check.user.id,
-      acao: 'teste_llm',
-      detalhes: {
-        modelo: model,
-        chave: keyMasked,
-        resposta: content
-      }
-    })
-
-    return { success: true, response: content }
-  } catch (error: any) {
-    console.error('Erro na action testarConexaoLLM:', error)
-    return { success: false, error: error.message || 'ERRO_INTERNO' }
-  }
-}
-
-/**
- * Server Action: testarConexaoOmniRoute
- * Testa a conexão e resolução do OmniRoute Gateway com um combo/tier específico.
- */
-export async function testarConexaoOmniRoute(baseUrl: string, apiKey: string, modelOrTier: string) {
-  try {
-    const check = await verificarPermissaoOperador()
-    if (!check.authorized || !check.user) {
-      return { success: false, error: check.error || 'ACESSO_NEGADO_NAO_AUTENTICADO' }
-    }
-
-    const { baseUrl: host, apiKey: key } = await resolveOmniRouteAdminTarget({
-      callerBaseUrl: baseUrl,
-      callerApiKey: apiKey,
-      configuredBaseUrl: process.env.OMNIROUTE_BASE_URL || 'http://127.0.0.1:20128',
-      configuredApiKey: process.env.OMNIROUTE_API_KEY,
-    })
-    const targetModel = modelOrTier || 'business-economy'
-
-    if (!key || key.toLowerCase().includes('placeholder')) {
-      return { success: false, error: 'API Key do OmniRoute não informada ou inválida.' }
-    }
-
-    const url = `${host.replace(/\/+$/, '')}/v1/chat/completions`
-    const inicio = Date.now()
-
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${key}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        model: targetModel,
-        messages: [
-          { role: 'system', content: 'Você é a Sofía da Casa de Assados.' },
-          { role: 'user', content: 'responda apenas com a palavra OK' }
-        ],
-        max_tokens: 150,
-        temperature: 0.1
-      }),
-      redirect: 'error',
-      signal: AbortSignal.timeout(15000)
-    })
-
-    const latenciaMs = Date.now() - inicio
-
-    if (!response.ok) {
-      const text = await response.text()
-      throw new Error(`HTTP ${response.status} - ${text || response.statusText}`)
-    }
-
-    const data = await response.json()
-    const content = data.choices?.[0]?.message?.content?.trim() || ''
-    const modelResolved = data.model || targetModel
-
-    const adminSupabase = createAdminClient()
-    const keyMasked = key.length > 8 ? key.substring(0, 8) + '***' : '***'
-    await adminSupabase.from('logs_auditoria').insert({
-      usuario_id: check.user.id,
-      acao: 'teste_omniroute',
-      detalhes: {
-        tier_solicitado: targetModel,
-        modelo_resolvido: modelResolved,
-        chave: keyMasked,
-        latencia_ms: latenciaMs,
-        resposta: content
-      }
-    })
-
-    return {
-      success: true,
-      response: content,
-      modelResolved,
-      latencyMs: latenciaMs
-    }
-  } catch (error: any) {
-    console.error('Erro na action testarConexaoOmniRoute:', error)
-    return { success: false, error: error.message || 'ERRO_INTERNO' }
-  }
-}
-
-/**
- * Server Action: obterCombosOmniRoute
- * Busca a lista de modelos e combos disponíveis no OmniRoute Gateway.
- */
-export async function obterCombosOmniRoute(baseUrl: string, apiKey: string) {
-  try {
-    const check = await verificarPermissaoOperador()
-    if (!check.authorized || !check.user) {
-      return { success: false, error: check.error || 'ACESSO_NEGADO_NAO_AUTENTICADO' }
-    }
-
-    const { baseUrl: host, apiKey: key } = await resolveOmniRouteAdminTarget({
-      callerBaseUrl: baseUrl,
-      callerApiKey: apiKey,
-      configuredBaseUrl: process.env.OMNIROUTE_BASE_URL || 'http://127.0.0.1:20128',
-      configuredApiKey: process.env.OMNIROUTE_API_KEY,
-    })
-
-    if (!key || key.toLowerCase().includes('placeholder')) {
-      return {
-        success: true,
-        combos: [
-          { id: 'business-economy', name: '🟢 business-economy (FAQs & Cardápio)' },
-          { id: 'business-smart', name: '🟡 business-smart (Consultivo & Objeções)' },
-          { id: 'business-frontier', name: '🔴 business-frontier (Eventos & Corporativo)' }
-        ]
-      }
-    }
-
-    const url = `${host.replace(/\/+$/, '')}/v1/models`
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: {
-        'Authorization': `Bearer ${key}`,
-        'Content-Type': 'application/json'
-      },
-      redirect: 'error',
-      signal: AbortSignal.timeout(5000)
-    })
-
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`)
-    }
-
-    const json = await response.json()
-    const allModels: string[] = Array.isArray(json.data) ? json.data.map((m: any) => m.id) : []
-
-    return {
-      success: true,
-      combos: [
-        { id: 'business-economy', name: '🟢 business-economy (FAQs & Cardápio)' },
-        { id: 'business-smart', name: '🟡 business-smart (Consultivo & Objeções)' },
-        { id: 'business-frontier', name: '🔴 business-frontier (Eventos & Corporativo)' }
-      ],
-      totalModels: allModels.length
-    }
-  } catch (error: any) {
-    console.error('Erro na action obterCombosOmniRoute:', error)
-    return {
-      success: true,
-      combos: [
-        { id: 'business-economy', name: '🟢 business-economy (FAQs & Cardápio)' },
-        { id: 'business-smart', name: '🟡 business-smart (Consultivo & Objeções)' },
-        { id: 'business-frontier', name: '🔴 business-frontier (Eventos & Corporativo)' }
-      ]
-    }
+    return { success: true, model: result.model }
+  } catch {
+    return { success: false, error: 'DEEPSEEK_OPERATOR_FAILED' }
   }
 }
 

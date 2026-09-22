@@ -1,5 +1,8 @@
 import type { Metadata, Viewport } from 'next'
 import './globals.css'
+import { resolveBusinessProfileSync } from '@/lib/config/business-profile'
+
+const profile = resolveBusinessProfileSync()
 
 export const viewport: Viewport = {
   themeColor: '#09090b',
@@ -11,20 +14,19 @@ export const viewport: Viewport = {
 export const metadata: Metadata = {
   metadataBase: new URL('https://crmsofiamanager.duckdns.org'),
   title: {
-    default: 'CRM Sofia Manager | Casa de Assados Brasa & Sabor',
+    default: `CRM Sofia Manager | ${profile.name}`,
     template: '%s | CRM Sofia Manager',
   },
   description:
-    'CRM Sofia Manager: Plataforma omnichannel de atendimento inteligente, gestão de pedidos e RAG para a Casa de Assados Brasa & Sabor no bairro Umbará, Curitiba - PR.',
+    `CRM Sofia Manager: Plataforma omnichannel de atendimento inteligente, gestão de pedidos e RAG para ${profile.name} (${profile.location}).`,
   keywords: [
     'CRM Sofia Manager',
-    'Casa de Assados Brasa & Sabor',
-    'Frango Assado Curitiba',
-    'Costela no Bafo Umbará',
-    'Churrasco de Domingo Curitiba',
-    'Assados Umbará',
+    profile.name,
+    profile.shortName,
+    'Atendimento Inteligente',
+    'Curitiba',
   ],
-  authors: [{ name: 'Casa de Assados Brasa & Sabor' }],
+  authors: [{ name: profile.name }],
   icons: {
     icon: [
       { url: '/favicon.ico', sizes: 'any' },

@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto'
 import path from 'node:path'
 import { copyFile, mkdtemp, readFile, symlink } from 'node:fs/promises'
 import os from 'node:os'
+import { DEEPSEEK_DEFAULT_MODEL } from '@/lib/ai/deepseek'
 import { processPaymentProofJob, renderPaymentProofWithWorker } from '@/lib/payment-proofs/processing-worker'
 
 const PDF = new Uint8Array([0x25,0x50,0x44,0x46,0x2d,0x31])
@@ -69,6 +70,22 @@ describe('payment-proof processing worker', () => {
     expect(render).not.toHaveBeenCalled()
     expect(upload).toHaveBeenCalledWith(expect.any(String), Buffer.from(image), expect.any(Object))
     expect(imageClassify).toHaveBeenCalledWith(expect.objectContaining({ extractedText:'', imageDataUrl:`data:image/png;base64,${Buffer.from(image).toString('base64')}` }))
+  })
+
+  it('defaults the classifier to the DeepSeek model and lets the boundary own the retry', async () => {
+    render.mockClear()
+    const { client } = db()
+    const classifySpy = vi.fn(async (input: any) => {
+      await input.persist({ disposition:'manual_review', likelyPaymentProof:null, confidence:null, suggestedAmountCents:null, reasonCode:'low_signal', model:input.model })
+    })
+
+    const result = await processPaymentProofJob({ proofId:'proof-1', db:client as any, render, classify:classifySpy as any })
+
+    expect(result).toEqual({ ok:true })
+    expect(classifySpy).toHaveBeenCalledTimes(1)
+    const call = classifySpy.mock.calls[0][0] as Record<string, unknown>
+    expect(call.model).toBe(DEEPSEEK_DEFAULT_MODEL)
+    expect(call).not.toHaveProperty('maxAttempts')
   })
 
   it('maps an original blob read exception to the fixed load stage instead of throwing', async () => {

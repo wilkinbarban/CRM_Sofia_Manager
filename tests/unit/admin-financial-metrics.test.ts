@@ -8,7 +8,6 @@ const mocks = vi.hoisted(() => ({
 vi.mock('@/lib/supabase/server', () => ({ createClient: mocks.createClient }))
 vi.mock('@/lib/supabase/admin', () => ({ createAdminClient: mocks.createAdminClient }))
 vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }))
-vi.mock('googleapis', () => ({ google: { auth: { JWT: vi.fn() }, calendar: vi.fn() } }))
 
 const startAt = '2026-08-01T00:00:00.000Z'
 const endAt = '2026-08-31T00:00:00.000Z'

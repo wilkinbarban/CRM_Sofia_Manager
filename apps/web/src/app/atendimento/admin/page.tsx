@@ -1,8 +1,13 @@
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { listarUsuariosAdmin, obterEstatisticasMensagens } from '@/app/actions/admin'
+import { escolherChaveDeepSeek } from '@/lib/ai/deepseek'
 import AdminDashboard from '@/components/operator/AdminDashboard'
 import { OperatorWorkspaceHeader } from '@/components/operator/OperatorWorkspaceHeader'
+import {
+  isRetiredProviderConfigKey,
+  warnRetiredProviderConfigKeyOnce,
+} from '@/lib/config/retired-config-keys'
 
 export const dynamic = 'force-dynamic'
 
@@ -10,8 +15,61 @@ type AdminPageProps = {
   searchParams: Promise<{ tab?: string | string[] }>
 }
 
+/**
+ * Secret-shaped configuration keys, matching the `eh_segredo` classification
+ * used by `salvarConfiguracaoAdmin` on the write path. Must stay in sync with
+ * it: a key classified as secret on one side and not the other reopens the
+ * leak this boundary closes.
+ */
+const SECRET_CONFIG_KEY_PATTERN = /(_KEY|_TOKEN|_SECRET)/i
+
+/** Client-side DeepSeek state marker: the key status without the key itself. */
+const DEEPSEEK_CONFIGURED_KEY = 'DEEPSEEK_CONFIGURED'
+
+/**
+ * Projects `configuracoes_sistema` onto the client payload.
+ *
+ * Every value whose key contains `_KEY`, `_TOKEN`, or `_SECRET` is dropped at
+ * this server-to-client boundary — including environment fallbacks — so the
+ * dashboard can only render write-only credential inputs instead of prefilled
+ * secrets. Stored keys naming a retired provider are dropped as well, secret
+ * or not, so a legacy row cannot put that provider back in front of the
+ * operator; the retirement check runs first so every such row leaves one
+ * migration warning per key, and the rule itself lives in
+ * `@/lib/config/retired-config-keys`. `DEEPSEEK_CONFIGURED` is the single
+ * DeepSeek signal that crosses:
+ * it is serialized as the string `'true'` because `systemConfigs` is a string
+ * map, and it applies the shared credential rule (`escolherChaveDeepSeek`: a
+ * usable stored value, then a usable environment value, then the empty string —
+ * placeholders and whitespace rejected) to the pair this component already
+ * holds, so the panel reports the provider as configured exactly when
+ * generation can use it.
+ */
+function toClientSystemConfigs(systemConfigs: Record<string, string>): Record<string, string> {
+  const clientConfigs: Record<string, string> = {}
+
+  for (const [key, value] of Object.entries(systemConfigs)) {
+    if (isRetiredProviderConfigKey(key)) {
+      warnRetiredProviderConfigKeyOnce(key)
+      continue
+    }
+    if (SECRET_CONFIG_KEY_PATTERN.test(key)) continue
+    clientConfigs[key] = value
+  }
+
+  const deepSeekApiKey = escolherChaveDeepSeek(
+    systemConfigs.DEEPSEEK_API_KEY,
+    process.env.DEEPSEEK_API_KEY,
+  )
+  if (deepSeekApiKey) {
+    clientConfigs[DEEPSEEK_CONFIGURED_KEY] = 'true'
+  }
+
+  return clientConfigs
+}
+
 const adminTabs = new Set([
-  'operadores', 'integracoes', 'conhecimento', 'metricas', 'auditoria',
+  'operadores', 'empresa', 'integracoes', 'conhecimento', 'metricas', 'auditoria',
   'prompt', 'horarios', 'estoque', 'storage-orphans', 'comprovantes',
 ])
 
@@ -81,10 +139,10 @@ export default async function AdminPage({ searchParams }: AdminPageProps) {
   }
 
   const systemConfigs: Record<string, string> = {
-    OPENROUTER_API_KEY: '',
+    DEEPSEEK_API_KEY: '',
+    DEEPSEEK_MODEL: '',
     WHATSAPP_ACCESS_TOKEN: '',
     WHATSAPP_PHONE_NUMBER_ID: '',
-    OPENROUTER_MODEL: '',
     WHATSAPP_APP_SECRET: '',
     WHATSAPP_VERIFY_TOKEN: '',
     EVOLUTION_API_URL: '',
@@ -96,6 +154,12 @@ export default async function AdminPage({ searchParams }: AdminPageProps) {
     MERCADO_PAGO_WEBHOOK_SECRET: '',
     TELEGRAM_BOT_TOKEN: '',
     SOFIA_SYSTEM_PROMPT: '',
+    BUSINESS_NAME: '',
+    BUSINESS_SHORT_NAME: '',
+    BUSINESS_LOCATION: '',
+    BUSINESS_PICKUP_ADDRESS: '',
+    BUSINESS_DESCRIPTION: '',
+    SOFIA_PERSONA_ROLE: '',
   }
 
   if (dbConfigs) {
@@ -105,17 +169,14 @@ export default async function AdminPage({ searchParams }: AdminPageProps) {
   }
 
   // Fallback to environment variables if not present in the database
-  if (!systemConfigs.OPENROUTER_API_KEY && process.env.OPENROUTER_API_KEY) {
-    systemConfigs.OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY
-  }
   if (!systemConfigs.WHATSAPP_ACCESS_TOKEN && process.env.WHATSAPP_ACCESS_TOKEN) {
     systemConfigs.WHATSAPP_ACCESS_TOKEN = process.env.WHATSAPP_ACCESS_TOKEN
   }
   if (!systemConfigs.WHATSAPP_PHONE_NUMBER_ID && process.env.WHATSAPP_PHONE_NUMBER_ID) {
     systemConfigs.WHATSAPP_PHONE_NUMBER_ID = process.env.WHATSAPP_PHONE_NUMBER_ID
   }
-  if (!systemConfigs.OPENROUTER_MODEL && process.env.OPENROUTER_MODEL) {
-    systemConfigs.OPENROUTER_MODEL = process.env.OPENROUTER_MODEL
+  if (!systemConfigs.DEEPSEEK_MODEL && process.env.DEEPSEEK_MODEL) {
+    systemConfigs.DEEPSEEK_MODEL = process.env.DEEPSEEK_MODEL
   }
   if (!systemConfigs.WHATSAPP_APP_SECRET && process.env.WHATSAPP_APP_SECRET) {
     systemConfigs.WHATSAPP_APP_SECRET = process.env.WHATSAPP_APP_SECRET
@@ -150,25 +211,27 @@ export default async function AdminPage({ searchParams }: AdminPageProps) {
   if (!systemConfigs.MERCADO_PAGO_WEBHOOK_SECRET && process.env.MERCADO_PAGO_WEBHOOK_SECRET) {
     systemConfigs.MERCADO_PAGO_WEBHOOK_SECRET = process.env.MERCADO_PAGO_WEBHOOK_SECRET
   }
-  if (!systemConfigs.OMNIROUTE_BASE_URL && process.env.OMNIROUTE_BASE_URL) {
-    systemConfigs.OMNIROUTE_BASE_URL = process.env.OMNIROUTE_BASE_URL
+  if (!systemConfigs.BUSINESS_NAME && process.env.BUSINESS_NAME) {
+    systemConfigs.BUSINESS_NAME = process.env.BUSINESS_NAME
   }
-  if (!systemConfigs.OMNIROUTE_API_KEY && process.env.OMNIROUTE_API_KEY) {
-    systemConfigs.OMNIROUTE_API_KEY = process.env.OMNIROUTE_API_KEY
+  if (!systemConfigs.BUSINESS_SHORT_NAME && process.env.BUSINESS_SHORT_NAME) {
+    systemConfigs.BUSINESS_SHORT_NAME = process.env.BUSINESS_SHORT_NAME
   }
-  if (!systemConfigs.AI_ROUTING_V2_ENABLED && process.env.AI_ROUTING_V2_ENABLED) {
-    systemConfigs.AI_ROUTING_V2_ENABLED = process.env.AI_ROUTING_V2_ENABLED
+  if (!systemConfigs.BUSINESS_LOCATION && process.env.BUSINESS_LOCATION) {
+    systemConfigs.BUSINESS_LOCATION = process.env.BUSINESS_LOCATION
   }
-  if (!systemConfigs.AI_ROUTING_LEGACY_FALLBACK_ENABLED && process.env.AI_ROUTING_LEGACY_FALLBACK_ENABLED) {
-    systemConfigs.AI_ROUTING_LEGACY_FALLBACK_ENABLED = process.env.AI_ROUTING_LEGACY_FALLBACK_ENABLED
+  if (!systemConfigs.BUSINESS_PICKUP_ADDRESS && process.env.BUSINESS_PICKUP_ADDRESS) {
+    systemConfigs.BUSINESS_PICKUP_ADDRESS = process.env.BUSINESS_PICKUP_ADDRESS
+  }
+  if (!systemConfigs.BUSINESS_DESCRIPTION && process.env.BUSINESS_DESCRIPTION) {
+    systemConfigs.BUSINESS_DESCRIPTION = process.env.BUSINESS_DESCRIPTION
+  }
+  if (!systemConfigs.SOFIA_PERSONA_ROLE && process.env.SOFIA_PERSONA_ROLE) {
+    systemConfigs.SOFIA_PERSONA_ROLE = process.env.SOFIA_PERSONA_ROLE
   }
 
-  // 7. Configuração do Google Calendar
-  const calendarConfig = {
-    googleCalendarId: process.env.GOOGLE_CALENDAR_ID || null,
-    googleClientEmail: process.env.GOOGLE_CLIENT_EMAIL || null,
-    googlePrivateKeyConfigured: !!process.env.GOOGLE_PRIVATE_KEY
-  }
+  // 7. Server-to-client projection: no secret value crosses the boundary
+  const clientSystemConfigs = toClientSystemConfigs(systemConfigs)
 
   return (
     <div className="flex h-screen w-full flex-col bg-zinc-950 text-zinc-50 overflow-hidden font-sans">
@@ -191,9 +254,8 @@ export default async function AdminPage({ searchParams }: AdminPageProps) {
           usuariosIniciais={usuariosRes.success ? (usuariosRes.data || []) : []}
           estatisticasIniciais={estatisticasRes.success ? (estatisticasRes.data || { totalIa: 0, totalOperador: 0, totalCliente: 0, totalMensagens: 0, taxaAutomacao: 0 }) : { totalIa: 0, totalOperador: 0, totalCliente: 0, totalMensagens: 0, taxaAutomacao: 0 }}
           logsIniciais={logs || []}
-          calendarConfig={calendarConfig}
           artigosIniciais={artigos || []}
-          systemConfigs={systemConfigs}
+          systemConfigs={clientSystemConfigs}
         />
       </main>
     </div>

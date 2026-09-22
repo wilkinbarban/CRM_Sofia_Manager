@@ -6,7 +6,6 @@ const mocks = vi.hoisted(() => ({
   enviarMensagemWhatsapp: vi.fn(),
   enviarMensagemTelegram: vi.fn(),
   verificarHorarioAtendimento: vi.fn(),
-  agendarPedidoNoCalendario: vi.fn(),
 }))
 
 vi.mock('@/lib/supabase/admin', () => ({ createAdminClient: mocks.createAdminClient }))
@@ -15,9 +14,6 @@ vi.mock('@/lib/whatsapp/send', () => ({ enviarMensagemWhatsapp: mocks.enviarMens
 vi.mock('@/lib/telegram/send', () => ({ enviarMensagemTelegram: mocks.enviarMensagemTelegram }))
 vi.mock('@/lib/horarios/verificar', () => ({
   verificarHorarioAtendimento: mocks.verificarHorarioAtendimento,
-}))
-vi.mock('@/lib/calendar/google', () => ({
-  agendarPedidoNoCalendario: mocks.agendarPedidoNoCalendario,
 }))
 vi.mock('next/cache', () => ({
   revalidatePath: vi.fn(),
@@ -93,7 +89,6 @@ describe('E2E Lifecycle Test: Ciclo Completo de Pedidos (Sem e Com Intervenção
   beforeEach(() => {
     vi.clearAllMocks()
     mocks.verificarHorarioAtendimento.mockResolvedValue({ dentro: true })
-    mocks.agendarPedidoNoCalendario.mockResolvedValue('google-event-e2e-999')
     mocks.enviarMensagemWhatsapp.mockResolvedValue({ sucesso: true, whatsappMensagemId: 'wa-msg-e2e-1' })
     mocks.enviarMensagemTelegram.mockResolvedValue({ sucesso: true, mensagem: { id: 'tg-msg-e2e-1' } })
 
@@ -331,7 +326,7 @@ describe('E2E Lifecycle Test: Ciclo Completo de Pedidos (Sem e Com Intervenção
       })
     })
 
-    it('1.4 Confirmação pelo operador, agendamento no Google Calendar e aprovação do pagamento', async () => {
+    it('1.4 Confirmação pelo operador e aprovação do pagamento', async () => {
       const mockSupabaseServer = {
         auth: {
           getUser: vi.fn().mockResolvedValue({ data: { user: { id: mockOperador.id } }, error: null }),
@@ -348,16 +343,6 @@ describe('E2E Lifecycle Test: Ciclo Completo de Pedidos (Sem e Com Intervenção
           }
           if (table === 'pedidos') {
             return {
-              update: vi.fn().mockReturnValue({
-                eq: vi.fn().mockReturnValue({
-                  select: vi.fn().mockReturnValue({
-                    single: vi.fn().mockImplementation(() => {
-                      mockPedidoState.status_pagamento = 'aprovado'
-                      return Promise.resolve({ data: mockPedidoState, error: null })
-                    }),
-                  }),
-                }),
-              }),
               select: vi.fn().mockReturnValue({
                 eq: vi.fn().mockReturnValue({
                   single: vi.fn().mockResolvedValue({ data: mockPedidoState, error: null }),
@@ -377,10 +362,9 @@ describe('E2E Lifecycle Test: Ciclo Completo de Pedidos (Sem e Com Intervenção
 
       mocks.createClient.mockResolvedValue(mockSupabaseServer as any)
 
-      // Confirmar no calendário
+      // Confirmar o pedido no fluxo de lifecycle
       const confRes = await confirmarPedidoOperador(mockPedidoState.id)
       expect(confRes.success).toBe(true)
-      expect(mocks.agendarPedidoNoCalendario).toHaveBeenCalledWith(mockPedidoState.id)
 
       // Aprovar pagamento (PIX conferido)
       const payRes = await actionAtualizarStatusPagamento({

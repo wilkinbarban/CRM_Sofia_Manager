@@ -1,3 +1,10 @@
+/**
+ * Sofia generation entry point.
+ *
+ * The module name is historical and kept for import stability: its internals
+ * talk only to DeepSeek, through the server-only boundary in
+ * `lib/ai/deepseek.ts`. No other provider is reachable from this module.
+ */
 import { createAdminClient } from '@/lib/supabase/admin'
 import { enviarMensagemWhatsapp } from '@/lib/whatsapp/send'
 import { enviarMensagemTelegram } from '@/lib/telegram/send'
@@ -7,63 +14,53 @@ import { isWhatsAppInboundEligibleForSofia } from '@/lib/whatsapp/sofia-control'
 import { normalizeCuritibaPhone, isCuritibaPhone } from '@/lib/auth/phone'
 import { formatarCardapioResumido } from '@/lib/cardapio/formatar'
 import { gerarCatalogoCardsCompleto, obterCartaoCombo } from '@/lib/cardapio/cards'
-import { classifySofiaRequestTier } from '@/lib/ai/router'
-import { isOmniRouteEnabled, chamarOmniRouteGateway, isLegacyFallbackEnabled } from '@/lib/ai/omniroute'
+import {
+  chamarDeepSeekChat,
+  isUsableDeepSeekApiKey,
+  resolverChaveDeepSeek,
+  resolverModeloDeepSeek,
+} from '@/lib/ai/deepseek'
 import { customerMemoryEnabled } from '@/lib/sofia/inbound-batch-gates'
 import { agruparFatosParaPrompt } from '@/lib/sofia/customer-memory'
+import {
+  getBusinessProfile,
+  resolveBusinessProfileSync,
+  DEFAULT_BUSINESS_PROFILE,
+  type BusinessProfile,
+} from '@/lib/config/business-profile'
 
 const LEGACY_LLM_TIMEOUT_MS = 15_000
 const LEGACY_LLM_MAX_TOKENS = 1024
 const LEGACY_LLM_MAX_RESPONSE_BYTES = 1024 * 1024
 const LEGACY_LLM_MAX_CONTENT_CHARS = 16_000
 
-async function readLegacyLlmJson(response: Response): Promise<any> {
-  const declared = response.headers.get('content-length')
-  if (declared && (!/^\d+$/.test(declared) || Number(declared) > LEGACY_LLM_MAX_RESPONSE_BYTES)) {
-    throw new Error('LEGACY_LLM_RESPONSE_TOO_LARGE')
-  }
-  if (!response.body) throw new Error('LEGACY_LLM_EMPTY_RESPONSE')
-  const reader = response.body.getReader()
-  const chunks: Uint8Array[] = []
-  let total = 0
-  while (true) {
-    const { done, value } = await reader.read()
-    if (done) break
-    total += value.byteLength
-    if (total > LEGACY_LLM_MAX_RESPONSE_BYTES) {
-      await reader.cancel()
-      throw new Error('LEGACY_LLM_RESPONSE_TOO_LARGE')
-    }
-    chunks.push(value)
-  }
-  const bytes = new Uint8Array(total)
-  let offset = 0
-  for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength }
-  return JSON.parse(new TextDecoder().decode(bytes))
+/**
+ * Modo Mock de contingência: nenhuma das duas fontes da chave do provedor
+ * entregou um valor utilizável. O `resolverChaveDeepSeek` já trata o valor
+ * armazenado inutilizável como ausente e cede a vez ao ambiente, devolvendo
+ * `''` quando nenhum dos dois serve.
+ */
+function isLlmMockMode(apiKey: string | null | undefined): boolean {
+  const trimmed = apiKey?.trim()
+  if (!trimmed) return true
+
+  return !isUsableDeepSeekApiKey(trimmed)
 }
 
-/**
- * Verifica se as chaves da API do OpenRouter não estão configuradas ou possuem valores de placeholder
- */
-function isOpenRouterMockMode(apiKey: string | null): boolean {
-  if (!apiKey) return true
-
-  const placeholders = [
-    'placeholder',
-    'your_openrouter_api_key',
-    'insert_here',
-    'your_key',
-    'your-api-key'
-  ]
-
-  const lowerKey = apiKey.toLowerCase()
-  return placeholders.some(p => lowerKey.includes(p))
+/** Operational switch `SOFIA_AI_GENERATION_ENABLED`: shed Sofia's AI generation
+ * during an outage or a bad rollout by setting it to `false` in the service
+ * environment and restarting the container; every other value keeps it enabled. */
+export function isSofiaAiGenerationEnabled(): boolean {
+  return process.env.SOFIA_AI_GENERATION_ENABLED !== 'false'
 }
 
 /**
  * Modo Mock de contingência que analisa palavras-chave e devolve respostas estruturadas em Cartões Digitais
  */
-function obterRespostaMock(mensagemCliente: string): string {
+function obterRespostaMock(
+  mensagemCliente: string,
+  profile: BusinessProfile = resolveBusinessProfileSync(),
+): string {
   const texto = mensagemCliente.toLowerCase().trim()
 
   if (
@@ -112,7 +109,10 @@ function obterRespostaMock(mensagemCliente: string): string {
   }
 
   if (texto.includes('endereço') || texto.includes('endereco') || texto.includes('localização') || texto.includes('localizacao') || texto.includes('onde fica') || texto.includes('onde ficam') || texto.includes('rua') || texto.includes('bairro') || texto.includes('umbará') || texto.includes('umbara')) {
-    return 'Ficamos no bairro Umbará, em Curitiba - PR, piá! Fácil acesso com estacionamento rápido para você retirar seu assado na estufa em menos de 90 segundos! 📍 Daí, vai retirar no balcão ou prefere delivery? 🛵'
+    if (profile.name === DEFAULT_BUSINESS_PROFILE.name) {
+      return 'Ficamos no bairro Umbará, em Curitiba - PR, piá! Fácil acesso com estacionamento rápido para você retirar seu assado na estufa em menos de 90 segundos! 📍 Daí, vai retirar no balcão ou prefere delivery? 🛵'
+    }
+    return `Ficamos em ${profile.pickupAddress}, ${profile.location}, piá! Fácil acesso com estacionamento rápido para você retirar seu pedido com agilidade! 📍 Daí, vai retirar no balcão ou prefere delivery? 🛵`
   }
 
   if (
@@ -135,7 +135,10 @@ function obterRespostaMock(mensagemCliente: string): string {
   }
 
   // Resposta padrão
-  return 'Olá! Sou a Sofía, assistente virtual da Casa de Assados Brasa & Sabor no Umbará, piá! 😊 Como posso te ajudar com o seu almoço hoje? Daí, quer conhecer nossos 4 combos especiais ou agendar uma retirada? 🍖🔥'
+  if (profile.name === DEFAULT_BUSINESS_PROFILE.name) {
+    return 'Olá! Sou a Sofía, assistente virtual da Casa de Assados Brasa & Sabor no Umbará, piá! 😊 Como posso te ajudar com o seu almoço hoje? Daí, quer conhecer nossos 4 combos especiais ou agendar uma retirada? 🍖🔥'
+  }
+  return `Olá! Sou a Sofía, ${profile.personaRole} da ${profile.name} (${profile.location}), piá! 😊 Como posso te ajudar com o seu pedido hoje?`
 }
 
 /**
@@ -322,10 +325,11 @@ export async function processarRagPipeline(
   }
 
   // 6. Estruturar o System Prompt da persona "Sofía"
+  const businessProfile = await getBusinessProfile()
   const customSystemPrompt = await obterConfiguracaoSistema('SOFIA_SYSTEM_PROMPT')
   const promptBase = (customSystemPrompt && customSystemPrompt.trim())
     ? customSystemPrompt
-    : `Você é a Sofía, consultora gastronômica virtual e anfitriã de atendimento da Casa de Assados Brasa & Sabor em Curitiba-PR.
+    : `Você é a Sofía, ${businessProfile.personaRole} da ${businessProfile.name} em ${businessProfile.location}.
 Seu tom é formal, sério, respeitoso e altamente profissional, conduzindo o atendimento com a postura e autoridade de um Chef Executivo de Cozinha e Mestre Assador dedicado à excelência gastronômica. Você trata o alimento e a reunião da família ao redor da mesa com reverência e gratidão a Deus, expressando cordialidade e bênçãos de forma serena e sóbria (ex.: "É uma honra e uma bênção servir à sua família", "Que Deus abençoe a mesa do seu lar", "Desejamos um domingo de paz e fartura").
 Você deve usar emojis com moderação (no máximo 1 ou 2 por mensagem).
 
@@ -390,102 +394,52 @@ ${regraIdiomaRodape}`
 
   let respostaIa = ''
 
-  // 6.1 Classificação de Negócio em 3 Níveis (Sofia Business Router)
-  const classification = classifySofiaRequestTier({
-    mensagemCliente,
-    valorCarrinhoCentavos: cartAtivo?.total_centavos || 0,
-    itensCarrinhoCount: cartAtivo?.itens_carrinho?.length || 0,
-  })
-  console.info(`[RAG Pipeline] Tier de Negócio classificado: ${classification.tier} (${classification.modelAlias}) - Motivo: ${classification.motivo}`)
-
-  // 6.2 Tentativa primária via OmniRoute Gateway (quando habilitado via Feature Flag)
-  if (isOmniRouteEnabled()) {
-    console.info(`[RAG Pipeline] Invocando OmniRoute Gateway com modelo: ${classification.modelAlias}`)
-    const omniResult = await chamarOmniRouteGateway({
-      model: classification.modelAlias,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: `[LEMBRETE DO SISTEMA: Você deve responder APENAS em PORTUGUÊS DO BRASIL. Não importa o idioma da mensagem abaixo, sua resposta DEVE ser em português.]\n\nMensagem do cliente:\n${mensagemCliente}` }
-      ],
-      temperature: 0.1
-    })
-
-    if (omniResult.success && omniResult.content) {
-      respostaIa = omniResult.content
-      console.info(`[RAG Pipeline] OmniRoute respondeu com sucesso em ${omniResult.latenciaMs}ms (modelo: ${omniResult.modelResoluvel})`)
-    } else {
-      console.warn(`[RAG Pipeline] Falha no OmniRoute Gateway (${omniResult.error}). Verificando fallback...`)
-    }
+  // 6.1 Geração via provedor DeepSeek — único caminho de geração.
+  const apiKey = await resolverChaveDeepSeek()
+  let usarMock = isLlmMockMode(apiKey)
+  const geracaoHabilitada = isSofiaAiGenerationEnabled()
+  if (usarMock) {
+    console.warn('[RAG Pipeline] PROVEDOR_NAO_CONFIGURADO: chave DeepSeek ausente ou placeholder em configuracoes_sistema/ambiente. Nenhuma resposta será gerada pelo provedor.')
+  } else if (!geracaoHabilitada) {
+    console.warn('[RAG Pipeline] GERACAO_DESABILITADA: SOFIA_AI_GENERATION_ENABLED=false desliga a geração por IA; nenhuma requisição foi enviada ao provedor.')
   }
 
-  // 6.3 Fallback Legacy (OpenRouter / DeepSeek direto) se OmniRoute não foi executado ou falhou
-  const apiKey = await obterConfiguracaoSistema('OPENROUTER_API_KEY')
-  let usarMock = isOpenRouterMockMode(apiKey)
-
-  if (!respostaIa && !usarMock && apiKey && isLegacyFallbackEnabled()) {
+  if (!respostaIa && !usarMock && apiKey && geracaoHabilitada) {
     try {
-      const isDeepSeek = !apiKey.includes('sk-or-') && apiKey.startsWith('sk-')
-
-      const apiUrl = isDeepSeek
-        ? 'https://api.deepseek.com/chat/completions'
-        : 'https://openrouter.ai/api/v1/chat/completions'
-
-      const model = isDeepSeek
-        ? 'deepseek-chat'
-        : ((await obterConfiguracaoSistema('OPENROUTER_MODEL')) || 'google/gemini-2.5-flash')
-
-      const headers: Record<string, string> = {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json'
-      }
-
-      if (!isDeepSeek) {
-        headers['HTTP-Referer'] = 'https://github.com/wilkin/proyectos/Asados'
-        headers['X-Title'] = 'CRM Casa de Assados Brasa & Sabor'
-      }
-
-      const response = await fetch(apiUrl, {
-        method: 'POST',
-        signal: AbortSignal.timeout(LEGACY_LLM_TIMEOUT_MS),
-        headers,
-        body: JSON.stringify({
-          model: model,
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: `[LEMBRETE DO SISTEMA: Você deve responder APENAS em PORTUGUÊS DO BRASIL. Não importa o idioma da mensagem abaixo, sua resposta DEVE ser em português.]\n\nMensagem do cliente:\n${mensagemCliente}` }
-          ],
-          temperature: 0.1,
-          max_tokens: LEGACY_LLM_MAX_TOKENS
-        })
+      const provedor = await chamarDeepSeekChat({
+        apiKey,
+        model: await resolverModeloDeepSeek(),
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: `[LEMBRETE DO SISTEMA: Você deve responder APENAS em PORTUGUÊS DO BRASIL. Não importa o idioma da mensagem abaixo, sua resposta DEVE ser em português.]\n\nMensagem do cliente:\n${mensagemCliente}` }
+        ],
+        temperature: 0.1,
+        maxTokens: LEGACY_LLM_MAX_TOKENS,
+        timeoutMs: LEGACY_LLM_TIMEOUT_MS,
+        maxResponseBytes: LEGACY_LLM_MAX_RESPONSE_BYTES,
+        maxContentChars: LEGACY_LLM_MAX_CONTENT_CHARS,
       })
 
-      if (!response.ok) {
-        throw new Error(`Erro HTTP ${response.status}: ${response.statusText}`)
+      if (!provedor.success) {
+        throw Object.assign(new Error(provedor.error), { attempts: provedor.attempts ?? 1, retried: provedor.retried ?? false })
       }
 
-      const data = await readLegacyLlmJson(response)
-      const content = data.choices?.[0]?.message?.content
-      if (typeof content !== 'string' || content.length > LEGACY_LLM_MAX_CONTENT_CHARS) {
-        throw new Error('LEGACY_LLM_CONTENT_INVALID')
-      }
-      respostaIa = content.trim()
-
-      if (!respostaIa) {
-        throw new Error('OpenRouter retornou resposta vazia.')
-      }
+      respostaIa = provedor.content
     } catch (err) {
-      console.warn('[RAG Pipeline] Falha ao chamar OpenRouter legacy. Ativando Modo Mock de contingência. Erro:', err)
+      const falha = err as Error & { attempts?: number; retried?: boolean }
+      console.warn(`[RAG Pipeline] PROVEDOR_INDISPONIVEL: a resposta NÃO foi gerada pelo provedor de IA (codigo=${falha.message}, tentativas=${falha.attempts ?? 1}, retentativa=${falha.retried ?? false}). Ativando Modo Mock de contingência.`)
       usarMock = true
     }
   }
 
-  if (!respostaIa && (usarMock || !apiKey)) {
+  // Sem conteúdo não existe despacho: o único caminho sem provedor é o Modo Mock.
+  if (!respostaIa) {
     if (!allowsIntegrationMock()) {
       console.error('[RAG Pipeline] Provedor de IA indisponível para este ambiente.')
       return { sucesso: false, error: 'IA_INDISPONIVEL' }
     }
 
-    respostaIa = obterRespostaMock(mensagemCliente)
+    respostaIa = obterRespostaMock(mensagemCliente, businessProfile)
   }
 
   if (generationOnly) return { sucesso: true, canal: canalOrigem, respostaIa }

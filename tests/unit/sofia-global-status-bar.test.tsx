@@ -1,8 +1,22 @@
+/**
+ * `SofiaGlobalStatusBar` render suite.
+ *
+ * The component only reaches this file through type-only imports of
+ * `@/app/actions/atendimento` and `@/lib/config/sistema`, so no module mock is
+ * needed here: mocking those modules at file level would hide a regression in
+ * the configuration module from any test added to this suite. The server action
+ * payload (`obterStatusSofiaAtendimento`) is covered separately in
+ * `sofia-status-payload.test.ts`.
+ */
 import React from 'react'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import SofiaGlobalStatusBar from '@/components/operator/SofiaGlobalStatusBar'
 import type { SofiaAtendimentoStatus } from '@/app/actions/atendimento'
+
+afterEach(() => {
+  cleanup()
+})
 
 function makeStatus(overrides: Partial<SofiaAtendimentoStatus> = {}): SofiaAtendimentoStatus {
   return {
@@ -19,7 +33,7 @@ function makeStatus(overrides: Partial<SofiaAtendimentoStatus> = {}): SofiaAtend
       },
     },
     credits: {
-      provider: 'openrouter',
+      provider: 'deepseek',
       balanceUsd: 2.5,
       state: 'fresh',
       fetchedAt: '2026-07-10T12:00:00.000Z',
@@ -28,8 +42,8 @@ function makeStatus(overrides: Partial<SofiaAtendimentoStatus> = {}): SofiaAtend
       color: 'green',
     },
     runtime: {
-      provider: 'openrouter',
-      model: 'deepseek/deepseek-chat',
+      provider: 'deepseek',
+      model: 'deepseek-v4-pro',
     },
     permissions: {
       canToggleGlobalSofia: true,
@@ -41,10 +55,6 @@ function makeStatus(overrides: Partial<SofiaAtendimentoStatus> = {}): SofiaAtend
     ...overrides,
   }
 }
-
-afterEach(() => {
-  cleanup()
-})
 
 describe('SofiaGlobalStatusBar', () => {
   it('renders independent WhatsApp and Telegram channel status plus USD credits', () => {
@@ -60,7 +70,7 @@ describe('SofiaGlobalStatusBar', () => {
     expect(screen.getByText('Operational')).toBeInTheDocument()
     expect(screen.getByText('Globally off')).toBeInTheDocument()
     expect(screen.getByText('$2.50')).toBeInTheDocument()
-    expect(screen.getByText('openrouter · deepseek/deepseek-chat')).toBeInTheDocument()
+    expect(screen.getByText('deepseek · deepseek-v4-pro')).toBeInTheDocument()
   })
 
   it('shows scheduled pause as derived yellow state without changing the binary toggle label', () => {
@@ -144,7 +154,7 @@ describe('SofiaGlobalStatusBar', () => {
       <SofiaGlobalStatusBar
         status={makeStatus({
           credits: {
-            provider: 'openrouter',
+            provider: 'deepseek',
             balanceUsd: null,
             state: 'stale',
             fetchedAt: '2026-07-10T12:00:00.000Z',

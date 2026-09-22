@@ -1,5 +1,6 @@
 import { ProvedorWhatsApp, EnviarMensagemPayload, ResultadoEnvio, validarJanelaEnvio, inferirTipoMidia, shouldPersistOutbound } from './provider'
 import { obterConfiguracaoSistema } from '@/lib/config/sistema'
+import { getBusinessProfile, formatOtpMessage } from '@/lib/config/business-profile'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { allowsIntegrationMock } from '@/lib/runtime/environment'
 import { validarEnvioWhatsAppSafety } from './safety'
@@ -265,8 +266,9 @@ export async function sendOtpEvolution(
       return { sucesso: true, whatsappMensagemId: mockId }
     }
 
+    const profile = await getBusinessProfile()
     const url = `${apiUrl}/message/sendText/${instanceName}`
-    const text = `🔐 *Código de Verificação — Asados*\n\nSeu código é: *${code}*\n\n⏳ Válido por *10 minutos*. Se você não solicitou, desconsidere.`
+    const text = formatOtpMessage(code, profile)
 
     const response = await fetch(url, {
       method: 'POST',
