@@ -28,7 +28,7 @@ request GET "$public_origin/api/health/ready" 200
 request GET "$public_origin/studio" 404
 request GET "$public_origin/pg" 404
 
-web_image="$(docker inspect asados-web --format '{{.Image}}')"
+web_image="$(docker inspect crm-sofia-web --format '{{.Image}}' 2>/dev/null || docker inspect asados-web --format '{{.Image}}')"
 if [[ -n "$expected_image" && "$web_image" != "$expected_image" ]]; then
   printf 'Web image mismatch: expected %s, got %s\n' "$expected_image" "$web_image" >&2
   exit 1

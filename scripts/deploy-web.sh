@@ -21,7 +21,7 @@ resolve_compose_project() {
     printf '%s\n' "$ASADOS_COMPOSE_PROJECT"
     return 0
   fi
-  detected="$(docker inspect asados-web --format '{{index .Config.Labels "com.docker.compose.project"}}' 2>/dev/null || true)"
+  detected="$(docker inspect crm-sofia-web --format '{{index .Config.Labels "com.docker.compose.project"}}' 2>/dev/null || docker inspect asados-web --format '{{index .Config.Labels "com.docker.compose.project"}}' 2>/dev/null || true)"
   if [[ -n "$detected" ]]; then
     printf '%s\n' "$detected"
     return 0
@@ -54,7 +54,7 @@ image_id() {
 wait_healthy() {
   local deadline=$((SECONDS + health_timeout))
   while (( SECONDS < deadline )); do
-    [[ "$(docker inspect asados-web --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' 2>/dev/null || true)" == healthy ]] && return 0
+    [[ "$(docker inspect crm-sofia-web --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' 2>/dev/null || docker inspect asados-web --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' 2>/dev/null || true)" == healthy ]] && return 0
     sleep 2
   done
   printf 'Web did not become healthy within %s seconds\n' "$health_timeout" >&2
@@ -160,7 +160,7 @@ case "$action" in
     esac
     require_immutable_local_image "$candidate_ref"
     candidate_id="$(image_id "$candidate_ref")"
-    current_id="$(docker inspect asados-web --format '{{.Image}}')"
+    current_id="$(docker inspect crm-sofia-web --format '{{.Image}}' 2>/dev/null || docker inspect asados-web --format '{{.Image}}')"
     rollback_ref="asados-web:rollback-${current_id#sha256:}"
     docker image tag "$current_id" "$rollback_ref"
     previous_id="$(image_id "$rollback_ref")"

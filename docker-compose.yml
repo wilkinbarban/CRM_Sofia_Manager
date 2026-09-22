@@ -7,7 +7,7 @@ services:
       args:
         - NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL}
         - NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY}
-    container_name: asados-web
+    container_name: crm-sofia-web
     restart: always
     ports:
       - "127.0.0.1:3020:3000"
@@ -51,9 +51,15 @@ services:
       com.asados.health.liveness: "http://127.0.0.1:3000/api/health/live"
       com.asados.health.readiness: "http://127.0.0.1:3000/api/health/ready"
     networks:
-      - app-private
-      - supabase-private
-      - portafolio-net
+      app-private:
+        aliases:
+          - asados-web
+          - crm-sofia-web
+      supabase-private:
+      portafolio-net:
+        aliases:
+          - asados-web
+          - crm-sofia-web
 
   mercado-pago-recovery:
     image: alpine:3.20

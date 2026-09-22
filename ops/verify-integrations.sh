@@ -16,13 +16,14 @@ assert_healthy() {
   }
 }
 
-for container in asados-web asados-evolution-api asados-evolution-db asados-evolution-redis; do
+web_container=$(docker inspect crm-sofia-web >/dev/null 2>&1 && echo "crm-sofia-web" || echo "asados-web")
+for container in "$web_container" asados-evolution-api asados-evolution-db asados-evolution-redis; do
   assert_healthy "$container"
 done
 
 ./ops/supabase/verify.sh
 
-docker exec asados-web node -e '
+docker exec "$web_container" node -e '
   Promise.all([
     fetch("http://api-gw:8000/auth/v1/settings", { headers: { apikey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY } }),
     fetch("http://evolution-api:8080/", { headers: { Origin: "https://crmsofiamanager.duckdns.org" } }),
