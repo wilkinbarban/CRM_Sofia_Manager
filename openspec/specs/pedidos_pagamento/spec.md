@@ -44,7 +44,7 @@ Este documento especifica os requisitos funcionais, não-funcionais e regras de 
 ### 2.5. Segurança e Row Level Security (RLS)
 *   **REQ-PAG-017**: O endpoint de webhook do Mercado Pago `/api/webhooks/mercadopago` MUST processar as consultas e alterações no banco de dados utilizando um cliente de bypass seguro (Supabase Service Role ou Admin client) para permitir a escrita de tabelas sem exigir uma sessão de usuário ativa (uma vez que a chamada vem de forma anônima e sem cookies da aplicação).
 *   **REQ-PAG-018**: As políticas RLS da tabela `public.pedidos` MUST garantir que os clientes comuns (`funcao = 'cliente'`) apenas leiam as suas próprias informações de pedido, impedindo que tenham acesso de leitura ao status de pagamentos de outros usuários.
-*   **REQ-PAG-019**: Clientes comuns SHALL NOT possuir permissão de escrita (INSERT/UPDATE/DELETE) nas colunas de status do pedido (`status`), status de pagamento (`status_pagamento`) ou identificadores de integração (`mercado_pago_preferencia_id`, `google_event_id`).
+*   **REQ-PAG-019**: Clientes comuns SHALL NOT possuir permissão de escrita (INSERT/UPDATE/DELETE) nas colunas de status do pedido (`status`), status de pagamento (`status_pagamento`) ou identificadores de integração (`mercado_pago_preferencia_id`).
 
 ---
 

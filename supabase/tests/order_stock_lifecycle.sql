@@ -74,7 +74,7 @@ do $$ declare r record; begin
  exception when insufficient_privilege then
   if sqlerrm<>'PEDIDO_ESTOQUE_LIFECYCLE_WRITE_FORBIDDEN' then raise; end if;
  end;
- update public.pedidos set google_event_id='order-stock-boundary-event' where id='55555555-5555-4555-8555-555555555531';
+ update public.pedidos set mercado_pago_preferencia_id='order-stock-boundary-event' where id='55555555-5555-4555-8555-555555555531';
  if not found then raise exception 'unrelated order update denied'; end if;
  perform * from public.confirmar_pedido_estoque('55555555-5555-4555-8555-555555555531','55555555-5555-4555-8555-555555555541');
  begin perform * from public.confirmar_pedido_estoque('55555555-5555-4555-8555-555555555531','55555555-5555-4555-8555-555555555549'); raise exception 'confirmation correlation changed'; exception when unique_violation then null; end;
@@ -132,7 +132,7 @@ do $$ declare audit_count integer; begin
  if has_function_privilege('anon','public.confirmar_pedido_estoque(uuid,uuid)','execute') then raise exception 'anon execute granted'; end if;
  select count(*) into audit_count from public.logs_auditoria where acao in('confirmar_pedido_estoque','cancelar_pedido_estoque') and usuario_id='55555555-5555-4555-8555-555555555501';
  if audit_count<>4 then raise exception 'audit attribution missing: expected 4, got %', audit_count; end if;
- if (select google_event_id from public.pedidos where id='55555555-5555-4555-8555-555555555531')<>'order-stock-boundary-event' then raise exception 'unrelated order update missing'; end if;
+ if (select mercado_pago_preferencia_id from public.pedidos where id='55555555-5555-4555-8555-555555555531')<>'order-stock-boundary-event' then raise exception 'unrelated order update missing'; end if;
  if (select estoque_estado from public.pedidos where id='55555555-5555-4555-8555-555555555533')<>'pendente' or (select quantidade_estoque from public.produtos where id='55555555-5555-4555-8555-555555555521')<>8 then raise exception 'effect failure did not roll back'; end if;
 end $$;
 select pass('order stock lifecycle is authorized, aggregated, atomic, idempotent, and auditable');
