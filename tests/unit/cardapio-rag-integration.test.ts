@@ -1,12 +1,20 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { processarRagPipeline } from '@/lib/ai/openrouter'
 import * as adminSupabaseModule from '@/lib/supabase/admin'
 import * as configModule from '@/lib/config/sistema'
 
 describe('Cardápio RAG Integration: Entrega Consultiva no Pipeline DeepSeek', () => {
+  const originalEnv = process.env
   let mockSupabase: any
 
   beforeEach(() => {
+    // O placeholder armazenado já não basta, sozinho, para forçar o Modo Mock: um
+    // valor inutilizável agora cede a vez ao ambiente. Limpar DEEPSEEK_API_KEY
+    // garante que a suíte nunca alcance uma chave real da máquina de
+    // desenvolvimento e permaneça determinística no caminho de contingência.
+    process.env = { ...originalEnv }
+    delete process.env.DEEPSEEK_API_KEY
+
     mockSupabase = {
       from: vi.fn().mockReturnThis(),
       select: vi.fn().mockReturnThis(),
@@ -26,6 +34,11 @@ describe('Cardápio RAG Integration: Entrega Consultiva no Pipeline DeepSeek', (
       if (key === 'SOFIA_SYSTEM_PROMPT') return 'Você é a Sofia da churrascaria.'
       return null
     })
+  })
+
+  afterEach(() => {
+    process.env = originalEnv
+    vi.restoreAllMocks()
   })
 
   it('delivers cardápio in mock mode with Curitibana conversational warmth and meat cuts', async () => {

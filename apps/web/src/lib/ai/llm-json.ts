@@ -1,10 +1,11 @@
 /**
  * Chamada JSON ao modelo economico — usado pela extracao de memoria de cliente.
  *
- * Resolve a chave e o modelo DeepSeek pela mesma precedencia usada no resto do
- * servidor (`configuracoes_sistema` primeiro, `process.env` depois, modelo
- * padrao `deepseek-flash`) e delega a chamada de provedor a
- * `chamarDeepSeekChat`, o unico ponto de contato com a DeepSeek. O JSON e pedido
+ * Resolve a chave e o modelo DeepSeek pela mesma precedência única usada no
+ * resto do servidor (`configuracoes_sistema` primeiro, `process.env` depois,
+ * modelo padrão `deepseek-flash`) através de `resolverChaveDeepSeek` e
+ * `resolverModeloDeepSeek`, e delega a chamada de provedor a
+ * `chamarDeepSeekChat`, o único ponto de contato com a DeepSeek. O JSON e pedido
  * por `response_format` e pelo prompt, de modo que o parser e a unica autoridade
  * de schema.
  *
@@ -13,8 +14,7 @@
  * registrar.
  */
 
-import { chamarDeepSeekChat, isUsableDeepSeekApiKey, resolverModeloDeepSeek } from '@/lib/ai/deepseek'
-import { obterConfiguracaoSistema } from '@/lib/config/sistema'
+import { chamarDeepSeekChat, isUsableDeepSeekApiKey, resolverChaveDeepSeek, resolverModeloDeepSeek } from '@/lib/ai/deepseek'
 
 export interface ModeloEconomicoJsonParams {
   system: string
@@ -23,17 +23,17 @@ export interface ModeloEconomicoJsonParams {
   timeoutMs: number
 }
 
-/** Resolve a chave DeepSeek com a mesma precedencia do restante do servidor. */
-async function obterChaveDeepSeek(): Promise<string> {
-  const configurada = await obterConfiguracaoSistema('DEEPSEEK_API_KEY')
-  return configurada || process.env.DEEPSEEK_API_KEY || ''
-}
-
+/**
+ * Resolve a chave DeepSeek pela regra única do restante do servidor: um valor
+ * armazenado utilizável primeiro, um valor de ambiente utilizável depois, vazio
+ * por último. Um valor armazenado inutilizável (vazio, só espaços ou placeholder
+ * conhecido) é tratado como ausente e cede a vez ao ambiente.
+ */
 export async function chamarModeloEconomicoJson(
   params: ModeloEconomicoJsonParams,
 ): Promise<string | null> {
   try {
-    const apiKey = await obterChaveDeepSeek()
+    const apiKey = await resolverChaveDeepSeek()
     if (!isUsableDeepSeekApiKey(apiKey)) return null
 
     const resultado = await chamarDeepSeekChat({

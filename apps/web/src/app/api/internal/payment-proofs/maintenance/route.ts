@@ -1,6 +1,6 @@
 import { timingSafeEqual } from 'node:crypto'
 import { NextResponse } from 'next/server'
-import { resolverModeloDeepSeek } from '@/lib/ai/deepseek'
+import { resolverChaveDeepSeek, resolverModeloDeepSeek } from '@/lib/ai/deepseek'
 import { obterConfiguracaoSistema } from '@/lib/config/sistema'
 import { dispatchPaymentProofOutbox } from '@/lib/payment-proofs/outbox-dispatch'
 import { resolvePaymentProofOutboxMessage } from '@/lib/payment-proofs/outbox-message'
@@ -56,7 +56,7 @@ export async function POST(request: Request) {
       try {
         if (job.kind === 'processing') {
           const [apiKey, model] = await Promise.all([
-            obterConfiguracaoSistema('DEEPSEEK_API_KEY'),
+            resolverChaveDeepSeek(),
             resolverModeloDeepSeek(),
           ])
           const result = await processPaymentProofJob({ proofId: String(job.id), db, apiKey, model })

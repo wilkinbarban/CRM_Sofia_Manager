@@ -1,50 +1,22 @@
+/**
+ * `SofiaGlobalStatusBar` render suite.
+ *
+ * The component only reaches this file through type-only imports of
+ * `@/app/actions/atendimento` and `@/lib/config/sistema`, so no module mock is
+ * needed here: mocking those modules at file level would hide a regression in
+ * the configuration module from any test added to this suite. The server action
+ * payload (`obterStatusSofiaAtendimento`) is covered separately in
+ * `sofia-status-payload.test.ts`.
+ */
 import React from 'react'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import SofiaGlobalStatusBar from '@/components/operator/SofiaGlobalStatusBar'
-import { obterStatusSofiaAtendimento, type SofiaAtendimentoStatus } from '@/app/actions/atendimento'
+import type { SofiaAtendimentoStatus } from '@/app/actions/atendimento'
 
-const mocks = vi.hoisted(() => ({
-  obterConfiguracaoSistema: vi.fn(),
-  obterSofiaGlobalStatusConfig: vi.fn(),
-  getLlmCreditStatus: vi.fn(),
-  verificarHorarioAtendimento: vi.fn(),
-  verificarOperadorAutorizado: vi.fn(),
-}))
-
-vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }))
-
-vi.mock('@/lib/config/sistema', () => ({
-  obterConfiguracaoSistema: mocks.obterConfiguracaoSistema,
-  obterSofiaGlobalStatusConfig: mocks.obterSofiaGlobalStatusConfig,
-  salvarSofiaGlobalChannelConfig: vi.fn(),
-  deriveSofiaChannelAvailability: () => 'operational',
-}))
-
-vi.mock('@/lib/ai/credits', () => ({
-  getLlmCreditStatus: mocks.getLlmCreditStatus,
-}))
-
-vi.mock('@/lib/horarios/verificar', () => ({
-  verificarHorarioAtendimento: mocks.verificarHorarioAtendimento,
-}))
-
-vi.mock('@/lib/auth/operador', () => ({
-  verificarOperadorAutorizado: mocks.verificarOperadorAutorizado,
-}))
-
-// The status payload imports the delivery modules even though this suite never
-// delivers: mock every heavy dependency of the action so the unit stays isolated.
-vi.mock('@/lib/supabase/server', () => ({ createClient: vi.fn() }))
-vi.mock('@/lib/supabase/admin', () => ({ createAdminClient: vi.fn() }))
-vi.mock('@/lib/whatsapp/send', () => ({ enviarMensagemWhatsapp: vi.fn() }))
-vi.mock('@/lib/telegram/send', () => ({ enviarMensagemTelegram: vi.fn() }))
-vi.mock('@/lib/whatsapp/sofia-control', () => ({
-  getWhatsAppSofiaState: vi.fn(),
-  setWhatsAppSofiaSleep: vi.fn(),
-}))
-
-const originalEnv = process.env
+afterEach(() => {
+  cleanup()
+})
 
 function makeStatus(overrides: Partial<SofiaAtendimentoStatus> = {}): SofiaAtendimentoStatus {
   return {
@@ -83,11 +55,6 @@ function makeStatus(overrides: Partial<SofiaAtendimentoStatus> = {}): SofiaAtend
     ...overrides,
   }
 }
-
-afterEach(() => {
-  cleanup()
-  process.env = originalEnv
-})
 
 describe('SofiaGlobalStatusBar', () => {
   it('renders independent WhatsApp and Telegram channel status plus USD credits', () => {
@@ -203,50 +170,5 @@ describe('SofiaGlobalStatusBar', () => {
 
     expect(screen.getByText('Unknown balance')).toBeInTheDocument()
     expect(screen.queryByText('$2.50')).not.toBeInTheDocument()
-  })
-})
-
-describe('Sofia status payload runtime model', () => {
-  beforeEach(() => {
-    vi.clearAllMocks()
-    process.env = { ...originalEnv, DEEPSEEK_API_KEY: 'sk-deepseek-status-key' }
-    delete process.env.DEEPSEEK_MODEL
-    mocks.verificarOperadorAutorizado.mockResolvedValue({
-      authorized: true,
-      supabase: {},
-      user: { id: 'user-123' },
-      perfil: { funcao: 'admin', ativo: true },
-    })
-    mocks.obterSofiaGlobalStatusConfig.mockResolvedValue({
-      whatsapp: { enabled: true, key: 'SOFIA_GLOBAL_WHATSAPP_ENABLED' },
-      telegram: { enabled: false, key: 'SOFIA_GLOBAL_TELEGRAM_ENABLED' },
-    })
-    mocks.getLlmCreditStatus.mockResolvedValue({
-      provider: 'deepseek',
-      balanceUsd: null,
-      state: 'unknown',
-      fetchedAt: null,
-      expiresAt: null,
-      freshnessMs: 1_800_000,
-      color: 'neutral',
-    })
-    mocks.verificarHorarioAtendimento.mockResolvedValue({ dentro: true })
-    mocks.obterConfiguracaoSistema.mockResolvedValue(null)
-  })
-
-  it('reports the DeepSeek model generation actually uses, not a retired provider model', async () => {
-    mocks.obterConfiguracaoSistema.mockImplementation(async (key: string) => (
-      key === 'DEEPSEEK_MODEL' ? 'deepseek-v4-pro' : null
-    ))
-
-    const result = await obterStatusSofiaAtendimento()
-
-    expect(result).toEqual({
-      success: true,
-      data: expect.objectContaining({
-        runtime: { provider: 'deepseek', model: 'deepseek-v4-pro' },
-      }),
-    })
-    expect(mocks.obterConfiguracaoSistema.mock.calls.map((args) => args[0])).toEqual(['DEEPSEEK_MODEL'])
   })
 })

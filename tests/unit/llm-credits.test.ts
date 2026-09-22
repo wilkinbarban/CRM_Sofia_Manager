@@ -106,6 +106,8 @@ describe('LLM credit helpers', () => {
   })
 
   it('rejects a stored placeholder credential without any provider request', async () => {
+    process.env = { ...originalEnv }
+    delete process.env.DEEPSEEK_API_KEY
     mockDeepSeekKey('your_deepseek_api_key')
     const fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)
@@ -121,6 +123,34 @@ describe('LLM credit helpers', () => {
     })
     expect(status.error).toContain('DEEPSEEK_API_KEY')
     expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('reads the balance with the environment credential when the stored value is an unusable placeholder', async () => {
+    mockDeepSeekKey('sk-your-api-key-placeholder')
+    process.env = { ...originalEnv, DEEPSEEK_API_KEY: 'sk-deepseek-environment-key' }
+    const fetchMock = vi.fn(async () => balanceResponse('3'))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const status = await getLlmCreditStatus({ now: new Date('2026-07-10T12:00:00.000Z') })
+
+    expect(status).toMatchObject({ provider: 'deepseek', balanceUsd: 3, state: 'fresh', color: 'green' })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit]
+    expect(url).toBe(DEEPSEEK_BALANCE_URL)
+    expect(init.headers).toMatchObject({ Authorization: 'Bearer sk-deepseek-environment-key' })
+  })
+
+  it('treats a whitespace-only stored credential as unusable and uses the environment one', async () => {
+    mockDeepSeekKey('   ')
+    process.env = { ...originalEnv, DEEPSEEK_API_KEY: '  sk-deepseek-padded-environment-key  ' }
+    const fetchMock = vi.fn(async () => balanceResponse('1.5'))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const status = await getLlmCreditStatus({ now: new Date('2026-07-10T12:00:00.000Z') })
+
+    expect(status).toMatchObject({ provider: 'deepseek', balanceUsd: 1.5, state: 'fresh', color: 'yellow' })
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit]
+    expect(init.headers).toMatchObject({ Authorization: 'Bearer sk-deepseek-padded-environment-key' })
   })
 
   it('returns neutral stale status without presenting cached balance as current when refresh fails', async () => {

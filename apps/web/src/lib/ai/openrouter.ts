@@ -17,6 +17,7 @@ import { gerarCatalogoCardsCompleto, obterCartaoCombo } from '@/lib/cardapio/car
 import {
   chamarDeepSeekChat,
   isUsableDeepSeekApiKey,
+  resolverChaveDeepSeek,
   resolverModeloDeepSeek,
 } from '@/lib/ai/deepseek'
 import { customerMemoryEnabled } from '@/lib/sofia/inbound-batch-gates'
@@ -28,17 +29,10 @@ const LEGACY_LLM_MAX_RESPONSE_BYTES = 1024 * 1024
 const LEGACY_LLM_MAX_CONTENT_CHARS = 16_000
 
 /**
- * Resolve a chave do provedor de geração: `configuracoes_sistema` primeiro,
- * `process.env` depois. A chave nunca sai deste módulo.
- */
-async function obterChaveProvedor(): Promise<string> {
-  const configurada = await obterConfiguracaoSistema('DEEPSEEK_API_KEY')
-  return configurada || process.env.DEEPSEEK_API_KEY || ''
-}
-
-/**
- * Modo Mock de contingência: a chave do provedor está ausente ou é um dos
- * valores de placeholder que o dashboard do operador costuma persistir.
+ * Modo Mock de contingência: nenhuma das duas fontes da chave do provedor
+ * entregou um valor utilizável. O `resolverChaveDeepSeek` já trata o valor
+ * armazenado inutilizável como ausente e cede a vez ao ambiente, devolvendo
+ * `''` quando nenhum dos dois serve.
  */
 function isLlmMockMode(apiKey: string | null | undefined): boolean {
   const trimmed = apiKey?.trim()
@@ -385,7 +379,7 @@ ${regraIdiomaRodape}`
   let respostaIa = ''
 
   // 6.1 Geração via provedor DeepSeek — único caminho de geração.
-  const apiKey = await obterChaveProvedor()
+  const apiKey = await resolverChaveDeepSeek()
   let usarMock = isLlmMockMode(apiKey)
   const geracaoHabilitada = isSofiaAiGenerationEnabled()
   if (usarMock) {

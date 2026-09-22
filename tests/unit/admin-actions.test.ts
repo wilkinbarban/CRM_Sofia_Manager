@@ -232,6 +232,90 @@ describe('salvarConfiguracaoAdmin secret preservation', () => {
   })
 })
 
+/**
+ * The retired provider surface must stay unwritable, not only unreadable.
+ * `configuracoes_sistema` rows naming OpenRouter or OmniRoute are hidden by the
+ * server-to-client projection, but a dashboard still holding the old form (or
+ * a restored dump) could otherwise recreate exactly the rows the projection
+ * works to hide. The refusal happens after the operator authorization check
+ * and before any database work, and every other key keeps saving as before.
+ */
+describe('salvarConfiguracaoAdmin retired provider refusal', () => {
+  const RETIRED_PROVIDER_WRITES: [string, string][] = [
+    ['OPENROUTER_MODEL', 'deepseek/deepseek-chat'],
+    ['OMNIROUTE_BASE_URL', 'https://omniroute.retired.example/v1'],
+    ['openrouter_model', 'deepseek/deepseek-chat'],
+    ['OPENROUTER_API_KEY', 'sk-openrouter-rotated'],
+    ['OMNIROUTE_API_KEY', 'omniroute-rotated'],
+    // A blank secret-shaped value is no exception either: there is no stored
+    // value worth preserving for a provider this system no longer talks to.
+    ['OPENROUTER_API_KEY', ''],
+  ]
+
+  function makeConfigAdminClient() {
+    const upsert = vi.fn().mockResolvedValue({ error: null })
+    const insert = vi.fn().mockResolvedValue({ error: null })
+    return {
+      client: {
+        from: vi.fn((table: string) =>
+          table === 'configuracoes_sistema' ? { upsert } : { insert }
+        ),
+      },
+      upsert,
+      insert,
+    }
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mocks.createClient.mockResolvedValue(makeOperatorClient('admin'))
+  })
+
+  it.each(RETIRED_PROVIDER_WRITES)('refuses to persist the retired provider key %s with %o', async (chave, valor) => {
+    const admin = makeConfigAdminClient()
+    mocks.createAdminClient.mockReturnValue(admin.client)
+    const { salvarConfiguracaoAdmin } = await import('@/app/actions/admin')
+
+    const result = await salvarConfiguracaoAdmin(chave, valor)
+
+    expect(result).toEqual({ success: false, error: 'CHAVE_DE_PROVEDOR_DESCONTINUADO' })
+    // No client, no upsert, no audit log and no revalidation: the refusal is a
+    // pure read of the key name.
+    expect(mocks.createAdminClient).not.toHaveBeenCalled()
+    expect(admin.upsert).not.toHaveBeenCalled()
+    expect(admin.insert).not.toHaveBeenCalled()
+    expect(mocks.revalidatePath).not.toHaveBeenCalled()
+  })
+
+  it('checks operator authorization before the retirement rule', async () => {
+    mocks.createClient.mockResolvedValue(makeOperatorClient('cliente'))
+    const { salvarConfiguracaoAdmin } = await import('@/app/actions/admin')
+
+    const result = await salvarConfiguracaoAdmin('OPENROUTER_MODEL', 'deepseek/deepseek-chat')
+
+    expect(result.success).toBe(false)
+    expect(result.error).toContain('ACESSO_NEGADO')
+  })
+
+  it.each([
+    ['DEEPSEEK_MODEL', 'deepseek-v4-pro', false],
+    ['EVOLUTION_API_URL', 'https://evolution.internal.example', false],
+    ['DEEPSEEK_API_KEY', 'sk-deepseek-rotated', true],
+  ])('still persists the legitimate key %s after the refusal rule exists', async (chave, valor, ehSegredo) => {
+    const admin = makeConfigAdminClient()
+    mocks.createAdminClient.mockReturnValue(admin.client)
+    const { salvarConfiguracaoAdmin } = await import('@/app/actions/admin')
+
+    const result = await salvarConfiguracaoAdmin(chave, valor)
+
+    expect(result).toEqual({ success: true })
+    expect(admin.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({ chave, valor, eh_segredo: ehSegredo }),
+      { onConflict: 'chave' }
+    )
+  })
+})
+
 describe('deletarUsuarioAdmin idempotent Auth completion', () => {
   it('completes a pending anonymisation when Auth already reports the user absent', async () => {
     const operator = makeOperatorClient('admin') as any

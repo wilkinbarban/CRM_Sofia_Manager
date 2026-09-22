@@ -36,7 +36,7 @@ Este documento especifica a implementação do módulo de Recuperação de Infor
 *   **REQ-RAG-011**: O serviço de busca MUST limitar o resultado a no máximo 3 (três) artigos com melhor classificação de relevância para a consulta informada.
 
 ### 2.3 Integração com DeepSeek e Persona "Sofía"
-*   **REQ-RAG-012**: O backend do sistema MUST carregar as credenciais e parâmetros do modelo a partir das chaves `DEEPSEEK_API_KEY` e `DEEPSEEK_MODEL`, resolvidas primeiro na tabela `public.configuracoes_sistema`, tendo a variável de ambiente correspondente como alternativa.
+*   **REQ-RAG-012**: O backend do sistema MUST carregar as credenciais e parâmetros do modelo a partir das chaves `DEEPSEEK_API_KEY` e `DEEPSEEK_MODEL`, resolvidas primeiro na tabela `public.configuracoes_sistema`, tendo a variável de ambiente correspondente como alternativa; apenas um valor utilizável (não vazio, não composto apenas de espaços e não um placeholder conhecido) MUST ser aceito, de modo que um valor armazenado que não seja utilizável MUST ser tratado como ausente e ceder a vez à variável de ambiente, usando o valor padrão do modelo quando nenhuma das duas fontes servir.
 *   **REQ-RAG-013**: A chave `DEEPSEEK_API_KEY` MUST ser mantida em segredo absoluto no servidor e nunca ser exposta ao frontend ou gravada em logs de auditoria.
 *   **REQ-RAG-014**: A persona da assistente virtual "Sofía" MUST seguir estritamente as seguintes diretrizes de escrita e comportamento no prompt do sistema (System Prompt):
     *   **Identidade**: Assistente virtual simpática da Churrascaria (Asados).

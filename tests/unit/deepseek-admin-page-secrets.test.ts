@@ -15,7 +15,8 @@
  */
 
 import { isValidElement, type ReactElement, type ReactNode } from 'react'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
+import { resetRetiredProviderConfigKeyWarningsForTests } from '@/lib/config/retired-config-keys'
 
 const mocks = vi.hoisted(() => ({
   redirect: vi.fn((path: string) => {
@@ -293,6 +294,19 @@ describe('admin page server-to-client configuration projection', () => {
     expect(JSON.stringify(systemConfigs)).not.toContain(ENVIRONMENT_SECRETS.DEEPSEEK_API_KEY)
   })
 
+  it('marks DeepSeek as configured from the environment key when the stored key is an unusable placeholder', async () => {
+    applyEnvironment({ DEEPSEEK_API_KEY: ENVIRONMENT_SECRETS.DEEPSEEK_API_KEY })
+    mocks.createClient.mockResolvedValue(
+      supabaseClient({ rows: configRows({ DEEPSEEK_API_KEY: 'sk-your-api-key-placeholder' }) }),
+    )
+
+    const systemConfigs = await projectAdminDashboardProps()
+
+    expect(systemConfigs[DEEPSEEK_MARKER_KEY]).toBe('true')
+    expect(systemConfigs.DEEPSEEK_API_KEY).toBeUndefined()
+    expect(JSON.stringify(systemConfigs)).not.toContain(ENVIRONMENT_SECRETS.DEEPSEEK_API_KEY)
+  })
+
   it('projects the environment-only DeepSeek model so the operator sees it', async () => {
     applyEnvironment({ DEEPSEEK_MODEL: 'deepseek-v4-pro' })
     mocks.createClient.mockResolvedValue(supabaseClient({ rows: [] }))
@@ -386,5 +400,94 @@ describe('admin page server-to-client configuration projection', () => {
 
     await expect(projectAdminDashboardProps()).rejects.toThrow('redirect:/login')
     expect(mocks.redirect).toHaveBeenCalledWith('/login')
+  })
+})
+
+/**
+ * Hiding a retired provider row is not enough on its own: the operator holding
+ * a legacy `configuracoes_sistema` row gets no feedback at all, and the row
+ * stays in the database forever. The projection therefore leaves one migration
+ * warning per retired key and process, so the signal exists without every
+ * render writing to the logs again.
+ */
+describe('admin page retired provider migration signal', () => {
+  let warnSpy: MockInstance<typeof console.warn>
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    resetRetiredProviderConfigKeyWarningsForTests()
+    warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    mocks.listarUsuariosAdmin.mockResolvedValue({ success: true, data: [] })
+    mocks.obterEstatisticasMensagens.mockResolvedValue({ success: false })
+    process.env = { ...originalEnv }
+  })
+
+  afterEach(() => {
+    warnSpy.mockRestore()
+    process.env = originalEnv
+  })
+
+  function warnings(): string[] {
+    return warnSpy.mock.calls.map((call) => String(call[0]))
+  }
+
+  it('warns exactly once for the same legacy row across two renders, naming the key', async () => {
+    applyEnvironment({})
+    mocks.createClient.mockResolvedValue(
+      supabaseClient({ rows: configRows({ OPENROUTER_MODEL: RETIRED_PROVIDER_DATABASE_CONFIGS.OPENROUTER_MODEL }) }),
+    )
+
+    const firstRender = await projectAdminDashboardProps()
+    const secondRender = await projectAdminDashboardProps()
+
+    expect(firstRender.OPENROUTER_MODEL).toBeUndefined()
+    expect(secondRender.OPENROUTER_MODEL).toBeUndefined()
+
+    const retiredWarnings = warnings().filter((message) => message.includes('OPENROUTER_MODEL'))
+    expect(retiredWarnings).toHaveLength(1)
+  })
+
+  it('warns for a different retired key as well, once per key and process', async () => {
+    applyEnvironment({})
+    mocks.createClient.mockResolvedValue(
+      supabaseClient({
+        rows: configRows({
+          OPENROUTER_MODEL: RETIRED_PROVIDER_DATABASE_CONFIGS.OPENROUTER_MODEL,
+          OMNIROUTE_BASE_URL: RETIRED_PROVIDER_DATABASE_CONFIGS.OMNIROUTE_BASE_URL,
+        }),
+      }),
+    )
+
+    await projectAdminDashboardProps()
+    await projectAdminDashboardProps()
+
+    const retiredWarnings = warnings()
+    expect(retiredWarnings.filter((message) => message.includes('OPENROUTER_MODEL'))).toHaveLength(1)
+    expect(retiredWarnings.filter((message) => message.includes('OMNIROUTE_BASE_URL'))).toHaveLength(1)
+  })
+
+  it('warns for a retired secret-shaped key too: the migration signal covers the whole retired surface', async () => {
+    applyEnvironment({})
+    mocks.createClient.mockResolvedValue(
+      supabaseClient({ rows: configRows({ OPENROUTER_API_KEY: RETIRED_PROVIDER_DATABASE_CONFIGS.OPENROUTER_API_KEY }) }),
+    )
+
+    const systemConfigs = await projectAdminDashboardProps()
+
+    expect(systemConfigs.OPENROUTER_API_KEY).toBeUndefined()
+    expect(warnings().filter((message) => message.includes('OPENROUTER_API_KEY'))).toHaveLength(1)
+  })
+
+  it('stays silent for live configuration keys', async () => {
+    applyEnvironment(ENVIRONMENT_PUBLIC_CONFIGS)
+    mocks.createClient.mockResolvedValue(
+      supabaseClient({
+        rows: configRows({ ...DATABASE_PUBLIC_CONFIGS, ...STORED_DEEPSEEK_CONFIGS }),
+      }),
+    )
+
+    await projectAdminDashboardProps()
+
+    expect(warnSpy).not.toHaveBeenCalled()
   })
 })

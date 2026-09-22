@@ -1,9 +1,13 @@
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { listarUsuariosAdmin, obterEstatisticasMensagens } from '@/app/actions/admin'
-import { isUsableDeepSeekApiKey } from '@/lib/ai/deepseek'
+import { escolherChaveDeepSeek } from '@/lib/ai/deepseek'
 import AdminDashboard from '@/components/operator/AdminDashboard'
 import { OperatorWorkspaceHeader } from '@/components/operator/OperatorWorkspaceHeader'
+import {
+  isRetiredProviderConfigKey,
+  warnRetiredProviderConfigKeyOnce,
+} from '@/lib/config/retired-config-keys'
 
 export const dynamic = 'force-dynamic'
 
@@ -19,17 +23,6 @@ type AdminPageProps = {
  */
 const SECRET_CONFIG_KEY_PATTERN = /(_KEY|_TOKEN|_SECRET)/i
 
-/**
- * Configuration keys owned by providers this system no longer talks to
- * (OpenRouter, OmniRoute). Their non-secret settings — a model id, a base URL —
- * do not match `SECRET_CONFIG_KEY_PATTERN`, so they would otherwise keep
- * flowing to the client from any legacy or restored `configuracoes_sistema`
- * row. Nothing renders them today: the rule exists so a retired provider
- * cannot silently resurface on the operator dashboard just because a row was
- * left behind in the database.
- */
-const RETIRED_PROVIDER_CONFIG_KEY_PATTERN = /(OPENROUTER|OMNIROUTE)/i
-
 /** Client-side DeepSeek state marker: the key status without the key itself. */
 const DEEPSEEK_CONFIGURED_KEY = 'DEEPSEEK_CONFIGURED'
 
@@ -41,23 +34,34 @@ const DEEPSEEK_CONFIGURED_KEY = 'DEEPSEEK_CONFIGURED'
  * dashboard can only render write-only credential inputs instead of prefilled
  * secrets. Stored keys naming a retired provider are dropped as well, secret
  * or not, so a legacy row cannot put that provider back in front of the
- * operator. `DEEPSEEK_CONFIGURED` is the single DeepSeek signal that crosses:
+ * operator; the retirement check runs first so every such row leaves one
+ * migration warning per key, and the rule itself lives in
+ * `@/lib/config/retired-config-keys`. `DEEPSEEK_CONFIGURED` is the single
+ * DeepSeek signal that crosses:
  * it is serialized as the string `'true'` because `systemConfigs` is a string
- * map, and it mirrors the same key resolution
- * (`configuracoes_sistema` first, environment fallback, placeholder keys
- * rejected) that `listAuthorizedDeepSeekModels` uses on the server.
+ * map, and it applies the shared credential rule (`escolherChaveDeepSeek`: a
+ * usable stored value, then a usable environment value, then the empty string —
+ * placeholders and whitespace rejected) to the pair this component already
+ * holds, so the panel reports the provider as configured exactly when
+ * generation can use it.
  */
 function toClientSystemConfigs(systemConfigs: Record<string, string>): Record<string, string> {
   const clientConfigs: Record<string, string> = {}
 
   for (const [key, value] of Object.entries(systemConfigs)) {
+    if (isRetiredProviderConfigKey(key)) {
+      warnRetiredProviderConfigKeyOnce(key)
+      continue
+    }
     if (SECRET_CONFIG_KEY_PATTERN.test(key)) continue
-    if (RETIRED_PROVIDER_CONFIG_KEY_PATTERN.test(key)) continue
     clientConfigs[key] = value
   }
 
-  const deepSeekApiKey = systemConfigs.DEEPSEEK_API_KEY || process.env.DEEPSEEK_API_KEY
-  if (isUsableDeepSeekApiKey(deepSeekApiKey)) {
+  const deepSeekApiKey = escolherChaveDeepSeek(
+    systemConfigs.DEEPSEEK_API_KEY,
+    process.env.DEEPSEEK_API_KEY,
+  )
+  if (deepSeekApiKey) {
     clientConfigs[DEEPSEEK_CONFIGURED_KEY] = 'true'
   }
 

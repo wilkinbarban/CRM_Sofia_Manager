@@ -312,6 +312,21 @@ describe('chamarModeloEconomicoJson', () => {
     expect(body.model).toBe(DEEPSEEK_DEFAULT_MODEL)
   })
 
+  it('falls through to the environment key when the stored credential is an unusable placeholder', async () => {
+    mocks.obterConfiguracaoSistema.mockImplementation(async (key: string) => (
+      key === 'DEEPSEEK_API_KEY' ? 'sk-your-api-key-placeholder' : null
+    ))
+    process.env.DEEPSEEK_API_KEY = OPERATOR_KEY
+    const fetchMock = vi.fn().mockResolvedValue(chatResponse(completion('{}')))
+    global.fetch = fetchMock as unknown as typeof fetch
+
+    const result = await chamarModeloEconomicoJson(params)
+
+    expect(result).toBe('{}')
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(init.headers).toMatchObject({ Authorization: `Bearer ${OPERATOR_KEY}` })
+  })
+
   it('returns null for an absent or placeholder key without any request', async () => {
     const fetchMock = vi.fn()
     global.fetch = fetchMock as unknown as typeof fetch
@@ -513,11 +528,24 @@ describe('DeepSeek model resolution', () => {
   })
 
   it('falls back to the default for an unusable model id and keeps a usable one', () => {
-    for (const impossivel of ['', '   ', 'deepseek flash', undefined]) {
+    for (const impossivel of ['', '   ', 'deepseek flash', 'deepseek-v4-pro-placeholder', undefined]) {
       expect(normalizarModeloDeepSeek(impossivel)).toBe(DEEPSEEK_DEFAULT_MODEL)
     }
 
     expect(normalizarModeloDeepSeek(' deepseek-v4-pro ')).toBe('deepseek-v4-pro')
+  })
+
+  it('treats a stored placeholder model as unusable and falls through to the environment, then to the default', async () => {
+    mocks.obterConfiguracaoSistema.mockImplementation(async (key: string) => (
+      key === 'DEEPSEEK_MODEL' ? 'deepseek-v4-pro-placeholder' : null
+    ))
+    process.env.DEEPSEEK_MODEL = 'deepseek-v4-flash'
+
+    await expect(resolverModeloDeepSeek()).resolves.toBe('deepseek-v4-flash')
+
+    delete process.env.DEEPSEEK_MODEL
+
+    await expect(resolverModeloDeepSeek()).resolves.toBe(DEEPSEEK_DEFAULT_MODEL)
   })
 
   it('prefers a usable stored model over the environment', async () => {

@@ -83,8 +83,15 @@ function createPipelineSupabase() {
   }
 }
 
+const originalEnv = process.env
+
 describe('integration fail-closed policy', () => {
   beforeEach(() => {
+    // The credential resolver reads the environment as a fallback, so every test
+    // controls the credential exclusively through the configuration store and the
+    // machine's own DEEPSEEK_API_KEY can never leak into an assertion.
+    process.env = { ...originalEnv }
+    delete process.env.DEEPSEEK_API_KEY
     mocks.allowsIntegrationMock.mockReturnValue(false)
     mocks.obterConfiguracaoSistema.mockResolvedValue(null)
     mocks.sofiaEligible.mockResolvedValue({ eligible: true, sleeping: false, iaAtiva: true })
@@ -92,7 +99,7 @@ describe('integration fail-closed policy', () => {
   })
 
   afterEach(() => {
-    delete process.env.SOFIA_AI_GENERATION_ENABLED
+    process.env = originalEnv
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
   })
@@ -251,5 +258,98 @@ describe('integration fail-closed policy', () => {
     expect(url).toBe('https://api.deepseek.com/chat/completions')
     expect(String(init.body)).toContain('deepseek-v4-pro')
     expect(String(init.body)).not.toContain('openrouter')
+  })
+
+  function mockChatCompletion(content = 'Costela Premium') {
+    return vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ choices: [{ message: { content } }] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    )
+  }
+
+  it('falls through to the environment credential when the stored value is an unusable placeholder', async () => {
+    mocks.createAdminClient.mockReturnValue(createPipelineSupabase())
+    mocks.obterConfiguracaoSistema.mockImplementation(async (key: string) => (
+      key === 'DEEPSEEK_API_KEY' ? 'sk-your-api-key-placeholder' : null
+    ))
+    process.env.DEEPSEEK_API_KEY = 'sk-deepseek-environment-key'
+    const fetchMock = mockChatCompletion()
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await processarRagPipeline('conversa-1', 'Olá', undefined, true)
+
+    expect(result).toEqual({ sucesso: true, canal: undefined, respostaIa: 'Costela Premium' })
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(init.headers).toMatchObject({ Authorization: 'Bearer sk-deepseek-environment-key' })
+  })
+
+  it('takes the contingency path and fails closed when the stored value is a placeholder and the environment is empty', async () => {
+    mocks.createAdminClient.mockReturnValue(createPipelineSupabase())
+    mocks.obterConfiguracaoSistema.mockImplementation(async (key: string) => (
+      key === 'DEEPSEEK_API_KEY' ? 'sk-your-api-key-placeholder' : null
+    ))
+    delete process.env.DEEPSEEK_API_KEY
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+
+    const result = await processarRagPipeline('conversa-1', 'Olá')
+
+    expect(result).toEqual({ sucesso: false, error: 'IA_INDISPONIVEL' })
+    expect(fetchMock).not.toHaveBeenCalled()
+
+    const linha = warn.mock.calls.map((args) => args.map(String).join(' ')).join('\n')
+    expect(linha).toContain('PROVEDOR_NAO_CONFIGURADO')
+  })
+
+  it('prefers a usable stored credential over a usable environment credential', async () => {
+    mocks.createAdminClient.mockReturnValue(createPipelineSupabase())
+    mocks.obterConfiguracaoSistema.mockImplementation(async (key: string) => (
+      key === 'DEEPSEEK_API_KEY' ? 'sk-deepseek-stored-key' : null
+    ))
+    process.env.DEEPSEEK_API_KEY = 'sk-deepseek-environment-key'
+    const fetchMock = mockChatCompletion()
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await processarRagPipeline('conversa-1', 'Olá', undefined, true)
+
+    expect(result).toEqual({ sucesso: true, canal: undefined, respostaIa: 'Costela Premium' })
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(init.headers).toMatchObject({ Authorization: 'Bearer sk-deepseek-stored-key' })
+    expect(JSON.stringify(init.headers)).not.toContain('sk-deepseek-environment-key')
+  })
+
+  it('treats a whitespace-padded stored credential as usable after trimming', async () => {
+    mocks.createAdminClient.mockReturnValue(createPipelineSupabase())
+    mocks.obterConfiguracaoSistema.mockImplementation(async (key: string) => (
+      key === 'DEEPSEEK_API_KEY' ? '   sk-deepseek-padded-key   ' : null
+    ))
+    delete process.env.DEEPSEEK_API_KEY
+    const fetchMock = mockChatCompletion()
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await processarRagPipeline('conversa-1', 'Olá', undefined, true)
+
+    expect(result).toEqual({ sucesso: true, canal: undefined, respostaIa: 'Costela Premium' })
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(init.headers).toMatchObject({ Authorization: 'Bearer sk-deepseek-padded-key' })
+  })
+
+  it('treats a whitespace-only stored credential as unusable and falls through to the environment', async () => {
+    mocks.createAdminClient.mockReturnValue(createPipelineSupabase())
+    mocks.obterConfiguracaoSistema.mockImplementation(async (key: string) => (
+      key === 'DEEPSEEK_API_KEY' ? '   ' : null
+    ))
+    process.env.DEEPSEEK_API_KEY = 'sk-deepseek-environment-key'
+    const fetchMock = mockChatCompletion()
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await processarRagPipeline('conversa-1', 'Olá', undefined, true)
+
+    expect(result).toEqual({ sucesso: true, canal: undefined, respostaIa: 'Costela Premium' })
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(init.headers).toMatchObject({ Authorization: 'Bearer sk-deepseek-environment-key' })
   })
 })

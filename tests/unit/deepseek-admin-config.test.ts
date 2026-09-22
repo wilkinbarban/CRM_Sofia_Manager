@@ -189,6 +189,22 @@ describe('testAuthorizedDeepSeekModel Server Action', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
+  it('probes with the environment key when the stored key is an unusable placeholder', async () => {
+    process.env.DEEPSEEK_API_KEY = ENV_KEY
+    const fetchMock = mockChatProbeResponse()
+    global.fetch = fetchMock as unknown as typeof fetch
+    mocks.createClient.mockResolvedValue(makeOperatorClient('supervisor'))
+    mocks.obterConfiguracaoSistema.mockResolvedValue('sk-your-api-key-placeholder')
+
+    const testAuthorizedDeepSeekModel = await loadModelProbeAction()
+    const result = await testAuthorizedDeepSeekModel('deepseek-chat')
+
+    expect(result).toEqual({ success: true, model: 'deepseek-chat' })
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(init.headers).toMatchObject({ Authorization: `Bearer ${ENV_KEY}` })
+    expect(JSON.stringify(result)).not.toContain(ENV_KEY)
+  })
+
   it('probes the selected model with the stored key and returns no secret or provider body', async () => {
     const fetchMock = mockChatProbeResponse()
     global.fetch = fetchMock as unknown as typeof fetch
@@ -299,6 +315,22 @@ describe('listAuthorizedDeepSeekModels Server Action', () => {
 
     expect(result).toEqual({ success: false, error: 'DEEPSEEK_NOT_CONFIGURED' })
     expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('lists with the environment key when the stored key is an unusable placeholder', async () => {
+    process.env.DEEPSEEK_API_KEY = ENV_KEY
+    const fetchMock = mockModelsResponse()
+    global.fetch = fetchMock as unknown as typeof fetch
+    mocks.createClient.mockResolvedValue(makeOperatorClient('admin'))
+    mocks.obterConfiguracaoSistema.mockResolvedValue('sk-your-api-key-placeholder')
+
+    const listAuthorizedDeepSeekModels = await loadAction()
+    const result = await listAuthorizedDeepSeekModels()
+
+    expect(result.success).toBe(true)
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(init.headers).toMatchObject({ Authorization: `Bearer ${ENV_KEY}` })
+    expect(JSON.stringify(result)).not.toContain(ENV_KEY)
   })
 
   it('returns the authorized models without ever exposing the key', async () => {

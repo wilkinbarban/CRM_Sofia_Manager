@@ -1,4 +1,4 @@
-import { obterConfiguracaoSistema } from '@/lib/config/sistema'
+import { resolverChaveDeepSeek } from '@/lib/ai/deepseek'
 
 /** Sofia's only configured LLM provider: the retired second adapter is gone. */
 export type LlmCreditProvider = 'deepseek'
@@ -20,21 +20,6 @@ type JsonRecord = Record<string, unknown>
 
 const THIRTY_MINUTES_MS = 30 * 60 * 1000
 const DEEPSEEK_BALANCE_URL = 'https://api.deepseek.com/user/balance'
-
-/**
- * Placeholder values the operator dashboard is known to persist. These are the
- * provider-neutral fragments that replaced the retired provider-specific literal,
- * and detection stays deliberately broad: any known fragment, anywhere in the
- * value, makes the credential unusable.
- */
-const PLACEHOLDER_FRAGMENTS = [
-  'placeholder',
-  'your_deepseek_api_key',
-  'your_api_key',
-  'insert_here',
-  'your_key',
-  'your-api-key',
-]
 
 let cachedStatus: LlmCreditStatus | null = null
 
@@ -62,13 +47,6 @@ function readNumber(source: JsonRecord | null, keys: string[]): number | null {
   }
 
   return null
-}
-
-function isPlaceholder(value: string | null | undefined): boolean {
-  if (!value) return true
-
-  const lowerValue = value.toLowerCase()
-  return PLACEHOLDER_FRAGMENTS.some((placeholder) => lowerValue.includes(placeholder))
 }
 
 export function parseDeepSeekRemainingUsd(balancePayload: unknown): number | null {
@@ -141,17 +119,17 @@ export async function getLlmCreditStatus(options: { forceRefresh?: boolean; now?
     return cachedStatus as LlmCreditStatus
   }
 
-  // Single credential path, exactly like the rest of the server:
-  // `configuracoes_sistema` first, then `process.env`.
-  const configurada = await obterConfiguracaoSistema('DEEPSEEK_API_KEY')
-  const apiKey = configurada?.trim() || process.env.DEEPSEEK_API_KEY?.trim() || null
+  // Single credential path, shared with generation and the operator panel:
+  // `configuracoes_sistema` first, then `process.env`, and an unusable stored
+  // value gives way to a usable environment one.
+  const apiKey = await resolverChaveDeepSeek()
 
-  if (isPlaceholder(apiKey)) {
+  if (!apiKey) {
     return staleStatus(now, 'DEEPSEEK_API_KEY is not configured')
   }
 
   try {
-    const payload = await fetchDeepSeekBalance(apiKey as string)
+    const payload = await fetchDeepSeekBalance(apiKey)
     const status = freshStatus(parseDeepSeekRemainingUsd(payload), now)
     cachedStatus = status
     return status

@@ -13,10 +13,12 @@ import {
 import { revalidatePath } from 'next/cache'
 import { consolidateAdminUsers } from '@/lib/admin/user-list'
 import { obterConfiguracaoSistema } from '@/lib/config/sistema'
+import { isRetiredProviderConfigKey } from '@/lib/config/retired-config-keys'
 import {
   isUsableDeepSeekApiKey,
   listDeepSeekModels,
   probeDeepSeekChat,
+  resolverChaveDeepSeek,
   type DeepSeekModelOption,
 } from '@/lib/ai/deepseek'
 import { parseFinancialOperationalMetrics, validateReportingPeriod } from '@/lib/admin/financial-metrics'
@@ -571,6 +573,13 @@ export async function salvarConfiguracaoAdmin(chave: string, valor: string) {
       return { success: false, error: check.error || 'ACESSO_NEGADO_NAO_AUTENTICADO' }
     }
 
+    // A key naming a retired provider has no write path at all: the dashboard no
+    // longer renders it, and the server-to-client projection hides any legacy
+    // row, so accepting a write here would only recreate what was removed.
+    if (isRetiredProviderConfigKey(chave)) {
+      return { success: false, error: 'CHAVE_DE_PROVEDOR_DESCONTINUADO' }
+    }
+
     const adminSupabase = createAdminClient()
     const ehSegredo =
       chave.toUpperCase().includes('_KEY') ||
@@ -794,9 +803,10 @@ export async function deletarUsuarioAdmin(usuarioAlvoId: string) {
  * Server Action: listAuthorizedDeepSeekModels
  * Lists the DeepSeek models authorized for the configured server key.
  *
- * Takes no API key argument on purpose: the key is resolved from the existing
- * server configuration precedence (`configuracoes_sistema` first, environment
- * fallback) and never travels through the caller. Absent or placeholder keys
+ * Takes no API key argument on purpose: the key is resolved through the single
+ * server credential rule (`resolverChaveDeepSeek`: a usable
+ * `configuracoes_sistema` value, then a usable environment value, then `''`)
+ * and never travels through the caller. Absent or placeholder keys
  * short-circuit to a stable `DEEPSEEK_NOT_CONFIGURED` error, and every
  * remaining failure keeps the client's stable error code without echoing the
  * key or the provider body.
@@ -810,8 +820,7 @@ export async function listAuthorizedDeepSeekModels(): Promise<
       return { success: false, error: check.error || 'ACESSO_NEGADO_NAO_AUTENTICADO' }
     }
 
-    const configuredApiKey = await obterConfiguracaoSistema('DEEPSEEK_API_KEY')
-    const apiKey = configuredApiKey || process.env.DEEPSEEK_API_KEY || ''
+    const apiKey = await resolverChaveDeepSeek()
 
     if (!isUsableDeepSeekApiKey(apiKey)) {
       return { success: false, error: 'DEEPSEEK_NOT_CONFIGURED' }
@@ -832,10 +841,10 @@ export async function listAuthorizedDeepSeekModels(): Promise<
  * Server Action: testAuthorizedDeepSeekModel
  * Probes the stored DeepSeek credential against one operator-selected model.
  *
- * The caller supplies only a model ID. The key is resolved server-side from the
- * same precedence as `listAuthorizedDeepSeekModels` (`configuracoes_sistema`
- * first, environment fallback) so it never travels through the browser, and a
- * blank or non-string model short-circuits before any key lookup or network
+ * The caller supplies only a model ID. The key is resolved server-side through
+ * the single credential rule (`resolverChaveDeepSeek`), the same one
+ * `listAuthorizedDeepSeekModels` uses, so it never travels through the browser,
+ * and a blank or non-string model short-circuits before any key lookup or network
  * call. The result carries only a stable code plus the requested model: no key,
  * no provider body and no provider message. The model-list action above is left
  * untouched.
@@ -853,8 +862,7 @@ export async function testAuthorizedDeepSeekModel(modelId: unknown): Promise<
       return { success: false, error: 'DEEPSEEK_MODEL_REQUIRED' }
     }
 
-    const configuredApiKey = await obterConfiguracaoSistema('DEEPSEEK_API_KEY')
-    const apiKey = configuredApiKey || process.env.DEEPSEEK_API_KEY || ''
+    const apiKey = await resolverChaveDeepSeek()
 
     if (!isUsableDeepSeekApiKey(apiKey)) {
       return { success: false, error: 'DEEPSEEK_NOT_CONFIGURED' }

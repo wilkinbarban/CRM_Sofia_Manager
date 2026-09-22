@@ -136,12 +136,27 @@ export type DeepSeekChatInput = {
   maxContentChars?: number
 }
 
+/**
+ * Placeholder values the operator dashboard is known to persist: the union of
+ * the fragments this boundary and the credits panel used to carry separately,
+ * now with a single home. Detection stays deliberately broad: any known
+ * fragment, anywhere in the value (case-insensitive), makes it unusable.
+ */
 const PLACEHOLDER_FRAGMENTS = [
   'placeholder',
+  'your_deepseek_api_key',
+  'your_api_key',
   'insert_here',
   'your_key',
   'your-api-key',
 ]
+
+/** True when the value carries a placeholder fragment the dashboard is known to
+ * persist. Deliberately broad: any known fragment, anywhere in the value. */
+function temFragmentoPlaceholder(value: string): boolean {
+  const normalizado = value.toLowerCase()
+  return PLACEHOLDER_FRAGMENTS.some((fragment) => normalizado.includes(fragment))
+}
 
 /**
  * A key is usable only when it is present and is not one of the placeholder
@@ -151,14 +166,52 @@ export function isUsableDeepSeekApiKey(value: string | null | undefined): boolea
   const apiKey = value?.trim()
   if (!apiKey) return false
 
-  const normalized = apiKey.toLowerCase()
-  return !PLACEHOLDER_FRAGMENTS.some((fragment) => normalized.includes(fragment))
+  return !temFragmentoPlaceholder(apiKey)
 }
 
-/** The trimmed model id, or null when the value cannot be one. */
+/** The credential value already trimmed, or null when it cannot be a key. */
+function chaveUtilizavel(value: string | null | undefined): string | null {
+  const chave = typeof value === 'string' ? value.trim() : ''
+  return isUsableDeepSeekApiKey(chave) ? chave : null
+}
+
+/**
+ * The single credential rule: a usable stored value wins, an unusable stored
+ * value is treated as absent and hands over to a usable environment value, and
+ * the empty string is the last resort. Usability is `isUsableDeepSeekApiKey`
+ * and the returned value is trimmed. Synchronous on purpose, so the server
+ * component that already holds both values can apply the same rule without a
+ * second configuration read.
+ */
+export function escolherChaveDeepSeek(
+  armazenada: string | null | undefined,
+  doAmbiente: string | null | undefined,
+): string {
+  return chaveUtilizavel(armazenada) ?? chaveUtilizavel(doAmbiente) ?? ''
+}
+
+/**
+ * Server-only resolution of the DeepSeek credential: `configuracoes_sistema`
+ * first, `process.env` second, the empty string last. It delegates the
+ * precedence to `escolherChaveDeepSeek`, so every server path that resolves
+ * this credential — generation, JSON extraction, the operator actions, the
+ * credits panel and the admin projection — agrees with the others instead of
+ * keeping its own copy.
+ */
+export async function resolverChaveDeepSeek(): Promise<string> {
+  return escolherChaveDeepSeek(
+    await obterConfiguracaoSistema('DEEPSEEK_API_KEY'),
+    process.env.DEEPSEEK_API_KEY,
+  )
+}
+
+/** The trimmed model id, or null when the value cannot be one: empty, blank, a
+ * control character, or a known placeholder fragment persisted by the
+ * dashboard — the same list the credential predicate uses. */
 function modeloValido(value: unknown): string | null {
   const modelo = typeof value === 'string' ? value.trim() : ''
   if (!modelo || /[\s\u0000-\u001f\u007f]/.test(modelo)) return null
+  if (temFragmentoPlaceholder(modelo)) return null
   return modelo
 }
 
@@ -168,7 +221,7 @@ export function normalizarModeloDeepSeek(value: unknown): string {
 }
 
 /** Single resolution path: `configuracoes_sistema`, then `process.env`, then the default.
- * An unusable stored value falls through to the environment by design — a usable deployment value beats an unusable operator entry — instead of going straight to the default. */
+ * An unusable stored value falls through to the environment by design — a usable deployment value beats an unusable operator entry — instead of going straight to the default. Only a usable value (not empty, not blank, not a known placeholder) is accepted. */
 export async function resolverModeloDeepSeek(): Promise<string> {
   const configurado = await obterConfiguracaoSistema('DEEPSEEK_MODEL')
   return modeloValido(configurado) ?? modeloValido(process.env.DEEPSEEK_MODEL) ?? DEEPSEEK_DEFAULT_MODEL
