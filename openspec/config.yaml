@@ -18,7 +18,6 @@ stack:
     whatsapp: "Meta WhatsApp Business Cloud API"
     llm: "DeepSeek API"
     payment: "Mercado Pago Sandbox"
-    calendar: "Google Calendar API"
 
 conventions:
   language: "pt-BR"

@@ -8,7 +8,7 @@ Payment status MUST remain independent from order status. Mercado Pago and autho
 #### Scenario: Integration approval
 - GIVEN a valid Mercado Pago approval for an existing order
 - WHEN the webhook is processed
-- THEN payment becomes `aprovado`, audit evidence is appended, order status is unchanged, and calendar failure cannot roll back payment.
+- THEN payment becomes `aprovado`, audit evidence is appended, and order status is unchanged.
 
 #### Scenario: Manual approval authorization
 - GIVEN an authorized operator and pending payment
@@ -23,7 +23,7 @@ Payment status MUST remain independent from order status. Mercado Pago and autho
 ## MODIFIED Requirements
 
 ### Requirement: Approved payment synchronization
-The system MUST update `status_pagamento` to `aprovado` for an approved Mercado Pago payment, MUST NOT update order `status` as a side effect, and MAY synchronize calendar metadata independently.
+The system MUST update `status_pagamento` to `aprovado` for an approved Mercado Pago payment, and MUST NOT update order `status` as a side effect.
 (Previously: approved payment also set order status to `confirmado`.)
 
 #### Scenario: Approved webhook

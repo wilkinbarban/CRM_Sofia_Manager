@@ -1,7 +1,7 @@
 /**
  * Integration & Security Test Suite - Épica 8 (Dashboard Admin & Auditoria)
  * Tests Middleware route protection, Server Actions access control, lockout rules, minimum admin check,
- * logs RLS immutability, statistics calculations, and Google Calendar mock flow.
+ * logs RLS immutability, statistics calculations, and audit log compliance.
  */
 
 const { createClient } = require('@supabase/supabase-js');
@@ -16,17 +16,6 @@ const SERVICE_ROLE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhY
 process.env.NEXT_PUBLIC_SUPABASE_URL = SUPABASE_URL;
 process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = ANON_KEY;
 process.env.SUPABASE_SERVICE_ROLE_KEY = SERVICE_ROLE_KEY;
-
-// Force Calendar action to see mock credentials if not set in .env
-if (!process.env.GOOGLE_CLIENT_EMAIL) {
-  process.env.GOOGLE_CLIENT_EMAIL = 'placeholder-email@crmsofiamanager.com.br';
-}
-if (!process.env.GOOGLE_PRIVATE_KEY) {
-  process.env.GOOGLE_PRIVATE_KEY = 'placeholder-key';
-}
-if (!process.env.GOOGLE_CALENDAR_ID) {
-  process.env.GOOGLE_CALENDAR_ID = 'placeholder-calendar-id';
-}
 
 // Parse extra environment variables if present
 const envPath = path.resolve(__dirname, '../.env');
@@ -88,7 +77,6 @@ const { proxy: middleware } = jiti('../apps/web/proxy.ts');
 const {
   listarUsuariosAdmin,
   atualizarPerfilUsuario,
-  testarGoogleCalendar,
   obterEstatisticasMensagens,
   obterLogsAuditoria
 } = jiti('../apps/web/src/app/actions/admin.ts');
@@ -478,9 +466,9 @@ async function runTests() {
     logSuccess('RLS prevents DELETE operations on logs_auditoria table.');
 
     // ====================================================
-    // TASK 4.5: Statistics Calculator, Google Calendar Test, PII Compliance
+    // TASK 4.5: Statistics Calculator & PII Compliance
     // ====================================================
-    logSection('Testing Task 4.5: Metrics, Google Calendar Actions & Obfuscation');
+    logSection('Testing Task 4.5: Metrics & Obfuscation');
 
     // 1. Validate Message Statistics
     console.log('A. Testing obterEstatisticasMensagens calculations...');
@@ -527,31 +515,6 @@ async function runTests() {
       throw new Error(`Taxa Automacao formula mismatch: expected ${expectedRate}, got ${updated.taxaAutomacao}`);
     }
     logSuccess(`Message statistics match inserted mocks perfectly. Taxa automacao updated. Got: ${updated.taxaAutomacao}%`);
-
-    // 2. Validate testarGoogleCalendar in Mock Mode
-    console.log('B. Testing testarGoogleCalendar (Mock mode)...');
-    const calendarRes = await testarGoogleCalendar();
-    if (!calendarRes.success || !calendarRes.data.mock || !calendarRes.data.eventId) {
-      throw new Error(`Google Calendar Test Action failed: ${JSON.stringify(calendarRes)}`);
-    }
-
-    // Verify Calendar Test Log was recorded in DB
-    const { data: latestCalLogs, error: getCalLogsError } = await adminClient
-      .from('logs_auditoria')
-      .select('*')
-      .eq('usuario_id', users.admin1.id)
-      .eq('acao', 'teste_calendario')
-      .order('data_criacao', { ascending: false })
-      .limit(1);
-
-    if (getCalLogsError || !latestCalLogs || latestCalLogs.length === 0) {
-      throw new Error(`Google Calendar audit log not found: ${getCalLogsError?.message}`);
-    }
-    const calLog = latestCalLogs[0];
-    if (!calLog.detalhes.sucesso || !calLog.detalhes.mock || calLog.detalhes.eventId !== calendarRes.data.eventId) {
-      throw new Error(`Google Calendar log details mismatch: ${JSON.stringify(calLog.detalhes)}`);
-    }
-    logSuccess('Google Calendar connection action validated in mock mode, audit log correctly verified.');
 
     // 3. Audit PII logging compliance
     console.log('C. Auditing logs for PII (names, phone numbers, emails, messages)...');

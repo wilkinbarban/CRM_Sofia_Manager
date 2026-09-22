@@ -16,7 +16,6 @@
     "@supabase/supabase-js": "^2.110.0",
     "@types/qrcode": "^1.5.6",
     "@xmldom/xmldom": "0.8.15",
-    "googleapis": "^173.0.0",
     "lucide-react": "^1.23.0",
     "mammoth": "^1.12.2",
     "next": "16.3.3",

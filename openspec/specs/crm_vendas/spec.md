@@ -1,10 +1,10 @@
-# Especificação Formal: Épica 6 — CRM, Vendas, Pedidos e Google Calendar
+# Especificação Formal: Épica 6 — CRM, Vendas e Pedidos
 
 Este documento define as especificações de negócio, comportamento do sistema e requisitos técnicos para a Épica 6 (Módulo `crm_vendas`).
 
 ## 1. Visão Geral
 
-Esta épica introduz a gestão de catálogo de produtos, o enriquecimento de dados de clientes no chat de atendimento, a facilidade de criação rápida de pedidos diretamente pelo operador e a integração com o Google Calendar para agendamento automático de entregas/retiradas de forma resiliente.
+Esta épica introduz a gestão de catálogo de produtos, o enriquecimento de dados de clientes no chat de atendimento e a facilidade de criação rápida de pedidos diretamente pelo operador.
 
 ---
 
@@ -66,30 +66,6 @@ No workspace de chat em `/atendimento`, ao selecionar uma conversa ativa com um 
 
 ---
 
-### 2.4. Integração com Google Calendar e Resiliência
-
-*   Quando o status de um pedido transicionar para `'confirmado'` (via Server Action ou trigger equivalente de atualização de status):
-    *   O sistema MUST disparar uma integração com o Google Calendar da Churrascaria.
-    *   A autenticação com a API do Google Calendar SHALL utilizar credenciais de Service Account configuradas no servidor através das variáveis de ambiente:
-        *   `GOOGLE_CALENDAR_ID`
-        *   `GOOGLE_CLIENT_EMAIL`
-        *   `GOOGLE_PRIVATE_KEY`
-    *   O evento inserido no calendário MUST conter na descrição as seguintes informações textuais estruturadas:
-        *   Itens do pedido (produto e quantidade).
-        *   Nome do cliente.
-        *   Telefone de contato do cliente.
-        *   Tipo de entrega (entrega ou retirada).
-        *   Endereço de entrega (se aplicável).
-        *   Valor total do pedido formatado em R$.
-*   **Resiliência a Falhas (CRITICAL)**:
-    *   Se a chamada à API do Google Calendar falhar (devido a problemas de rede, credenciais inválidas ou limite de requisições excedido), ou se as variáveis de ambiente não estiverem configuradas:
-        *   A transição de status do pedido para `'confirmado'` MUST ser concluída com sucesso no banco de dados.
-        *   A transação do banco de dados não SHALL ser abortada ou revertida em decorrência de falhas no calendário.
-        *   O registro do pedido correspondente SHALL gravar a coluna `google_event_id` como `NULL` (podendo ser marcado para sincronização em segundo plano/re-tentativa futura).
-    *   Em caso de sucesso na API do Google Calendar, o ID retornado pelo Google MUST ser salvo na coluna `google_event_id` do registro do pedido.
-
----
-
 ## 3. Cenários de Aceitação (Dado / Quando / Então)
 
 ### 3.1. CRUD de Produtos
@@ -139,33 +115,12 @@ No workspace de chat em `/atendimento`, ao selecionar uma conversa ativa com um 
 
 ---
 
-### 3.4. Integração com Google Calendar e Resiliência
-
-#### Cenário 1: Confirmação de pedido com sucesso na API do Google Calendar
-*   **Dado** um pedido existente na tabela `public.pedidos` pertencente ao cliente "Maria Oliveira" com status `novo`,
-*   **E** a integração com o Google Calendar está devidamente configurada no servidor,
-*   **Quando** o status do pedido é alterado para `confirmado`,
-*   **Então** o sistema deve acionar a integração do Google Calendar informando os dados formatados do pedido,
-*   **E** após a API retornar sucesso com um ID de evento (ex: `cal_event_12345`),
-*   **Então** o sistema deve atualizar o registro do pedido no banco de dados gravando `google_event_id = 'cal_event_12345'`.
-
-#### Cenário 2: Falha ou ausência de configuração da API do Google Calendar na confirmação de pedido
-*   **Dado** um pedido existente na tabela `public.pedidos` com status `novo`,
-*   **E** a integração com o Google Calendar está inacessível ou não configurada (ex: sem chaves no `.env`),
-*   **Quando** o status do pedido é alterado para `confirmado`,
-*   **Então** o sistema deve tentar a integração e capturar graciosamente qualquer erro ocorrido,
-*   **E** deve concluir a alteração do status do pedido no banco de dados para `confirmado` com sucesso absoluto,
-*   **E** deve salvar o campo `google_event_id` como `NULL`, sem disparar exceções para o operador ou interromper a Server Action de confirmação.
-
----
-
 ## 5. Requisitos Não-Funcionais e Restrições do Projeto
 
 1.  **Segurança (RLS e Roles)**:
     *   A tabela `public.produtos` deve possuir políticas de Row Level Security (RLS) que permitam a leitura pública por qualquer usuário autenticado ou anônimo, mas inserção/atualização restrita apenas a usuários com roles de `admin` ou `supervisor`.
 2.  **Validações e Tipagem**:
     *   Valores monetários MUST ser mantidos estritamente como inteiros representativos de centavos no banco de dados e nos cálculos do backend.
-    *   O tratamento do fuso horário nas operações de agendamento do Google Calendar MUST respeitar o fuso local configurado (America/Sao_Paulo).
 3.  **Localização**:
     *   Todas as tabelas, colunas, enums e strings de interface expostas aos operadores MUST ser em Português do Brasil (pt-BR).
 

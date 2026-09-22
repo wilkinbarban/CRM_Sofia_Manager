@@ -7,7 +7,7 @@
 ---
 
 ## 1. Descrição Executiva
-Este documento especifica os requisitos funcionais, não-funcionais e regras de segurança para a integração de pagamentos do portal **Asados** com a API do Mercado Pago Checkout Pro (Sandbox). O fluxo compreende a geração de preferências de pagamento associadas a um pedido no banco de dados, o redirecionamento seguro do cliente para a tela de pagamento do Mercado Pago, a recepção de confirmações via webhook assíncrono (IPN/Notification) e a sincronização automática e resiliente do status do pedido no Google Calendar da churrascaria.
+Este documento especifica os requisitos funcionais, não-funcionais e regras de segurança para a integração de pagamentos do portal **Asados** com a API do Mercado Pago Checkout Pro (Sandbox). O fluxo compreende a geração de preferências de pagamento associadas a um pedido no banco de dados, o redirecionamento seguro do cliente para a tela de pagamento do Mercado Pago e a recepção de confirmações via webhook assíncrono (IPN/Notification).
 
 ---
 
@@ -38,15 +38,8 @@ Este documento especifica os requisitos funcionais, não-funcionais e regras de 
 *   **REQ-PAG-013**: Se o status do pagamento obtido for aprovado (`approved`):
     *   O sistema MUST atualizar a coluna `status_pagamento` da tabela `public.pedidos` para `'aprovado'`.
     *   O sistema MUST NOT atualizar a coluna `status` da tabela `public.pedidos` como efeito colateral da aprovação do pagamento.
-    *   O sistema MUST disparar a sincronização ou criação do evento correspondente no Google Calendar.
 *   **REQ-PAG-014**: Se o status do pagamento obtido for rejeitado (`rejected` ou `cancelled`):
     *   O sistema MUST atualizar a coluna `status_pagamento` da tabela `public.pedidos` para `'rejeitado'`.
-
-### 2.4. Sincronização e Atualização do Google Calendar
-*   **REQ-PAG-015**: Quando a aprovação do pagamento for processada no webhook:
-    *   Se o pedido já tiver um identificador associado na coluna `google_event_id`, o sistema MUST chamar a API do Google Calendar para atualizar o título (summary) ou descrição do evento adicionando o prefixo `[PAGO] `.
-    *   Se a coluna `google_event_id` estiver nula (o pedido ainda não foi agendado), o sistema MUST chamar o utilitário `agendarPedidoNoCalendario(pedidoId)` para criar o evento e gravar o ID do evento retornado na coluna `google_event_id` do pedido.
-*   **REQ-PAG-016**: Em caso de falhas na comunicação com a API do Google Calendar (por rede ou credenciais incorretas), o sistema MUST capturar o erro e prosseguir com a confirmação do pedido no banco de dados de maneira resiliente. O erro no calendário SHALL NOT abortar a transação do banco ou reverter o status de pagamento.
 
 ### 2.5. Segurança e Row Level Security (RLS)
 *   **REQ-PAG-017**: O endpoint de webhook do Mercado Pago `/api/webhooks/mercadopago` MUST processar as consultas e alterações no banco de dados utilizando um cliente de bypass seguro (Supabase Service Role ou Admin client) para permitir a escrita de tabelas sem exigir uma sessão de usuário ativa (uma vez que a chamada vem de forma anônima e sem cookies da aplicação).
@@ -78,29 +71,19 @@ Este documento especifica os requisitos funcionais, não-funcionais e regras de 
 
 ### 3.2. Processamento do Webhook de Notificações
 
-#### Cenário 1: Recebimento de notificação de pagamento aprovado (Sem evento existente no calendário)
-*   **Dado** que existe um pedido com ID `"9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d"` com `status_pagamento` igual a `'pendente'` e `google_event_id` nulo,
+#### Cenário 1: Recebimento de notificação de pagamento aprovado
+*   **Dado** que existe um pedido com ID `"9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d"` com `status_pagamento` igual a `'pendente'`,
 *   **Quando** o endpoint `/api/webhooks/mercadopago` recebe uma requisição POST com o payload contendo `type` = `"payment"` e `data.id` = `"payment_9999"`,
 *   **Então** o webhook responde imediatamente com status HTTP `200 OK`,
 *   **E** de forma assíncrona, consulta a API do Mercado Pago com o ID `"payment_9999"` obtendo o status `"approved"`,
-*   **E** atualiza no banco de dados apenas `status_pagamento = 'aprovado'`, preservando o `status` independente do pedido,
-*   **E** invoca `agendarPedidoNoCalendario("9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d")`, que insere o evento no Google Calendar e retorna o ID do evento (ex: `"event_gcal_1010"`),
-*   **E** persiste o ID `"event_gcal_1010"` na coluna `google_event_id` do pedido.
-
-#### Cenário 2: Recebimento de notificação de pagamento aprovado (Com evento existente no calendário)
-*   **Dado** que existe um pedido com ID `"9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d"` com `status_pagamento` igual a `'pendente'` e `google_event_id` igual a `"event_gcal_1010"`,
-*   **Quando** o endpoint `/api/webhooks/mercadopago` recebe uma requisição POST com o payload contendo `type` = `"payment"` e `data.id` = `"payment_9999"`,
-*   **Então** o webhook responde imediatamente com status HTTP `200 OK`,
-*   **E** de forma assíncrona, consulta a API do Mercado Pago obtendo o status `"approved"`,
-*   **E** atualiza no banco de dados apenas `status_pagamento = 'aprovado'`, preservando o `status` independente do pedido,
-*   **E** faz uma requisição PATCH para a API do Google Calendar atualizando o título do evento `"event_gcal_1010"` para incluir o prefixo `[PAGO]`.
+*   **E** atualiza no banco de dados apenas `status_pagamento = 'aprovado'`, preservando o `status` independente do pedido.
 
 #### Cenário 3: Recebimento de notificação de pagamento rejeitado
 *   **Dado** que existe um pedido com ID `"9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d"` com `status_pagamento` igual a `'pendente'`,
 *   **Quando** o endpoint `/api/webhooks/mercadopago` recebe uma requisição POST indicando um pagamento com status `"rejected"`,
 *   **Então** o webhook responde imediatamente com status HTTP `200 OK`,
 *   **E** atualiza o banco de dados definindo a coluna `status_pagamento` do pedido como `'rejeitado'`,
-*   **E** o status do pedido permanece como `'novo'`, sem alterar o Google Calendar.
+*   **E** o status do pedido permanece como `'novo'`.
 
 ---
 
