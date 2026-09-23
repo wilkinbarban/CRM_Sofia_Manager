@@ -3,6 +3,10 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react'
 import { MessageSquare, Bot, UserCheck, Inbox, PauseCircle, PlayCircle, Loader2, Clock, Volume2, VolumeX, AlertTriangle, CheckCircle2 } from 'lucide-react'
 import { notificationSound } from '@/lib/audio/notification-sound'
+import {
+  getNotificationSoundPreference,
+  setNotificationSoundPreference,
+} from '@/lib/notifications/sound-preference'
 
 export interface Cliente {
   id: string
@@ -68,21 +72,15 @@ export default function ConversationsQueue({
   const [activeTab, setActiveTab] = React.useState<TabType>('ia')
   const [somHabilitado, setSomHabilitado] = useState(true)
 
+  // Initializes the migrated preference under the canonical storage key.
   useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('crm_notificacoes_som')
-      if (saved !== null) {
-        setSomHabilitado(saved === 'true')
-      }
-    }
+    setSomHabilitado(getNotificationSoundPreference())
   }, [])
 
   const handleToggleSom = () => {
     const novoValor = !somHabilitado
     setSomHabilitado(novoValor)
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('crm_notificacoes_som', String(novoValor))
-    }
+    setNotificationSoundPreference(novoValor)
     if (novoValor) {
       notificationSound.playChime()
     }

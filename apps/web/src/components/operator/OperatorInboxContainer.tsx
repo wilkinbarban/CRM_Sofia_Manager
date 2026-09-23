@@ -16,6 +16,7 @@ import OperatorChatConsole from './OperatorChatConsole'
 import ClientCrmPanel from './ClientCrmPanel'
 import SofiaGlobalStatusBar from './SofiaGlobalStatusBar'
 import { notificationSound } from '@/lib/audio/notification-sound'
+import { getNotificationSoundPreference } from '@/lib/notifications/sound-preference'
 
 interface OperatorInboxContainerProps {
   conversasIniciais: Conversa[]
@@ -245,7 +246,8 @@ export default function OperatorInboxContainer({
             const isPrioritaria = isPriorityIntent(novaMsg.conteudo)
             
             if (typeof window !== 'undefined') {
-              const somSalvo = localStorage.getItem('crm_notificacoes_som') !== 'false'
+              // Migrates a valid legacy preference into the canonical key before alerting.
+              const somSalvo = getNotificationSoundPreference()
               if (somSalvo) {
                 if (isPrioritaria) {
                   notificationSound.playPriorityAlert()
@@ -310,7 +312,8 @@ export default function OperatorInboxContainer({
           const novoPedido = payload.new as any
 
           if (typeof window !== 'undefined') {
-            const somSalvo = localStorage.getItem('crm_notificacoes_som') !== 'false'
+            // Migrates a valid legacy preference into the canonical key before alerting.
+            const somSalvo = getNotificationSoundPreference()
             if (somSalvo) {
               notificationSound.playNewOrderAlert()
             }
