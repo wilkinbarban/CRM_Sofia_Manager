@@ -216,7 +216,65 @@ describe('LlmApiCard — integração DeepSeek', () => {
     const options = within(select).getAllByRole('option')
     expect(options).toHaveLength(1)
     expect(options[0]).toHaveTextContent('Nenhum modelo disponível')
-    expect(document.body.innerHTML).not.toContain('modelo-antigo-fora-do-catalogo')
+    expect(within(select).queryByText('modelo-antigo-fora-do-catalogo')).not.toBeInTheDocument()
+    expect(within(select).queryByRole('option', { name: /modelo-antigo-fora-do-catalogo/ })).not.toBeInTheDocument()
+    // O modelo efetivo é exibido no badge separado.
+    expect(screen.getByText('modelo-antigo-fora-do-catalogo')).toBeInTheDocument()
+    expect(screen.getByText(/Modelo efetivo:/i)).toBeInTheDocument()
+  })
+
+  it('exibe o modelo efetivo em badge separado e preserva o catálogo com opções autorizadas', async () => {
+    renderCard({ DEEPSEEK_CONFIGURED: 'true', DEEPSEEK_MODEL: 'deepseek-chat' })
+    await waitForModels()
+
+    const badge = screen.getByTestId('deepseek-effective-model-badge')
+    expect(badge).toHaveTextContent('Modelo efetivo:')
+    expect(badge).toHaveTextContent('deepseek-chat')
+    expect(screen.queryByText(/Fora do catálogo/i)).not.toBeInTheDocument()
+
+    const select = screen.getByLabelText(/DEEPSEEK_MODEL/i) as HTMLSelectElement
+    const options = within(select).getAllByRole('option')
+    expect(options).toHaveLength(AUTHORIZED_MODELS.length)
+    expect(select.value).toBe('deepseek-chat')
+  })
+
+  it('exibe indicador no badge quando o modelo efetivo está ausente do catálogo sem mutar as opções do select', async () => {
+    renderCard({ DEEPSEEK_CONFIGURED: 'true', DEEPSEEK_MODEL: 'deepseek-flash' })
+    await waitForModels()
+
+    // O badge renderiza o modelo efetivo e sinaliza que está fora do catálogo.
+    const badge = screen.getByTestId('deepseek-effective-model-badge')
+    expect(badge).toHaveTextContent('Modelo efetivo:')
+    expect(badge).toHaveTextContent('deepseek-flash')
+    expect(within(badge).getByText(/Fora do catálogo/i)).toBeInTheDocument()
+
+    // O select mantém estritamente as opções do catálogo autorizado; deepseek-flash não vira opção.
+    const select = screen.getByLabelText(/DEEPSEEK_MODEL/i) as HTMLSelectElement
+    const options = within(select).getAllByRole('option')
+    expect(options).toHaveLength(AUTHORIZED_MODELS.length)
+    expect(within(select).queryByText('deepseek-flash')).not.toBeInTheDocument()
+    expect(within(select).queryByRole('option', { name: /deepseek-flash/ })).not.toBeInTheDocument()
+  })
+
+  it('atualiza o badge de modelo efetivo ao salvar novo modelo com sucesso', async () => {
+    renderCard({ DEEPSEEK_CONFIGURED: 'true', DEEPSEEK_MODEL: 'deepseek-flash' })
+    await waitForModels()
+
+    const select = screen.getByLabelText(/DEEPSEEK_MODEL/i) as HTMLSelectElement
+    fireEvent.change(select, { target: { value: 'deepseek-reasoner' } })
+
+    fireEvent.click(screen.getByRole('button', { name: /Salvar configurações da DeepSeek/i }))
+
+    await waitFor(() => {
+      expect(vi.mocked(salvarConfiguracaoAdmin)).toHaveBeenCalledWith(
+        'DEEPSEEK_MODEL',
+        'deepseek-reasoner'
+      )
+    })
+
+    const badge = screen.getByTestId('deepseek-effective-model-badge')
+    expect(badge).toHaveTextContent('deepseek-reasoner')
+    expect(screen.queryByText(/Fora do catálogo/i)).not.toBeInTheDocument()
   })
 
   it('salva apenas o modelo selecionado quando a chave está em branco', async () => {
