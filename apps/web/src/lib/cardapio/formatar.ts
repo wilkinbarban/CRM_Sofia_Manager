@@ -72,7 +72,7 @@ function categorizarProduto(nome: string): 'kits' | 'cortes' | 'acompanhamentos'
  */
 export function formatarCardapioResumido(produtos: ProdutoCardapio[], baseUrl = 'https://crmsofiamanager.duckdns.org'): string {
   if (!produtos || produtos.length === 0) {
-    return 'No momento nosso cardápio está sendo atualizado pelo mestre assador. Por favor, pergunte a um atendente!'
+    return 'No momento nosso cardápio está sendo atualizado. Por favor, pergunte a um atendente!'
   }
 
   const cleanBaseUrl = (baseUrl || 'https://crmsofiamanager.duckdns.org').replace(/\/$/, '')
@@ -91,8 +91,8 @@ export function formatarCardapioResumido(produtos: ProdutoCardapio[], baseUrl = 
   }
 
   const linhas: string[] = [
-    '🔥 *CASA DE ASSADOS BRASA & SABOR — O que vai querer hoje?*',
-    '_Confira nossos assados e combos especiais de domingo (Bairro Umbará, Curitiba - PR):_',
+    '🔥 *CRM SOFIA MANAGER — O que vai querer hoje?*',
+    '_Confira nossos produtos e combos especiais disponíveis para pedido:_',
     '',
   ]
 
@@ -137,7 +137,7 @@ export function formatarCardapioResumido(produtos: ProdutoCardapio[], baseUrl = 
   }
 
   if (grupos.cortes.length > 0) {
-    linhas.push('🥩 *CORTES AVULSOS NA BRASA*')
+    linhas.push('🥩 *PRODUTOS PRINCIPAIS*')
     for (const item of grupos.cortes) {
       const icone = item.nome.toLowerCase().includes('costela') ? '🥩' : '🍗'
       const estoqueInfo = item.quantidade_estoque !== undefined && item.quantidade_estoque !== null && item.quantidade_estoque <= 10

@@ -70,7 +70,7 @@ export default function ConversationsQueue({
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('asados_notificacoes_som')
+      const saved = localStorage.getItem('crm_notificacoes_som') ?? localStorage.getItem('asados_notificacoes_som')
       if (saved !== null) {
         setSomHabilitado(saved === 'true')
       }
@@ -81,7 +81,7 @@ export default function ConversationsQueue({
     const novoValor = !somHabilitado
     setSomHabilitado(novoValor)
     if (typeof window !== 'undefined') {
-      localStorage.setItem('asados_notificacoes_som', String(novoValor))
+      localStorage.setItem('crm_notificacoes_som', String(novoValor))
     }
     if (novoValor) {
       notificationSound.playChime()

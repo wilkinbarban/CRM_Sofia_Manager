@@ -26,12 +26,12 @@ export interface BusinessProfile {
  * Curitiba regional validation and identity conventions.
  */
 export const DEFAULT_BUSINESS_PROFILE: BusinessProfile = {
-  name: 'Casa de Assados Brasa & Sabor',
-  shortName: 'Asados',
+  name: 'CRM Sofia Manager',
+  shortName: 'Sofia CRM',
   location: 'Curitiba - PR',
-  pickupAddress: 'Balcão Umbará (Casa de Assados Brasa & Sabor)',
+  pickupAddress: 'Balcão Principal',
   description: 'Plataforma omnichannel de atendimento inteligente e gestão de pedidos.',
-  personaRole: 'consultora gastronômica virtual e anfitriã de atendimento',
+  personaRole: 'assistente virtual inteligente e anfitriã de atendimento',
 }
 
 function cleanString(value: unknown): string | null {

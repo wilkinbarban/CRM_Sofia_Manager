@@ -31,13 +31,13 @@ export function BrandLogo({
   const profile = resolveBusinessProfileSync()
   const displayBrandName = brandName || profile.name
   const isDefault = displayBrandName === DEFAULT_BUSINESS_PROFILE.name
-  const displaySubtitle = subtitle || (isDefault ? 'Tradição no Umbará • Curitiba' : profile.location)
+  const displaySubtitle = subtitle || profile.location
 
   const content = (
     <div className={`flex items-center gap-3 select-none ${className}`}>
       <div className="relative flex items-center justify-center shrink-0 drop-shadow-md">
         <Image
-          src="/logo-brasa-sabor.png"
+          src="/icon.png"
           alt={displayBrandName}
           width={currentSize.img}
           height={currentSize.img}
@@ -47,15 +47,18 @@ export function BrandLogo({
       </div>
       <div className="flex flex-col">
         <div className="flex items-center gap-1.5 leading-tight">
-          {isDefault ? (
-            <span className={`font-bold tracking-tight text-zinc-100 ${currentSize.title}`}>
-              Casa de Assados <span className="text-amber-400 font-extrabold">Brasa &amp; Sabor</span>
-            </span>
-          ) : (
-            <span className={`font-bold tracking-tight text-zinc-100 ${currentSize.title}`}>
+          <span className={`font-bold tracking-tight text-zinc-100 ${currentSize.title}`}>
+            {displayBrandName.includes(' ') ? (
+              <>
+                {displayBrandName.substring(0, displayBrandName.lastIndexOf(' '))}{' '}
+                <span className="text-amber-400 font-extrabold">
+                  {displayBrandName.substring(displayBrandName.lastIndexOf(' ') + 1)}
+                </span>
+              </>
+            ) : (
               <span className="text-amber-400 font-extrabold">{displayBrandName}</span>
-            </span>
-          )}
+            )}
+          </span>
         </div>
         {showSubtitle && (
           <span className={`text-zinc-400 font-medium tracking-wide ${currentSize.sub}`}>

@@ -55,7 +55,7 @@ export function OperatorTopNavigation({ active, role, adminTab }: OperatorTopNav
         {items.map((item) => {
             const Icon = item.icon
             const isSupervisorAdminItem = normalizedRole === 'supervisor' && item.id === 'admin'
-            const itemTab = new URL(item.href, 'https://asados.local').searchParams.get('tab')
+            const itemTab = new URL(item.href, 'https://crmsofiamanager.local').searchParams.get('tab')
             const isActive = item.id === active && (
               !isSupervisorAdminItem ||
               (itemTab === 'estoque' ? operationalAdminTabs.has(adminTab ?? '') : !operationalAdminTabs.has(adminTab ?? ''))

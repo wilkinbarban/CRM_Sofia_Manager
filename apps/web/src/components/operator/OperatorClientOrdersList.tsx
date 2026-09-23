@@ -144,6 +144,7 @@ export default function OperatorClientOrdersList({
     const handleOrderUpdated = () => {
       carregarPedidos(true)
     }
+    window.addEventListener('crm:order-updated', handleOrderUpdated)
     window.addEventListener('asados:order-updated', handleOrderUpdated)
 
     const channel = supabase
@@ -163,6 +164,7 @@ export default function OperatorClientOrdersList({
       .subscribe()
 
     return () => {
+      window.removeEventListener('crm:order-updated', handleOrderUpdated)
       window.removeEventListener('asados:order-updated', handleOrderUpdated)
       supabase.removeChannel(channel)
     }

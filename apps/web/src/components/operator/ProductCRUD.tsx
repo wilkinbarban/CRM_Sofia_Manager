@@ -532,7 +532,7 @@ export default function ProductCRUD({ produtosIniciais }: ProductCRUDProps) {
                 <input
                   type="text"
                   required
-                  placeholder="Ex: Picanha Premium Asados (kg)"
+                  placeholder="Ex: Produto Modelo (unidade)"
                   value={nome}
                   onChange={(e) => setNome(e.target.value)}
                   className="w-full px-3 py-2 bg-zinc-950 border border-zinc-800 focus:border-amber-500 rounded-lg text-sm text-zinc-100 placeholder-zinc-600 outline-none transition-all"

@@ -119,9 +119,9 @@ export function montarPayloadCarrossel(params: EnviarCardapioInput) {
     const icone = p.nome.toLowerCase().includes('costela') ? '🥩' : '🍗'
 
     return {
-      imageUrl: p.urlImagem || 'https://crmsofiamanager.duckdns.org/logo-brasa-sabor.png',
+      imageUrl: p.urlImagem || 'https://crmsofiamanager.duckdns.org/icon.png',
       title: `${icone} ${p.nome}`,
-      body: `${p.descricao || 'Assado tradicional no bafo de domingo'}\n\n*Valor:* ${valor}`,
+      body: `${p.descricao || 'Item do catálogo disponível para pedido'}\n\n*Valor:* ${valor}`,
       buttons: [
         {
           type: 'reply',
@@ -241,7 +241,7 @@ export function montarPayloadCardsFallback(params: EnviarCardapioInput) {
     ].join('\n')
 
     return {
-      imageUrl: p.urlImagem || 'https://crmsofiamanager.duckdns.org/logo-brasa-sabor.png',
+      imageUrl: p.urlImagem || 'https://crmsofiamanager.duckdns.org/icon.png',
       caption,
       produtoId: p.id,
     }
