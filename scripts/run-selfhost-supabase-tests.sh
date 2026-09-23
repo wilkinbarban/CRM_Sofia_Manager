@@ -7,8 +7,56 @@ container="asados-supabase-db"
 workspace="/tmp/asados-supabase-tests-$$"
 database=
 test_number=0
-postgres_password="$(sed -n 's/^POSTGRES_PASSWORD=//p' "$root/ops/supabase/.env" | head -n 1)"
-[ -n "$postgres_password" ] || { echo "Missing POSTGRES_PASSWORD in ops/supabase/.env" >&2; exit 1; }
+
+env_file=
+checked_paths="$root/ops/supabase/.env"
+
+if [ -f "$root/ops/supabase/.env" ]; then
+  env_file="$root/ops/supabase/.env"
+else
+  canonical_root=
+  common_dir="$(git -C "$root" rev-parse --git-common-dir 2>/dev/null || true)"
+  if [ -n "$common_dir" ]; then
+    case "$common_dir" in
+      /*) candidate_dir="$common_dir" ;;
+      *) candidate_dir="$root/$common_dir" ;;
+    esac
+    candidate="$(CDPATH= cd -- "$candidate_dir/.." 2>/dev/null && pwd || true)"
+    if [ -n "$candidate" ] && [ -d "$candidate" ] && [ "$candidate" != "$root" ]; then
+      canonical_root="$candidate"
+    fi
+  fi
+
+  if [ -z "$canonical_root" ]; then
+    first_worktree="$(git -C "$root" worktree list --porcelain 2>/dev/null | sed -n 's/^worktree //p' | head -n 1 || true)"
+    if [ -n "$first_worktree" ]; then
+      candidate="$(CDPATH= cd -- "$first_worktree" 2>/dev/null && pwd || true)"
+      if [ -n "$candidate" ] && [ -d "$candidate" ] && [ "$candidate" != "$root" ]; then
+        canonical_root="$candidate"
+      fi
+    fi
+  fi
+
+  if [ -n "$canonical_root" ]; then
+    canonical_env="$canonical_root/ops/supabase/.env"
+    checked_paths="$checked_paths
+$canonical_env"
+    if [ -f "$canonical_env" ]; then
+      env_file="$canonical_env"
+    fi
+  fi
+fi
+
+if [ -z "$env_file" ]; then
+  echo "Missing self-hosted Supabase environment file." >&2
+  echo "Checked paths:" >&2
+  printf '%s\n' "$checked_paths" | sed 's/^/  - /' >&2
+  echo "Generate the environment in the canonical checkout with: (cd ops/supabase && ./generate-env.sh)" >&2
+  exit 1
+fi
+
+postgres_password="$(sed -n 's/^POSTGRES_PASSWORD=//p' "$env_file" | head -n 1)"
+[ -n "$postgres_password" ] || { echo "Missing POSTGRES_PASSWORD in $env_file" >&2; exit 1; }
 # The lifecycle harness opens dblink sessions. Its authenticated connection
 # string is provided only to the disposable psql session and never echoed.
 postgres_password_uri="$(node -p 'encodeURIComponent(process.argv[1])' "$postgres_password")"
@@ -32,9 +80,9 @@ trap 'cleanup; trap - EXIT; exit 143' TERM
   exit 1
 }
 
-docker compose -f "$compose_file" config --quiet
-docker compose -f "$compose_file" ps --status running db | grep -q . || {
-  echo "Self-hosted Supabase db service is not running. Start it with: docker compose -f ops/supabase/docker-compose.yml up -d" >&2
+docker compose --env-file "$env_file" -f "$compose_file" config --quiet
+docker compose --env-file "$env_file" -f "$compose_file" ps --status running db | grep -q . || {
+  echo "Self-hosted Supabase db service is not running. Start it with: docker compose --env-file $env_file -f ops/supabase/docker-compose.yml up -d" >&2
   exit 1
 }
 
@@ -69,7 +117,7 @@ run_test() {
   printf '\\ir tests/%s\n' "$test_name" \
     | docker exec -i "$container" sh -c "cat > '$runner'"
   echo "Running isolated self-hosted SQL test: $test_name"
-  docker compose -f "$compose_file" exec -T db \
+  docker compose --env-file "$env_file" -f "$compose_file" exec -T db \
     psql -qX -U supabase_admin -d "$database" -v ON_ERROR_STOP=1 \
       -v "runtime_dblink_conninfo=$conninfo" \
       -f "$runner"

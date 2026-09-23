@@ -6,7 +6,7 @@ This production topology is based on the pinned official Supabase Docker Compose
 
 - Only Kong (`127.0.0.1:8000` and `127.0.0.1:8443`) and the PostgreSQL maintenance endpoint bind to the host, always on loopback.
 - Studio, Auth, REST, Realtime, Storage, Meta, and Functions remain on `asados-supabase-private`.
-- `ops/supabase/.env` is generated locally with mode `0600` and is ignored by Git.
+- `ops/supabase/.env` is generated locally in the canonical checkout with mode `0600` and is ignored by Git. Never copy, move, or symlink `.env` into linked Git worktrees; temporary environment links or copies are strictly forbidden.
 - The public domain and TLS proxy are intentionally integrated in Phase 5 and deployed in Phase 7.
 - Optional imgproxy and Supavisor services are omitted: the application does not consume image transformations or direct pooled database connections, so running them would add attack surface and idle warnings without a current requirement.
 
@@ -47,3 +47,14 @@ The restore command validates every checksum before changing state. A Phase 4 pr
 ## Hosted-project migration decision
 
 The self-hosted baseline is created from the repository's 37 migrations and deterministic seed. No hosted-project import is part of this phase: preservation of the paused cloud project was not requested, and importing unknown cloud state would violate the clean-baseline gate. If a later cutover explicitly requires that data, follow Supabase's platform-to-self-hosted restore procedure into a disposable validation stack before replacing this baseline.
+
+## SQL test runners and linked worktrees
+
+The repository provides two distinct test runners for database verification:
+- **Local CLI runner (`npm run supabase:test`):** Uses the local Supabase CLI development stack and local CLI container on `127.0.0.1:54322`.
+- **Self-hosted runner (`scripts/run-selfhost-supabase-tests.sh` or `npm run selfhost:test:db`):** Targets the self-hosted Docker Compose stack (`asados-supabase-db`) using disposable test databases and pgTAP harnesses.
+
+When running self-hosted SQL tests from a linked Git worktree:
+- The runner automatically discovers the canonical checkout's environment via Git common-dir (with a `worktree list --porcelain` fallback) when a local `ops/supabase/.env` is absent.
+- The runner passes `--env-file <discovered-path>` directly to each Docker Compose invocation without mutating the worktree.
+- Never use, copy, or symlink `.env` files into linked worktrees. If the environment file is missing, generate it in the canonical checkout with `ops/supabase/generate-env.sh`.
