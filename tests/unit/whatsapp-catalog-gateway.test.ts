@@ -54,7 +54,7 @@ describe('WhatsApp Catalog Gateway & Multi-Level Fallback (TDD)', () => {
     })
 
     expect(payload.number).toBe('5541999998888')
-    expect(payload.body).toContain('O que vai querer hoje')
+    expect(payload.body).toContain('O que você deseja hoje')
     expect(payload.cards).toHaveLength(2)
     expect(payload.cards[0].title).toBe('🍗 Combo 1 - O Clássico Brasa & Sabor')
     expect(payload.cards[0].imageUrl).toBe('https://crmsofiamanager.duckdns.org/combo1.jpg')
@@ -84,7 +84,7 @@ describe('WhatsApp Catalog Gateway & Multi-Level Fallback (TDD)', () => {
       expect.objectContaining({
         method: 'POST',
         headers: expect.objectContaining({ Origin: 'https://crmsofiamanager.duckdns.org' }),
-        body: expect.stringContaining('Cardápio Oficial de Domingo'),
+        body: expect.stringContaining('Catálogo de Produtos'),
       }),
     )
   })

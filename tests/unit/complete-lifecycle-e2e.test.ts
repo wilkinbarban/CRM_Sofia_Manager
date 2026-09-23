@@ -597,12 +597,12 @@ describe('E2E Lifecycle Test: Ciclo Completo de Pedidos (Sem e Com Intervenção
       it('formata e entrega cardápio com descrições, preços e fotos para Telegram e Web', () => {
         const textoCardapioTg = formatarCardapioResumido(mockProdutos as any)
 
-        expect(textoCardapioTg).toContain('CASA DE ASSADOS BRASA & SABOR')
+        expect(textoCardapioTg).toContain('CRM SOFIA MANAGER')
         expect(textoCardapioTg.toUpperCase()).toContain('COMBO 1 - O CLÁSSICO BRASA & SABOR')
         expect(textoCardapioTg).toContain('R$ 69,90')
         expect(textoCardapioTg.toUpperCase()).toContain('COSTELA FOGO DE CHÃO (KG)')
         expect(textoCardapioTg).toContain('R$ 79,90')
-        expect(textoCardapioTg).toContain('Bairro Umbará, Curitiba - PR')
+        expect(textoCardapioTg).toContain('produtos e combos especiais')
       })
 
       it('processa mensagem do cliente no webhook do Telegram e responde com Sofia', async () => {
