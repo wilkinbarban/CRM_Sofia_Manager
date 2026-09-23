@@ -47,6 +47,7 @@ This evidence is local only. It does **not** claim that a production migration w
 | Diff hygiene | `git diff --check` passed. |
 | Production build | Passed with Next.js 16.3.0. |
 | Dependency tree | npm-only local tree with React 19.2.4 and ReactDOM 19.2.4; no pnpm artifacts were used. |
+| Database test runners | Distinction maintained: `npm run supabase:test` targets the local CLI database (`127.0.0.1:54322`), whereas `npm run selfhost:test:db` (`scripts/run-selfhost-supabase-tests.sh`) targets the self-hosted Compose stack (`asados-supabase-db`) with automatic canonical-checkout `.env` discovery for linked worktrees and zero `.env` copying or symlinking. |
 
 ## Sanitized completed canary evidence
 
@@ -94,7 +95,7 @@ The historical baseline **before the later Telegram fixture** was processing `ab
 
 2. Treat `openspec/changes/complete-multichannel-payment-proof-rollout/` as expected authorized untracked work. Preserve it and do not edit it during documentation-only work unless separately authorized.
 3. Do not deploy, apply migrations, recreate Web, change a gate, replay, restore, purge, clean up, or send a provider canary without explicit authorization for that exact operation.
-4. Before an authorized window, check the project-owned environment file path, owner, and mode without printing values. Temporary links must not be a hidden configuration authority.
+4. Before an authorized window, check the project-owned environment file path, owner, and mode without printing values. Temporary environment links or copies into worktrees are strictly forbidden; linked worktrees rely on automatic canonical-checkout environment discovery in `scripts/run-selfhost-supabase-tests.sh` via Git common-dir and `worktree list --porcelain` fallback without copying or linking `.env`.
 5. Record only sanitized evidence: approved window, role/owner reference, aggregate count/outcome, gate states, image/migration aliases, health/circuit-breaker result, rollback readiness, and redacted correlation aliases.
 
 ## Documentation and verification boundaries

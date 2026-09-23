@@ -44,6 +44,7 @@ These checks validate the current checkout only. They do **not** establish produ
 - `git diff --check`: passed.
 - Local production build: passed on Next.js 16.3.0.
 - Dependencies: npm-only local React/ReactDOM 19.2.4 tree; no pnpm.
+- Test runner environments: local CLI runner (`npm run supabase:test`) runs against the local development stack (`127.0.0.1:54322`); self-hosted runner (`npm run selfhost:test:db` via `scripts/run-selfhost-supabase-tests.sh`) runs isolated tests in `asados-supabase-db` with automatic canonical environment discovery for linked worktrees and zero `.env` copying or symlinking.
 
 ## Completed baseline canaries
 
@@ -87,7 +88,7 @@ At close of the authorized Telegram-gate deployment, processing and outbox dead 
 
 ## Operational preflight, observation, and rollback
 
-Before an authorized window, verify the intended project-owned environment path/ownership/mode without printing values; temporary environment links must not become configuration authority. Record only a path alias and redacted effective diagnostic result.
+Before an authorized window, verify the intended project-owned environment path/ownership/mode without printing values; temporary environment links or copies into worktrees are strictly forbidden and must not become configuration authority. For self-hosted SQL tests (`npm run selfhost:test:db` via `scripts/run-selfhost-supabase-tests.sh`), linked worktrees rely on automatic canonical-checkout environment discovery via Git common-dir and `worktree list --porcelain` fallback without copying or linking `.env`, separate from the local CLI development runner (`npm run supabase:test`). Record only a path alias and redacted effective diagnostic result.
 
 Use bounded aggregate diagnostics: effective gate state/reason (including Telegram), queue and dead-letter counts, worker/maintenance/health and circuit-breaker state, restart count, and HTTP status. Do not use authenticated alert probes merely for connectivity because they can cause real notification effects.
 
