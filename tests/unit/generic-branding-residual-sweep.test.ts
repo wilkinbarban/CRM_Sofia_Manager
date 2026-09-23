@@ -29,6 +29,11 @@ const sourceText = Object.fromEntries(
 
 const combinedRuntimeSource = Object.values(sourceText).join('\n')
 
+const compatibilityMigrationSource = readFileSync(
+  join(process.cwd(), 'apps/web/src/lib/notifications/sound-preference.ts'),
+  'utf8',
+)
+
 const retiredCopy = [
   'Tradição em Assados de Domingo',
   'Domingo de Assados no Umbará',
@@ -54,7 +59,8 @@ describe('generic CRM branding residual sweep', () => {
     expect(combinedRuntimeSource).not.toMatch(/asados_/i)
     expect(combinedRuntimeSource).toContain('crm:order-updated')
     expect(combinedRuntimeSource).toContain('crm:open-attachment-preview')
-    expect(combinedRuntimeSource).toContain('crm_notificacoes_som')
+    expect(compatibilityMigrationSource).toContain('crm_notificacoes_som')
+    expect(compatibilityMigrationSource).toContain('asados_notificacoes_som')
   })
 
   it('keeps Curitiba DDD 41 phone validation intact', () => {
