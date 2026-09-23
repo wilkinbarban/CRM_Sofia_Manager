@@ -3,12 +3,26 @@ import { Worker } from 'node:worker_threads'
 import { createHash } from 'node:crypto'
 import path from 'node:path'
 import { copyFile, mkdtemp, readFile, symlink } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
 import os from 'node:os'
 import { DEEPSEEK_DEFAULT_MODEL } from '@/lib/ai/deepseek'
 import { processPaymentProofJob, renderPaymentProofWithWorker } from '@/lib/payment-proofs/processing-worker'
 
 const PDF = new Uint8Array([0x25,0x50,0x44,0x46,0x2d,0x31])
 const PNG = new Uint8Array([1,2,3])
+const standaloneNodeModules = path.resolve('apps/web/.next/standalone/node_modules')
+const rootNodeModules = path.resolve('node_modules')
+
+function resolveWorkerNodeModules(options: {
+  standalonePath?: string
+  rootPath?: string
+  exists?: (targetPath: string) => boolean
+} = {}): string {
+  const standalone = options.standalonePath ?? standaloneNodeModules
+  const root = options.rootPath ?? rootNodeModules
+  const exists = options.exists ?? existsSync
+  return exists(standalone) ? standalone : root
+}
 
 function renderablePdf(width = 20, height = 20, content = '') {
   const objects = ['<< /Type /Catalog /Pages 2 0 R >>','<< /Type /Pages /Kids [3 0 R] /Count 1 >>',`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${width} ${height}] /Resources << >> /Contents 4 0 R >>`,`<< /Length ${Buffer.byteLength(content)} >>\nstream\n${content}\nendstream`]
@@ -131,11 +145,53 @@ describe('payment-proof processing worker', () => {
     expect(result.png.subarray(0, 8)).toEqual(Uint8Array.from([137,80,78,71,13,10,26,10]))
   })
 
+  it('prefers standalone dependencies when present and falls back to root node_modules', () => {
+    const customStandalone = '/custom/standalone/node_modules'
+    const customRoot = '/custom/node_modules'
+
+    expect(resolveWorkerNodeModules({
+      standalonePath: customStandalone,
+      rootPath: customRoot,
+      exists: (target) => target === customStandalone,
+    })).toBe(customStandalone)
+
+    expect(resolveWorkerNodeModules({
+      standalonePath: customStandalone,
+      rootPath: customRoot,
+      exists: (target) => target === customRoot,
+    })).toBe(customRoot)
+
+    expect(resolveWorkerNodeModules({
+      standalonePath: customStandalone,
+      rootPath: customRoot,
+      exists: () => false,
+    })).toBe(customRoot)
+
+    expect(resolveWorkerNodeModules()).toBe(
+      existsSync(standaloneNodeModules) ? standaloneNodeModules : rootNodeModules,
+    )
+  })
+
   it('renders from an isolated production-like root with standalone dependencies', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'asados-payment-proof-processing-'))
     const workerPath = path.join(root, 'payment-proof-render-worker.mjs')
     await copyFile('apps/web/src/lib/payment-proofs/render-worker.mjs', workerPath)
-    await symlink(path.resolve('apps/web/.next/standalone/node_modules'), path.join(root, 'node_modules'), 'dir')
+    await symlink(resolveWorkerNodeModules(), path.join(root, 'node_modules'), 'dir')
+    const bytes = renderablePdf()
+
+    const result = await renderPaymentProofWithWorker(bytes, 20_000, () => new Worker(
+      workerPath,
+      { workerData: { bytes: bytes.slice().buffer } },
+    ))
+
+    expect(result.png.subarray(0, 8)).toEqual(Uint8Array.from([137,80,78,71,13,10,26,10]))
+  })
+
+  it('renders from an isolated production-like root with fallback root node_modules', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'asados-payment-proof-processing-'))
+    const workerPath = path.join(root, 'payment-proof-render-worker.mjs')
+    await copyFile('apps/web/src/lib/payment-proofs/render-worker.mjs', workerPath)
+    await symlink(resolveWorkerNodeModules({ exists: () => false }), path.join(root, 'node_modules'), 'dir')
     const bytes = renderablePdf()
 
     const result = await renderPaymentProofWithWorker(bytes, 20_000, () => new Worker(
@@ -150,7 +206,7 @@ describe('payment-proof processing worker', () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'asados-payment-proof-processing-'))
     const workerPath = path.join(root, 'payment-proof-render-worker.mjs')
     await copyFile('apps/web/src/lib/payment-proofs/render-worker.mjs', workerPath)
-    await symlink(path.resolve('apps/web/.next/standalone/node_modules'), path.join(root, 'node_modules'), 'dir')
+    await symlink(resolveWorkerNodeModules(), path.join(root, 'node_modules'), 'dir')
     const bytes = renderablePdf(100, 100, 'q 0.707 0.707 -0.707 0.707 50 5 cm 1 0 0 rg 0 0 40 40 re f Q')
 
     const result = await renderPaymentProofWithWorker(bytes, 20_000, () => new Worker(
@@ -167,7 +223,7 @@ describe('payment-proof processing worker', () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'asados-payment-proof-processing-'))
     const workerPath = path.join(root, 'payment-proof-render-worker.mjs')
     await copyFile('apps/web/src/lib/payment-proofs/render-worker.mjs', workerPath)
-    await symlink(path.resolve('apps/web/.next/standalone/node_modules'), path.join(root, 'node_modules'), 'dir')
+    await symlink(resolveWorkerNodeModules(), path.join(root, 'node_modules'), 'dir')
     const bytes = renderablePdf(816, 1056)
 
     const result = await renderPaymentProofWithWorker(bytes, 20_000, () => new Worker(
