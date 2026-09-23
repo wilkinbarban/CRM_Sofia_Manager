@@ -160,8 +160,8 @@ export function AttachmentCard({
       previewTriggerRef.current?.focus()
       setPreviewOpen(true)
     }
-    window.addEventListener('asados:open-attachment-preview', openRequestedPreview)
-    return () => window.removeEventListener('asados:open-attachment-preview', openRequestedPreview)
+    window.addEventListener('crm:open-attachment-preview', openRequestedPreview)
+    return () => window.removeEventListener('crm:open-attachment-preview', openRequestedPreview)
   }, [messageId, preview])
 
   const closePreview = () => {

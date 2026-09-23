@@ -29,8 +29,8 @@ describe('Business Profile configuration', () => {
   })
 
   it('exposes defined default values with Curitiba regional location preserved', () => {
-    expect(DEFAULT_BUSINESS_PROFILE.name).toBe('Casa de Assados Brasa & Sabor')
-    expect(DEFAULT_BUSINESS_PROFILE.shortName).toBe('Asados')
+    expect(DEFAULT_BUSINESS_PROFILE.name).toBe('CRM Sofia Manager')
+    expect(DEFAULT_BUSINESS_PROFILE.shortName).toBe('Sofia CRM')
     expect(DEFAULT_BUSINESS_PROFILE.location).toContain('Curitiba')
     expect(DEFAULT_BUSINESS_PROFILE.pickupAddress).toBeDefined()
     expect(DEFAULT_BUSINESS_PROFILE.personaRole).toBeDefined()

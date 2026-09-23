@@ -43,5 +43,6 @@ describe('operator receipt banner preview target', () => {
     expect(bannerSource).toContain('resolveReceiptPreviewTarget(mensagemRecente)')
     expect(bannerSource).toContain('handleAbrirVisualizador(')
     expect(bannerSource).not.toContain("dispatchEvent(new CustomEvent('asados:open-attachment-preview'")
+    expect(bannerSource).not.toContain("dispatchEvent(new CustomEvent('crm:open-attachment-preview'")
   })
 })

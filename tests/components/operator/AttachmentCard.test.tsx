@@ -106,7 +106,7 @@ describe('operator attachment PDF preview', () => {
   it('opens its existing PNG when requested externally by message id', async () => {
     render(<AttachmentCard messageId="message-latest" urlArquivo="private/customer-proof.pdf" onVisualizar={vi.fn()} />)
     await waitFor(() => expect(screen.getByAltText(/Prévia do comprovante enviado/i)).toBeInTheDocument())
-    window.dispatchEvent(new CustomEvent('asados:open-attachment-preview', { detail: { messageId: 'message-latest' } }))
+    window.dispatchEvent(new CustomEvent('crm:open-attachment-preview', { detail: { messageId: 'message-latest' } }))
     await waitFor(() => expect(screen.getByRole('dialog')).toBeInTheDocument())
     expect(global.fetch).toHaveBeenCalledTimes(1)
   })
@@ -114,7 +114,7 @@ describe('operator attachment PDF preview', () => {
   it('ignores external preview requests for a different message', async () => {
     render(<AttachmentCard messageId="message-old" urlArquivo="private/customer-proof.pdf" onVisualizar={vi.fn()} />)
     await waitFor(() => expect(screen.getByAltText(/Prévia do comprovante enviado/i)).toBeInTheDocument())
-    window.dispatchEvent(new CustomEvent('asados:open-attachment-preview', { detail: { messageId: 'message-latest' } }))
+    window.dispatchEvent(new CustomEvent('crm:open-attachment-preview', { detail: { messageId: 'message-latest' } }))
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 

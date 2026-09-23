@@ -101,12 +101,12 @@ describe('Atendimento Notifications & Queue Indicators', () => {
     // Clica para silenciar
     fireEvent.click(somBtn)
     expect(screen.getByText('Mudo')).toBeDefined()
-    expect(localStorage.getItem('asados_notificacoes_som')).toBe('false')
+    expect(localStorage.getItem('crm_notificacoes_som')).toBe('false')
 
     // Clica para reativar e emite som de teste
     fireEvent.click(somBtn)
     expect(screen.getByText('Som ativo')).toBeDefined()
-    expect(localStorage.getItem('asados_notificacoes_som')).toBe('true')
+    expect(localStorage.getItem('crm_notificacoes_som')).toBe('true')
     expect(playSpy).toHaveBeenCalled()
   })
 })

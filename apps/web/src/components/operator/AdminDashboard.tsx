@@ -746,7 +746,7 @@ export default function AdminDashboard({
   const personaRole = systemConfigs?.SOFIA_PERSONA_ROLE || (businessName === defaultProfile.name ? 'assistente virtual amigável' : defaultProfile.personaRole)
 
   const systemPromptStatic = `Você é a Sofía, ${personaRole} da ${businessName} em ${businessLocation}.
-Sua personalidade é acolhedora, simpática, com leve sotaque e gírias curitibanas (use termos como "piá", "daí" de forma natural e sem exageros).
+Sua personalidade é acolhedora, simpática e clara, com linguagem natural e sem exageros.
 Você deve usar emojis com moderação (no máximo 1 ou 2 por mensagem).
 
 DIRETRIZES RÍGIDAS DE COMPORTAMENTO:
@@ -1472,7 +1472,7 @@ DIRETRIZES RÍGIDAS DE COMPORTAMENTO:
             </span>
             <div>
               <div className="text-xs font-bold text-zinc-200">Painel de Controle • CRM Sofia Manager</div>
-              <div className="text-[11px] text-zinc-400">Gestão centralizada de estoque, pré-vendas, IA e equipe no Umbará</div>
+              <div className="text-[11px] text-zinc-400">Gestão centralizada de estoque, pré-vendas, IA e equipe</div>
             </div>
           </div>
 
@@ -2245,7 +2245,7 @@ DIRETRIZES RÍGIDAS DE COMPORTAMENTO:
             <div className="rounded-xl border border-amber-500/10 bg-amber-500/5 p-4 text-xs text-amber-500/80 leading-relaxed shrink-0 flex gap-2">
               <AlertTriangle className="h-4 w-4 shrink-0 text-amber-500 mt-0.5" />
               <div>
-                Este prompt é carregado pelo pipeline de IA da DeepSeek para estruturar as respostas. Ele foi desenhado para assegurar o tom curitibano de atendimento, evitar alucinações técnicas fora da base de conhecimento e garantir o encaminhamento suave ao transbordo humano sempre que necessário.
+                Este prompt é carregado pelo pipeline de IA da DeepSeek para estruturar as respostas. Ele foi desenhado para manter um atendimento consistente, evitar alucinações técnicas fora da base de conhecimento e garantir o encaminhamento suave ao transbordo humano sempre que necessário.
               </div>
             </div>
           </div>

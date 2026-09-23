@@ -429,7 +429,7 @@ export default function WhatsAppCard({
               <input
                   id="evolution-instance-name"
                 type="text"
-                placeholder="Ex: asados-instance"
+                placeholder="Ex: sofia-instance"
                 value={instanceName}
                 onChange={(e) => setInstanceName(e.target.value)}
                 className="w-full px-4 py-2 bg-zinc-900/40 border border-zinc-855 focus:border-amber-500/80 rounded-xl text-xs text-zinc-200 placeholder-zinc-700 outline-none transition-all focus:ring-1 focus:ring-amber-500/30 disabled:cursor-not-allowed"

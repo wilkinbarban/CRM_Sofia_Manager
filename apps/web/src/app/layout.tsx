@@ -36,19 +36,18 @@ export const metadata: Metadata = {
     apple: '/apple-touch-icon.png',
   },
   openGraph: {
-    title: 'Casa de Assados Brasa & Sabor | O Verdadeiro Sabor do Domingo',
-    description:
-      'Frango recheado, costela no bafo por 6h e combos completos para a sua família no Umbará, Curitiba.',
+    title: `${profile.name} | Atendimento Inteligente & Gestão de Pedidos`,
+    description: profile.description,
     url: 'https://crmsofiamanager.duckdns.org',
-    siteName: 'Casa de Assados Brasa & Sabor',
+    siteName: profile.name,
     locale: 'pt_BR',
     type: 'website',
     images: [
       {
-        url: '/logo-brasa-sabor.png',
-        width: 1024,
-        height: 1024,
-        alt: 'Casa de Assados Brasa & Sabor - Combos de Churrasco',
+        url: '/icon.png',
+        width: 512,
+        height: 512,
+        alt: `${profile.name} - Atendimento Inteligente`,
       },
     ],
   },

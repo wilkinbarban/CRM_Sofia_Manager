@@ -216,7 +216,7 @@ export default function BusinessProfileCard({
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="Ex: Casa de Assados Brasa & Sabor"
+              placeholder="Ex: CRM Sofia Manager"
               required
               className="w-full rounded-xl border border-zinc-800 bg-zinc-900/60 px-3.5 py-2.5 text-xs text-zinc-100 placeholder-zinc-500 focus:border-amber-500 focus:outline-none transition-colors"
             />
@@ -236,7 +236,7 @@ export default function BusinessProfileCard({
               type="text"
               value={shortName}
               onChange={(e) => setShortName(e.target.value)}
-              placeholder="Ex: Asados"
+              placeholder="Ex: Sofia CRM"
               required
               className="w-full rounded-xl border border-zinc-800 bg-zinc-900/60 px-3.5 py-2.5 text-xs text-zinc-100 placeholder-zinc-500 focus:border-amber-500 focus:outline-none transition-colors"
             />
@@ -276,7 +276,7 @@ export default function BusinessProfileCard({
               type="text"
               value={pickupAddress}
               onChange={(e) => setPickupAddress(e.target.value)}
-              placeholder="Ex: Balcão Umbará (Casa de Assados Brasa & Sabor)"
+              placeholder="Ex: Balcão Principal - Rua Central, 100"
               required
               className="w-full rounded-xl border border-zinc-800 bg-zinc-900/60 px-3.5 py-2.5 text-xs text-zinc-100 placeholder-zinc-500 focus:border-amber-500 focus:outline-none transition-colors"
             />

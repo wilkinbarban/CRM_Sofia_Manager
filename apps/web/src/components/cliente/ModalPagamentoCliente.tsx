@@ -318,7 +318,7 @@ export default function ModalPagamentoCliente({
             </div>
             <div>
               <span className="text-[10px] font-black uppercase tracking-widest text-amber-500">
-                Pagamento Seguro • Balcão Umbará
+                Pagamento Seguro • Pedido
               </span>
               <h2 className="text-base font-black text-zinc-50">
                 Pedido #{pedidoId.slice(0, 8).toUpperCase()}

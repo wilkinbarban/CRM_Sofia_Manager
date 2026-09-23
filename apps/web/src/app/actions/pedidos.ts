@@ -1381,7 +1381,7 @@ export async function gerarCobrancaPixPedido(pedidoId: string) {
 
     if (isPlaceholder) {
       const mockPaymentId = `mock_pix_${pedidoId.slice(0, 8)}`
-      const mockCopiaCola = `00020126580014br.gov.bcb.pix0136${pedidoId}520400005303986540${valorReais.toFixed(2)}5802BR5928CASA DE ASSADOS BRASA E SABOR6008CURITIBA62070503***6304MOCK`
+      const mockCopiaCola = `00020126580014br.gov.bcb.pix0136${pedidoId}520400005303986540${valorReais.toFixed(2)}5802BR5917CRM SOFIA MANAGER6008CURITIBA62070503***6304MOCK`
       const mockQrCodeDataUrl = await QRCode.toDataURL(mockCopiaCola, { width: 320, margin: 1 })
       const mockQrCodeBase64 = mockQrCodeDataUrl.replace(/^data:image\/png;base64,/, '')
 
@@ -1461,7 +1461,7 @@ export async function gerarCobrancaPixPedido(pedidoId: string) {
       if (isLiveCredsError) {
         console.warn('[gerarCobrancaPixPedido] Usando modo de simulação PIX Sandbox devido a credenciais de teste não homologadas no BACEN.')
         const mockPaymentId = `mock_pix_${pedidoId.slice(0, 8)}`
-        const mockCopiaCola = `00020126580014br.gov.bcb.pix0136${pedidoId}520400005303986540${valorReais.toFixed(2)}5802BR5928CASA DE ASSADOS BRASA E SABOR6008CURITIBA62070503***6304MOCK`
+        const mockCopiaCola = `00020126580014br.gov.bcb.pix0136${pedidoId}520400005303986540${valorReais.toFixed(2)}5802BR5917CRM SOFIA MANAGER6008CURITIBA62070503***6304MOCK`
         const mockQrCodeDataUrl = await QRCode.toDataURL(mockCopiaCola, { width: 320, margin: 1 })
         const mockQrCodeBase64 = mockQrCodeDataUrl.replace(/^data:image\/png;base64,/, '')
 

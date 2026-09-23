@@ -245,7 +245,7 @@ export default function OperatorInboxContainer({
             const isPrioritaria = isPriorityIntent(novaMsg.conteudo)
             
             if (typeof window !== 'undefined') {
-              const somSalvo = localStorage.getItem('asados_notificacoes_som') !== 'false'
+              const somSalvo = localStorage.getItem('crm_notificacoes_som') !== 'false'
               if (somSalvo) {
                 if (isPrioritaria) {
                   notificationSound.playPriorityAlert()
@@ -310,11 +310,11 @@ export default function OperatorInboxContainer({
           const novoPedido = payload.new as any
 
           if (typeof window !== 'undefined') {
-            const somSalvo = localStorage.getItem('asados_notificacoes_som') !== 'false'
+            const somSalvo = localStorage.getItem('crm_notificacoes_som') !== 'false'
             if (somSalvo) {
               notificationSound.playNewOrderAlert()
             }
-            notificationSound.showDesktopNotification('🥩 Novo Pedido Recebido!', {
+            notificationSound.showDesktopNotification('📦 Novo Pedido Recebido!', {
               body: `Pedido #${novoPedido.id?.substring(0, 8).toUpperCase()} recebido no balcão de atendimento.`
             })
           }

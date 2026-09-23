@@ -325,7 +325,7 @@ export default function OperatorCartPanel({
               className="mt-3 flex items-center gap-1.5 px-3 py-1.5 bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-amber-400 text-xs font-semibold rounded-lg transition-all cursor-pointer"
             >
               <PackagePlus className="h-4 w-4" />
-              <span>Abrir Catálogo de Assados</span>
+              <span>Abrir Catálogo de Produtos</span>
             </button>
           </div>
         ) : (
@@ -456,7 +456,7 @@ export default function OperatorCartPanel({
               <div>
                 <label className="block text-[11px] font-medium text-zinc-400 mb-1 flex items-center gap-1.5">
                   <Clock className="h-3.5 w-3.5 text-amber-500" />
-                  <span>Janela de Retirada (Domingo):</span>
+                  <span>Janela de Retirada:</span>
                 </label>
                 <select
                   value={horarioRetirada}
@@ -465,7 +465,7 @@ export default function OperatorCartPanel({
                 >
                   {HORARIOS_RETIRADA.map((h) => (
                     <option key={h} value={h}>
-                      {h} (Balcão Umbará)
+                      {h} (Ponto de retirada)
                     </option>
                   ))}
                 </select>

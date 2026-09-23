@@ -101,17 +101,14 @@ function obterRespostaMock(
   }
 
   if (texto.includes('preço') || texto.includes('preco') || texto.includes('valor') || texto.includes('quanto custa') || texto.includes('quanto tá') || texto.includes('quanto ta')) {
-    return `Nossos combos têm o melhor custo-benefício de Curitiba, piá! 💰\n\n• *Combo 1 (Clássico Brasa & Sabor - Frango Recheado)*: \`R$ 69,90\` (3-4 pessoas)\n• *Combo 2 (Costela Suprema no Bafo)*: \`R$ 119,90\` (4 pessoas)\n• *Combo 3 (Dueto Brasa & Sabor - Frango & Costelinha Suína)*: \`R$ 94,90\` (3-4 pessoas)\n• *Combo 4 (Kit Churrasco Família)*: \`R$ 169,90\` (5-6 pessoas)\n\n💬 *Quantas pessoas vão almoçar com você hoje? Me diz que te indico o combo perfeito!* 😊`
+    return `Nossos combos têm o melhor custo-benefício de ${profile.location}, piá! 💰\n\n• *Combo 1 (Clássico - Frango Recheado)*: \`R$ 69,90\` (3-4 pessoas)\n• *Combo 2 (Costela Suprema no Bafo)*: \`R$ 119,90\` (4 pessoas)\n• *Combo 3 (Dueto Especial - Frango & Costelinha Suína)*: \`R$ 94,90\` (3-4 pessoas)\n• *Combo 4 (Kit Família)*: \`R$ 169,90\` (5-6 pessoas)\n\n💬 *Quantas pessoas vão almoçar com você hoje? Me diz que te indico o combo perfeito!* 😊`
   }
 
   if (texto.includes('horário') || texto.includes('horario') || texto.includes('funcionamento') || texto.includes('que horas') || texto.includes('abre') || texto.includes('fecha')) {
-    return 'Nosso atendimento para pré-venda e encomendas de assados funciona durante a semana, e as retiradas quentinhas acontecem aos sábados e domingos das 11h00 às 14h00, em janelas de 15 minutos sem fila no Umbará! ⏰ Daí, quer agendar o seu almoço? 😊'
+    return 'Nosso atendimento funciona durante a semana, e as retiradas acontecem em janelas de 15 minutos sem fila! ⏰ Daí, quer agendar o seu pedido? 😊'
   }
 
-  if (texto.includes('endereço') || texto.includes('endereco') || texto.includes('localização') || texto.includes('localizacao') || texto.includes('onde fica') || texto.includes('onde ficam') || texto.includes('rua') || texto.includes('bairro') || texto.includes('umbará') || texto.includes('umbara')) {
-    if (profile.name === DEFAULT_BUSINESS_PROFILE.name) {
-      return 'Ficamos no bairro Umbará, em Curitiba - PR, piá! Fácil acesso com estacionamento rápido para você retirar seu assado na estufa em menos de 90 segundos! 📍 Daí, vai retirar no balcão ou prefere delivery? 🛵'
-    }
+  if (texto.includes('endereço') || texto.includes('endereco') || texto.includes('localização') || texto.includes('localizacao') || texto.includes('onde fica') || texto.includes('onde ficam') || texto.includes('rua') || texto.includes('bairro')) {
     return `Ficamos em ${profile.pickupAddress}, ${profile.location}, piá! Fácil acesso com estacionamento rápido para você retirar seu pedido com agilidade! 📍 Daí, vai retirar no balcão ou prefere delivery? 🛵`
   }
 
@@ -135,9 +132,6 @@ function obterRespostaMock(
   }
 
   // Resposta padrão
-  if (profile.name === DEFAULT_BUSINESS_PROFILE.name) {
-    return 'Olá! Sou a Sofía, assistente virtual da Casa de Assados Brasa & Sabor no Umbará, piá! 😊 Como posso te ajudar com o seu almoço hoje? Daí, quer conhecer nossos 4 combos especiais ou agendar uma retirada? 🍖🔥'
-  }
   return `Olá! Sou a Sofía, ${profile.personaRole} da ${profile.name} (${profile.location}), piá! 😊 Como posso te ajudar com o seu pedido hoje?`
 }
 

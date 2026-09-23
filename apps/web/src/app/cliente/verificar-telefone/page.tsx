@@ -230,7 +230,7 @@ export default function VerificarTelefonePage() {
         <div className="flex flex-col items-center mb-8 text-center">
           <BrandLogo size="xl" showSubtitle={false} className="flex-col !gap-3" />
           <p className="text-xs text-amber-500 font-bold tracking-widest uppercase mt-1">
-            Tradição em Assados de Domingo • Umbará
+            Verificação segura de acesso
           </p>
           <p className="text-sm text-zinc-400 mt-2 text-center">
             Validação de segurança de celular para clientes de Curitiba

@@ -43,7 +43,7 @@ function formatarMoeda(centavos: number): string {
 function formatarResumoCarrinho(carrinho: CarrinhoCompleto): string {
   const itens = carrinho.itens_carrinho || []
   if (itens.length === 0) {
-    return `🛒 *Seu carrinho está vazio.*\n\nQue tal dar uma olhadinha no nosso cardápio de assados especiais para o domingo?`
+    return `🛒 *Seu carrinho está vazio.*\n\nQue tal dar uma olhadinha no nosso catálogo de produtos?`
   }
 
   const linhas = itens.map((item) => {
@@ -60,7 +60,7 @@ function formatarResumoCarrinho(carrinho: CarrinhoCompleto): string {
     linhas.join('\n'),
     ``,
     `💰 *Total:* ${totalFormatado}`,
-    `⏰ *Retirada:* Domingo (Balcão Umbará)`,
+    `⏰ *Retirada:* Consulte o ponto informado no pedido`,
     ``,
     `Para confirmar ou adicionar mais itens, pode me chamar por aqui! 😊`,
   ].join('\n')
@@ -136,7 +136,7 @@ export async function processarAcaoInterativaWhatsApp(
         ``,
         `💰 *Subtotal Atual:* ${totalGeral}`,
         ``,
-        `Deseja adicionar mais algum assado ou já quer escolher o horário de retirada no domingo?`,
+        `Deseja adicionar mais algum item ou já quer escolher o horário de retirada?`,
       ].join('\n')
 
       return {

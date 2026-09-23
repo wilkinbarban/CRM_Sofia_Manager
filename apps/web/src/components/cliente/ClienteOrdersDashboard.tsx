@@ -174,7 +174,7 @@ export default function ClienteOrdersDashboard({
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-5 sm:p-6 rounded-3xl border border-amber-500/20 bg-gradient-to-br from-amber-500/10 via-zinc-900/60 to-zinc-950 shadow-xl shadow-black/40">
           <div>
             <span className="text-[10px] font-black uppercase tracking-[0.2em] text-amber-400">
-              Painel do Cliente • Balcão Umbará
+              Painel do Cliente
             </span>
             <h1 className="mt-1 text-2xl font-black text-zinc-50 flex items-center gap-2.5">
               <Package className="h-6 w-6 text-amber-500" />
@@ -239,7 +239,7 @@ export default function ClienteOrdersDashboard({
               <Package className="h-12 w-12 mx-auto text-zinc-700 mb-1" />
               <h3 className="text-sm font-bold text-zinc-300">Nenhum pedido registrado ainda</h3>
               <p className="text-xs text-zinc-500 max-w-md mx-auto">
-                Monte seu pedido na aba Cardápio ou converse com a Sofía no chat para fazer sua reserva de assados de domingo!
+                Monte seu pedido na aba Cardápio ou converse com a Sofía no chat para fazer sua solicitação!
               </p>
               <Link
                 href="/cliente/chat"

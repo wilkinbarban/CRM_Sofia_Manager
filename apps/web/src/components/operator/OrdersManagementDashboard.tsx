@@ -175,7 +175,7 @@ export default function OrdersManagementDashboard({
     const handleOrderUpdated = () => {
       carregarPedidos(true)
     }
-    window.addEventListener('asados:order-updated', handleOrderUpdated)
+    window.addEventListener('crm:order-updated', handleOrderUpdated)
 
     const channel = supabase
       .channel('operator-orders-dashboard-realtime')
@@ -193,7 +193,7 @@ export default function OrdersManagementDashboard({
       .subscribe()
 
     return () => {
-      window.removeEventListener('asados:order-updated', handleOrderUpdated)
+      window.removeEventListener('crm:order-updated', handleOrderUpdated)
       supabase.removeChannel(channel)
     }
   }, [carregarPedidos, pedidosIniciais.length, supabase])
@@ -542,7 +542,7 @@ export default function OrdersManagementDashboard({
           </div>
         )}
 
-        {/* Métricas e KPIs do Domingo de Assados */}
+        {/* Métricas e KPIs de pedidos */}
         <section aria-label="Indicadores de pedidos" className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <div className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-5 backdrop-blur-xs flex items-center justify-between">
             <div>
@@ -777,7 +777,7 @@ export default function OrdersManagementDashboard({
                   className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-2.5 py-1.5 text-xs text-zinc-200 focus:border-amber-500 focus:outline-none"
                 >
                   <option value="todos">Todos os registros</option>
-                  <option value="hoje">☀️ Hoje (Domingo)</option>
+                  <option value="hoje">☀️ Hoje</option>
                   <option value="ultimos_7_dias">📅 Últimos 7 dias</option>
                   <option value="este_mes">🗓️ Este mês</option>
                 </select>

@@ -468,7 +468,7 @@ export default function ModalVisualizadorComprovante({
           msg: '✓ Comprovante aprovado e conciliação comprovante–pedido concluída.',
         })
         window.dispatchEvent(
-          new CustomEvent('asados:order-updated', {
+          new CustomEvent('crm:order-updated', {
             detail: {
               orderId: proofDetails.order.id,
               proofId: proofDetails.proof.id,
@@ -514,7 +514,7 @@ export default function ModalVisualizadorComprovante({
           msg: 'Comprovante rejeitado e enviado para quarentena.',
         })
         window.dispatchEvent(
-          new CustomEvent('asados:order-updated', {
+          new CustomEvent('crm:order-updated', {
             detail: {
               orderId: proofDetails?.order?.id,
               proofId: proofDetails.proof.id,
