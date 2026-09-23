@@ -891,7 +891,7 @@ export default function ChatContainer({
             <div className="h-4 w-px bg-zinc-800 hidden sm:block" />
             <div className="hidden min-w-0 flex-col sm:flex">
               <span className="text-xs font-semibold text-zinc-200">Sofia • Atendimento Virtual</span>
-              <span className="text-[10px] text-zinc-400">Domingo de Assados no Umbará</span>
+              <span className="text-[10px] text-zinc-400">Atendimento e pedidos</span>
             </div>
           </div>
 
@@ -1097,7 +1097,7 @@ export default function ChatContainer({
               </div>
               <h3 className="text-zinc-200 font-semibold">Olá, {clienteNome}!</h3>
               <p className="text-sm text-zinc-500 max-w-xs">
-                Seja bem-vindo à {resolveBusinessProfileSync().name}! Escolha seus assados no cardápio ao lado para montar seu pedido personalizado.
+                Seja bem-vindo à {resolveBusinessProfileSync().name}! Escolha seus produtos no catálogo ao lado para montar seu pedido personalizado.
               </p>
             </div>
           ) : (
@@ -1413,8 +1413,8 @@ export default function ChatContainer({
             /* Lista do Cardápio */
             <div className="space-y-4">
               <div className="rounded-2xl border border-amber-500/20 bg-gradient-to-br from-amber-500/10 via-zinc-900/60 to-red-500/5 p-4">
-                <span className="text-[10px] font-black uppercase tracking-[0.2em] text-amber-400">Catálogo de Produtos • Domingo</span>
-                <h2 className="mt-1 text-lg font-black text-zinc-50">Escolha seus assados</h2>
+                <span className="text-[10px] font-black uppercase tracking-[0.2em] text-amber-400">Catálogo de Produtos</span>
+                <h2 className="mt-1 text-lg font-black text-zinc-50">Escolha seus produtos</h2>
                 <p className="mt-1 text-xs leading-relaxed text-zinc-400">
                   Adicione seus favoritos e acompanhe o total na aba Meu Pedido.
                 </p>
@@ -1451,7 +1451,7 @@ export default function ChatContainer({
                       <div className="flex-1 min-w-0">
                         <h4 className="text-sm font-bold text-zinc-100 line-clamp-2">{produto.nome}</h4>
                         <p className="text-[11px] text-zinc-400 line-clamp-3 mt-1 leading-relaxed">
-                          {produto.descricao || 'Assado tradicional'}
+                          {produto.descricao || 'Item disponível para pedido'}
                         </p>
                       </div>
                     </div>
@@ -1493,7 +1493,7 @@ export default function ChatContainer({
                   <ShoppingCart className="h-10 w-10 stroke-zinc-700 mb-1" />
                   <p className="text-xs font-bold text-zinc-300">Seu pedido está vazio</p>
                   <p className="text-[11px] text-zinc-500 max-w-[200px]">
-                    Navegue pela aba &quot;Cardápio&quot; e adicione os assados que deseja para seu domingo.
+                    Navegue pela aba &quot;Cardápio&quot; e adicione os produtos que deseja ao seu pedido.
                   </p>
                   <button
                     type="button"
@@ -1592,7 +1592,7 @@ export default function ChatContainer({
                       >
                         {HORARIOS_RETIRADA.map((h) => (
                           <option key={h} value={h}>
-                            {h} (Balcão Umbará)
+                            {h} (Ponto de retirada)
                           </option>
                         ))}
                       </select>

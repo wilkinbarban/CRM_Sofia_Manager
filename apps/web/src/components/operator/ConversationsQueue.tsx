@@ -70,7 +70,7 @@ export default function ConversationsQueue({
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('crm_notificacoes_som') ?? localStorage.getItem('asados_notificacoes_som')
+      const saved = localStorage.getItem('crm_notificacoes_som')
       if (saved !== null) {
         setSomHabilitado(saved === 'true')
       }

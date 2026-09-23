@@ -476,15 +476,6 @@ export default function ModalVisualizadorComprovante({
             },
           })
         )
-        window.dispatchEvent(
-          new CustomEvent('asados:order-updated', {
-            detail: {
-              orderId: proofDetails.order.id,
-              proofId: proofDetails.proof.id,
-              statusPagamento: 'aprovado',
-            },
-          })
-        )
         onAprovarSuccess?.()
       } else {
         setAcaoFeedback({
@@ -524,15 +515,6 @@ export default function ModalVisualizadorComprovante({
         })
         window.dispatchEvent(
           new CustomEvent('crm:order-updated', {
-            detail: {
-              orderId: proofDetails?.order?.id,
-              proofId: proofDetails.proof.id,
-              statusPagamento: 'rejeitado',
-            },
-          })
-        )
-        window.dispatchEvent(
-          new CustomEvent('asados:order-updated', {
             detail: {
               orderId: proofDetails?.order?.id,
               proofId: proofDetails.proof.id,

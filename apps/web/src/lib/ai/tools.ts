@@ -28,7 +28,7 @@ function formatarMoeda(centavos: number): string {
   })
 }
 
-const HORARIOS_RETIRADA_DOMINGO = [
+const HORARIOS_RETIRADA = [
   '11:30',
   '11:45',
   '12:00',
@@ -143,7 +143,7 @@ export async function executarToolSofia(
       if (itens.length === 0) {
         return {
           success: true,
-          mensagem: 'Seu carrinho está vazio no momento. Que tal dar uma olhada nos nossos combos assados?',
+          mensagem: 'Seu carrinho está vazio no momento. Que tal dar uma olhada nos nossos produtos disponíveis?',
           data: res.carrinho,
         }
       }
@@ -209,11 +209,11 @@ export async function executarToolSofia(
     }
 
     case 'consultar_horarios_retirada': {
-      const horariosTexto = HORARIOS_RETIRADA_DOMINGO.join(', ')
+      const horariosTexto = HORARIOS_RETIRADA.join(', ')
       return {
         success: true,
-        mensagem: `Nossos horários de retirada para domingo são: ${horariosTexto}. As retiradas são feitas no nosso balcão aqui no Umbará!`,
-        data: HORARIOS_RETIRADA_DOMINGO,
+        mensagem: `Nossos horários de retirada são: ${horariosTexto}. Consulte o ponto de retirada informado no pedido.`,
+        data: HORARIOS_RETIRADA,
       }
     }
 
@@ -278,7 +278,7 @@ export async function executarToolSofia(
 
       return {
         success: true,
-        mensagem: `✅ Pedido confirmado com sucesso! Seu número de pedido é #${res.pedidoId.substring(0, 8)}. Já reservamos seus assados no bafo para o domingo!`,
+        mensagem: `✅ Pedido confirmado com sucesso! Seu número de pedido é #${res.pedidoId.substring(0, 8)}. Seus itens foram reservados!`,
         data: res,
       }
     }

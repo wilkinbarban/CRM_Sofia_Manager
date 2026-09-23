@@ -161,11 +161,7 @@ export function AttachmentCard({
       setPreviewOpen(true)
     }
     window.addEventListener('crm:open-attachment-preview', openRequestedPreview)
-    window.addEventListener('asados:open-attachment-preview', openRequestedPreview)
-    return () => {
-      window.removeEventListener('crm:open-attachment-preview', openRequestedPreview)
-      window.removeEventListener('asados:open-attachment-preview', openRequestedPreview)
-    }
+    return () => window.removeEventListener('crm:open-attachment-preview', openRequestedPreview)
   }, [messageId, preview])
 
   const closePreview = () => {

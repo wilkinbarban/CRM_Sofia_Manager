@@ -145,7 +145,6 @@ export default function OperatorClientOrdersList({
       carregarPedidos(true)
     }
     window.addEventListener('crm:order-updated', handleOrderUpdated)
-    window.addEventListener('asados:order-updated', handleOrderUpdated)
 
     const channel = supabase
       .channel(`operator-client-orders-${clienteId || 'all'}`)
@@ -165,7 +164,6 @@ export default function OperatorClientOrdersList({
 
     return () => {
       window.removeEventListener('crm:order-updated', handleOrderUpdated)
-      window.removeEventListener('asados:order-updated', handleOrderUpdated)
       supabase.removeChannel(channel)
     }
   }, [carregarPedidos, clienteId, supabase])

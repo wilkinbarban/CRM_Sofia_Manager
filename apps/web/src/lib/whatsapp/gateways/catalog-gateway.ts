@@ -61,7 +61,7 @@ async function postCatalogMessage(path: string, config: { url: string; apiKey: s
 
 export function formatarPromptCatalogoTexto(profile = resolveBusinessProfileSync()): string {
   return [
-    '🔥 *Cardápio Oficial de Domingo*',
+    '🔥 *Catálogo de Produtos*',
     '',
     'Gostaria de ver os nossos combos oficiais com fotos e valores?',
     'Responda *1* para eu te enviar as fotos! 📸',
@@ -140,7 +140,7 @@ export function montarPayloadCarrossel(params: EnviarCardapioInput) {
   const profile = resolveBusinessProfileSync()
   return {
     number: params.telefone,
-    body: `🔥 *Cardápio Oficial de Domingo — ${profile.name}*\n_${profile.pickupAddress} • O que vai querer hoje?_`,
+    body: `🔥 *Catálogo de Produtos — ${profile.name}*\n_${profile.pickupAddress} • O que você deseja hoje?_`,
     cards,
   }
 }
@@ -149,7 +149,7 @@ export function montarPayloadBotoes(params: EnviarCardapioInput) {
   const profile = resolveBusinessProfileSync()
   return {
     number: params.telefone,
-    title: '🔥 Cardápio Oficial de Domingo',
+    title: '🔥 Catálogo de Produtos',
     description: 'Escolha um produto para adicionar ao pedido:',
     footer: profile.pickupAddress,
     buttons: params.produtos.slice(0, 3).map((produto) => ({
@@ -164,8 +164,8 @@ export function montarPayloadLista(params: EnviarCardapioInput) {
   const profile = resolveBusinessProfileSync()
   return {
     number: params.telefone,
-    title: '🔥 Cardápio Oficial de Domingo',
-    description: 'Veja os assados disponíveis e escolha o seu.',
+    title: '🔥 Catálogo de Produtos',
+    description: 'Veja os produtos disponíveis e escolha o seu.',
     footerText: profile.pickupAddress,
     buttonText: 'Ver cardápio',
     sections: [{
@@ -189,7 +189,7 @@ export function montarPayloadTexto(params: EnviarCardapioInput) {
   return {
     number: params.telefone,
     text: [
-      `🔥 *Cardápio Oficial de Domingo — ${profile.name}*`,
+      `🔥 *Catálogo de Produtos — ${profile.name}*`,
       '',
       ...itens,
       '',
@@ -230,9 +230,9 @@ export function montarPayloadCardsFallback(params: EnviarCardapioInput) {
       `━━━━━━━━━━━━━━━━━━━━━━━━`,
       `${icone} *${p.nome.toUpperCase()}*`,
       `━━━━━━━━━━━━━━━━━━━━━━━━`,
-      `📝 ${p.descricao || 'Assado lentamente com tempero especial de família.'}`,
+      `📝 ${p.descricao || 'Produto disponível para pedido.'}`,
       `💰 *Preço:* ${valor}`,
-      `📍 *Retirada:* Domingo no Balcão Umbará`,
+      `📍 *Retirada:* Consulte o ponto informado no pedido`,
       `━━━━━━━━━━━━━━━━━━━━━━━━`,
       `*Ações rápidas:*`,
       `1️⃣ Adicionar ao pedido (digite *"Quero o item ${idx + 1}"*)`,
