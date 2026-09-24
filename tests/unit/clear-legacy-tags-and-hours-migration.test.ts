@@ -34,6 +34,17 @@ function applyHoursGuard(input: string | null, source: string, target: string): 
   return input === source ? target : input
 }
 
+// The full hours seed guard must use empty-tag dollar quoting ($$...$$): the
+// runner (ops/supabase/migrate.sh) mis-lexes tagged $tag$ bodies and rejects
+// their content. Returns [full, target, source, style].
+function hoursGuard(sql: string) {
+  const single = sql.match(/update public\.configuracoes_sistema\s+set valor = '([^']+)'\s+where chave = 'MENSAGEM_FORA_HORARIO'\s+and valor = '([^']+)'/i)
+  if (single) return [single[0], single[1], single[2], 'single'] as const
+  const dollar = sql.match(/update public\.configuracoes_sistema\s+set valor = '([^']+)'\s+where chave = 'MENSAGEM_FORA_HORARIO'\s+and valor = \$\$([\s\S]*?)\$\$/i)
+  if (dollar) return [dollar[0], dollar[1], dollar[2], 'dollar'] as const
+  return null
+}
+
 describe('exact legacy tags and hours cleanup', () => {
   it('simulates seed conversion once and stability on a second pass', () => {
     const pairs = assignments(readFileSync(path, 'utf8'))
@@ -46,8 +57,10 @@ describe('exact legacy tags and hours cleanup', () => {
       expect(applyTagGuard(first, source, target)).toEqual(target)
     }
     const sql = readFileSync(path, 'utf8')
-    const match = sql.match(/update public\.configuracoes_sistema\s+set valor = '([^']+)'\s+where chave = 'MENSAGEM_FORA_HORARIO'\s+and valor = '([^']+)'/i)
+    const match = hoursGuard(sql)
     expect(match).not.toBeNull()
+    expect(match![3]).toBe('dollar')
+    expect(match![2]).toBe(seedMessage![1])
     const first = applyHoursGuard(match![2], match![2], match![1])
     expect(first).toBe(match![1])
     expect(applyHoursGuard(first, match![2], match![1])).toBe(match![1])
@@ -67,7 +80,7 @@ describe('exact legacy tags and hours cleanup', () => {
       }
     }
     const sql = readFileSync(path, 'utf8')
-    const match = sql.match(/update public\.configuracoes_sistema\s+set valor = '([^']+)'\s+where chave = 'MENSAGEM_FORA_HORARIO'\s+and valor = '([^']+)'/i)
+    const match = hoursGuard(sql)
     expect(match).not.toBeNull()
     for (const variant of [null, `${match![2]} operator edit`, 'operator message']) {
       const first = applyHoursGuard(variant, match![2], match![1])
@@ -105,8 +118,9 @@ describe('exact legacy tags and hours cleanup', () => {
   it('changes only the exact original hours message and keeps dynamic schedule placeholders', () => {
     expect(seedMessage).not.toBeNull()
     const sql = readFileSync(path, 'utf8')
-    const match = sql.match(/update public\.configuracoes_sistema\s+set valor = '([^']+)'\s+where chave = 'MENSAGEM_FORA_HORARIO'\s+and valor = '([^']+)'/i)
+    const match = hoursGuard(sql)
     expect(match).not.toBeNull()
+    expect(match![3]).toBe('dollar')
     expect(match![2]).toBe(seedMessage![1])
     expect(match![1]).not.toBe(match![2])
     for (const placeholder of ['{dias_semana}', '{horario_inicio}', '{horario_fim}']) expect(match![1]).toContain(placeholder)

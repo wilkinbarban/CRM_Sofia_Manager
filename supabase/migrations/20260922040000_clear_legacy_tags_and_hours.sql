@@ -22,7 +22,7 @@ Envie sua mensagem durante esse período para que possamos ajudar você.
 
 Equipe de atendimento'
 where chave = 'MENSAGEM_FORA_HORARIO'
-and valor = 'Olá! 😊 Agora estamos fora do nosso horário de atendimento, mas não se preocupe — sua mensagem é muito importante para nós! 🥩
+and valor = $$Olá! 😊 Agora estamos fora do nosso horário de atendimento, mas não se preocupe — sua mensagem é muito importante para nós! 🥩
 
 Nosso horário de funcionamento é:
 📅 {dias_semana}
@@ -31,4 +31,4 @@ Nosso horário de funcionamento é:
 Ficaremos felizes em atendê-lo(a) durante esse período. Envie sua mensagem quando estivermos abertos que será um prazer ajudar você com o melhor churrasco de Curitiba! 🍖
 
 Atenciosamente,
-Equipe Asados ❤️';
+Equipe Asados ❤️$$;
