@@ -58,3 +58,11 @@ When running self-hosted SQL tests from a linked Git worktree:
 - The runner automatically discovers the canonical checkout's environment via Git common-dir (with a `worktree list --porcelain` fallback) when a local `ops/supabase/.env` is absent.
 - The runner passes `--env-file <discovered-path>` directly to each Docker Compose invocation without mutating the worktree.
 - Never use, copy, or symlink `.env` files into linked worktrees. If the environment file is missing, generate it in the canonical checkout with `ops/supabase/generate-env.sh`.
+- Never start the Docker Compose stack from inside a linked worktree (e.g. `docker compose up -d` in the worktree root or worktree `ops/supabase`), as that creates and binds isolated volumes inside the linked worktree instead of the canonical checkout. If the database service is not running, always start it safely in the canonical checkout:
+  ```bash
+  (cd <canonical-root>/ops/supabase && docker compose up -d)
+  ```
+  or navigate to the canonical checkout and run:
+  ```bash
+  cd ops/supabase && docker compose up -d
+  ```
