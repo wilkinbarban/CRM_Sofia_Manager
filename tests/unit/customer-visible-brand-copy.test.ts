@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import * as telegramRoute from '@/app/api/webhooks/telegram/route'
-import { obterMensagemBoasVindasTelegram } from '@/app/api/webhooks/telegram/route'
+import {
+  buildTelegramContactConfirmationMessage,
+  obterMensagemBoasVindasTelegram,
+} from '@/lib/telegram/messages'
 import {
   buildTelegramCatalogCard,
   buildTelegramCatalogPromptMessage,
@@ -10,6 +13,16 @@ import {
   DEFAULT_BUSINESS_PROFILE,
   type BusinessProfile,
 } from '@/lib/config/business-profile'
+
+describe('Telegram webhook route export surface', () => {
+  it('exposes only the POST handler so Next route-type validation stays valid', () => {
+    // Next 16 generates .next/types/.../route.ts, which asserts that
+    // `typeof import(route)` extends RouteHandlerConfig (HTTP verbs only).
+    // Any extra export (such as a shared helper) fails the production build
+    // with TS2344, so helpers must live in lib/telegram/messages.ts.
+    expect(Object.keys(telegramRoute).sort()).toEqual(['POST'])
+  })
+})
 
 describe('dynamic Telegram welcome brand copy', () => {
   const customProfile: BusinessProfile = {
@@ -48,7 +61,7 @@ describe('dynamic Telegram welcome brand copy', () => {
     expect(welcome).toContain('Toque no botão abaixo para compartilhar')
   })
 
-  it('exports obterMensagemBoasVindasTelegram from route.ts', () => {
+  it('exports obterMensagemBoasVindasTelegram from lib/telegram/messages.ts', () => {
     expect(typeof obterMensagemBoasVindasTelegram).toBe('function')
   })
 
@@ -64,7 +77,7 @@ describe('dynamic Telegram welcome brand copy', () => {
 
 describe('generic Telegram contact and catalog copy', () => {
   it('confirms a shared phone number without steakhouse framing', () => {
-    const confirmation = (telegramRoute as any).buildTelegramContactConfirmationMessage('Ana')
+    const confirmation = buildTelegramContactConfirmationMessage('Ana')
 
     expect(confirmation).toContain('Ana')
     expect(confirmation).not.toMatch(/[🍖🥩🔥]/u)

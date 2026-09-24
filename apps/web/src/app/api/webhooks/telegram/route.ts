@@ -2,7 +2,11 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { allowsIntegrationMock } from '@/lib/runtime/environment'
 import { processarRagPipeline } from '@/lib/ai/openrouter'
 import { obterConfiguracaoSistema, obterSofiaGlobalChannelConfig } from '@/lib/config/sistema'
-import { getBusinessProfile, type BusinessProfile } from '@/lib/config/business-profile'
+import { getBusinessProfile } from '@/lib/config/business-profile'
+import {
+  buildTelegramContactConfirmationMessage,
+  obterMensagemBoasVindasTelegram,
+} from '@/lib/telegram/messages'
 import { verificarHorarioAtendimento } from '@/lib/horarios/verificar'
 import { deriveTelegramMessageKey } from '@/lib/telegram/idempotency'
 import { downloadTelegramDocument } from '@/lib/telegram/document-download'
@@ -43,26 +47,6 @@ async function enviarMensagemDireta(chatId: string, texto: string): Promise<bool
     return false
   }
 }
-
-export function obterMensagemBoasVindasTelegram(profile: BusinessProfile): string {
-  const brand = profile.shortName || profile.name
-  const role = profile.personaRole || 'assistente virtual'
-  return `*Olá! Seja bem-vindo(a) à ${brand}!*
-
-Sou a Sofía, ${role} da ${profile.name} em ${profile.location}. 😊
-
-Para continuar o atendimento e personalizar sua experiência, preciso que você compartilhe seu número de telefone. É rapidinho!
-
-👇 *Toque no botão abaixo para compartilhar:*`
-}
-
-export function buildTelegramContactConfirmationMessage(contatoNome: string): string {
-  return `✅ *Obrigado, ${contatoNome}!* Seu número foi registrado.
-
-Como posso te ajudar hoje? 😊`
-}
-
-
 
 type TelegramMessage = {
   message_id: string | number
