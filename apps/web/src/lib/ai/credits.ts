@@ -28,6 +28,7 @@ const THIRTY_MINUTES_MS = 30 * 60 * 1000
 const DEEPSEEK_BALANCE_URL = 'https://api.deepseek.com/user/balance'
 
 let cachedEntry: CachedCreditEntry | null = null
+let cacheGeneration = 0
 
 function hashCredential(credential: string): string {
   return createHash('sha256').update(credential).digest('hex')
@@ -148,6 +149,7 @@ async function fetchDeepSeekBalance(apiKey: string): Promise<unknown> {
  */
 export function invalidateLlmCreditStatusCache(): void {
   cachedEntry = null
+  cacheGeneration++
 }
 
 export function resetLlmCreditStatusCacheForTests(): void {
@@ -156,6 +158,7 @@ export function resetLlmCreditStatusCacheForTests(): void {
 
 export async function getLlmCreditStatus(options: { forceRefresh?: boolean; now?: Date } = {}): Promise<LlmCreditStatus> {
   const now = options.now ?? new Date()
+  const startGeneration = cacheGeneration
 
   // Single credential path, shared with generation and the operator panel:
   // `configuracoes_sistema` first, then `process.env`, and an unusable stored
@@ -185,7 +188,10 @@ export async function getLlmCreditStatus(options: { forceRefresh?: boolean; now?
   try {
     const payload = await fetchDeepSeekBalance(apiKey)
     const status = freshStatus(parseDeepSeekRemainingUsd(payload), now)
-    cachedEntry = { status: cloneStatus(status), credentialHash }
+    if (cacheGeneration === startGeneration) {
+      cachedEntry = { status: cloneStatus(status), credentialHash }
+      cacheGeneration++
+    }
     return cloneStatus(status)
   } catch (error) {
     const isAuthRevoked =
@@ -193,7 +199,13 @@ export async function getLlmCreditStatus(options: { forceRefresh?: boolean; now?
       (error instanceof Error && /HTTP\s+(401|403)\b/.test(error.message))
 
     if (isAuthRevoked) {
-      invalidateLlmCreditStatusCache()
+      if (
+        cacheGeneration === startGeneration &&
+        cachedEntry !== null &&
+        cachedEntry.credentialHash === credentialHash
+      ) {
+        invalidateLlmCreditStatusCache()
+      }
       return unknownStatus(
         error instanceof Error ? error.message : 'DeepSeek credit authorization failed',
       )
@@ -201,9 +213,16 @@ export async function getLlmCreditStatus(options: { forceRefresh?: boolean; now?
 
     const errorMessage = error instanceof Error ? error.message : 'Unknown DeepSeek credit provider error'
 
-    if (isMatchingCredential && cachedEntry && cachedEntry.status.balanceUsd != null) {
+    if (
+      cacheGeneration === startGeneration &&
+      isMatchingCredential &&
+      cachedEntry !== null &&
+      cachedEntry.credentialHash === credentialHash &&
+      cachedEntry.status.balanceUsd != null
+    ) {
       const stale = staleStatus(cachedEntry, errorMessage)
       cachedEntry = { status: cloneStatus(stale), credentialHash }
+      cacheGeneration++
       return cloneStatus(stale)
     }
 
