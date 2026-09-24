@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { resolverChaveDeepSeek } from '@/lib/ai/deepseek'
 
 /** Sofia's only configured LLM provider: the retired second adapter is gone. */
@@ -18,10 +19,19 @@ export type LlmCreditStatus = {
 
 type JsonRecord = Record<string, unknown>
 
+type CachedCreditEntry = {
+  status: LlmCreditStatus
+  credentialHash: string
+}
+
 const THIRTY_MINUTES_MS = 30 * 60 * 1000
 const DEEPSEEK_BALANCE_URL = 'https://api.deepseek.com/user/balance'
 
-let cachedStatus: LlmCreditStatus | null = null
+let cachedEntry: CachedCreditEntry | null = null
+
+function hashCredential(credential: string): string {
+  return createHash('sha256').update(credential).digest('hex')
+}
 
 export function getLlmCreditColor(balanceUsd: number | null): LlmCreditColor {
   if (balanceUsd == null || !Number.isFinite(balanceUsd)) return 'neutral'
@@ -78,22 +88,39 @@ function freshStatus(balanceUsd: number | null, now: Date): LlmCreditStatus {
   }
 }
 
-function staleStatus(now: Date, error: string): LlmCreditStatus {
+function unknownStatus(error: string): LlmCreditStatus {
   return {
     provider: 'deepseek',
     balanceUsd: null,
-    state: cachedStatus ? 'stale' : 'unknown',
-    fetchedAt: cachedStatus?.fetchedAt ?? null,
-    expiresAt: cachedStatus?.expiresAt ?? null,
+    state: 'unknown',
+    fetchedAt: null,
+    expiresAt: null,
     freshnessMs: THIRTY_MINUTES_MS,
     color: 'neutral',
     error,
   }
 }
 
-function isCacheFresh(now: Date): boolean {
-  if (!cachedStatus || cachedStatus.state !== 'fresh' || !cachedStatus.expiresAt) return false
-  return new Date(cachedStatus.expiresAt).getTime() > now.getTime()
+function staleStatus(cached: CachedCreditEntry, error: string): LlmCreditStatus {
+  return {
+    provider: 'deepseek',
+    balanceUsd: cached.status.balanceUsd,
+    state: 'stale',
+    fetchedAt: cached.status.fetchedAt,
+    expiresAt: cached.status.expiresAt,
+    freshnessMs: THIRTY_MINUTES_MS,
+    color: getLlmCreditColor(cached.status.balanceUsd),
+    error,
+  }
+}
+
+class DeepSeekCreditsHttpError extends Error {
+  readonly status: number
+  constructor(status: number) {
+    super(`deepseek credits request failed with HTTP ${status}`)
+    this.name = 'DeepSeekCreditsHttpError'
+    this.status = status
+  }
 }
 
 async function fetchDeepSeekBalance(apiKey: string): Promise<unknown> {
@@ -106,38 +133,75 @@ async function fetchDeepSeekBalance(apiKey: string): Promise<unknown> {
   })
 
   if (!response.ok) {
-    throw new Error(`deepseek credits request failed with HTTP ${response.status}`)
+    throw new DeepSeekCreditsHttpError(response.status)
   }
 
   return response.json()
 }
 
+/**
+ * Invalidates the cached LLM credits status across server actions and background tasks.
+ */
+export function invalidateLlmCreditStatusCache(): void {
+  cachedEntry = null
+}
+
+export function resetLlmCreditStatusCacheForTests(): void {
+  invalidateLlmCreditStatusCache()
+}
+
 export async function getLlmCreditStatus(options: { forceRefresh?: boolean; now?: Date } = {}): Promise<LlmCreditStatus> {
   const now = options.now ?? new Date()
-
-  if (!options.forceRefresh && isCacheFresh(now)) {
-    return cachedStatus as LlmCreditStatus
-  }
 
   // Single credential path, shared with generation and the operator panel:
   // `configuracoes_sistema` first, then `process.env`, and an unusable stored
   // value gives way to a usable environment one.
   const apiKey = await resolverChaveDeepSeek()
 
+  // A missing, empty, or placeholder credential invalidates any previously cached
+  // balance and returns neutral unknown.
   if (!apiKey) {
-    return staleStatus(now, 'DEEPSEEK_API_KEY is not configured')
+    invalidateLlmCreditStatusCache()
+    return unknownStatus('DEEPSEEK_API_KEY is not configured')
+  }
+
+  const credentialHash = hashCredential(apiKey)
+  const isMatchingCredential = cachedEntry?.credentialHash === credentialHash
+  const isFresh =
+    isMatchingCredential &&
+    cachedEntry?.status.state === 'fresh' &&
+    cachedEntry.status.expiresAt != null &&
+    new Date(cachedEntry.status.expiresAt).getTime() > now.getTime()
+
+  if (!options.forceRefresh && isFresh) {
+    return cachedEntry!.status
   }
 
   try {
     const payload = await fetchDeepSeekBalance(apiKey)
     const status = freshStatus(parseDeepSeekRemainingUsd(payload), now)
-    cachedStatus = status
+    cachedEntry = { status, credentialHash }
     return status
   } catch (error) {
-    return staleStatus(now, error instanceof Error ? error.message : 'Unknown DeepSeek credit provider error')
-  }
-}
+    const isAuthRevoked =
+      (error instanceof DeepSeekCreditsHttpError && (error.status === 401 || error.status === 403)) ||
+      (error instanceof Error && /HTTP\s+(401|403)\b/.test(error.message))
 
-export function resetLlmCreditStatusCacheForTests() {
-  cachedStatus = null
+    if (isAuthRevoked) {
+      invalidateLlmCreditStatusCache()
+      return unknownStatus(
+        error instanceof Error ? error.message : 'DeepSeek credit authorization failed',
+      )
+    }
+
+    const errorMessage = error instanceof Error ? error.message : 'Unknown DeepSeek credit provider error'
+
+    if (isMatchingCredential && cachedEntry && cachedEntry.status.balanceUsd != null) {
+      const stale = staleStatus(cachedEntry, errorMessage)
+      cachedEntry = { status: stale, credentialHash }
+      return stale
+    }
+
+    return unknownStatus(errorMessage)
+  }
 }
