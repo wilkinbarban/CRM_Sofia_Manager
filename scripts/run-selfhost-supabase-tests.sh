@@ -11,39 +11,37 @@ test_number=0
 env_file=
 checked_paths="$root/ops/supabase/.env"
 
-if [ -f "$root/ops/supabase/.env" ]; then
-  env_file="$root/ops/supabase/.env"
-else
-  canonical_root=
-  common_dir="$(git -C "$root" rev-parse --git-common-dir 2>/dev/null || true)"
-  if [ -n "$common_dir" ]; then
-    case "$common_dir" in
-      /*) candidate_dir="$common_dir" ;;
-      *) candidate_dir="$root/$common_dir" ;;
-    esac
-    candidate="$(CDPATH= cd -- "$candidate_dir/.." 2>/dev/null && pwd || true)"
+canonical_root=
+common_dir="$(git -C "$root" rev-parse --git-common-dir 2>/dev/null || true)"
+if [ -n "$common_dir" ]; then
+  case "$common_dir" in
+    /*) candidate_dir="$common_dir" ;;
+    *) candidate_dir="$root/$common_dir" ;;
+  esac
+  candidate="$(CDPATH= cd -- "$candidate_dir/.." 2>/dev/null && pwd || true)"
+  if [ -n "$candidate" ] && [ -d "$candidate" ] && [ "$candidate" != "$root" ]; then
+    canonical_root="$candidate"
+  fi
+fi
+
+if [ -z "$canonical_root" ]; then
+  first_worktree="$(git -C "$root" worktree list --porcelain 2>/dev/null | sed -n 's/^worktree //p' | head -n 1 || true)"
+  if [ -n "$first_worktree" ]; then
+    candidate="$(CDPATH= cd -- "$first_worktree" 2>/dev/null && pwd || true)"
     if [ -n "$candidate" ] && [ -d "$candidate" ] && [ "$candidate" != "$root" ]; then
       canonical_root="$candidate"
     fi
   fi
+fi
 
-  if [ -z "$canonical_root" ]; then
-    first_worktree="$(git -C "$root" worktree list --porcelain 2>/dev/null | sed -n 's/^worktree //p' | head -n 1 || true)"
-    if [ -n "$first_worktree" ]; then
-      candidate="$(CDPATH= cd -- "$first_worktree" 2>/dev/null && pwd || true)"
-      if [ -n "$candidate" ] && [ -d "$candidate" ] && [ "$candidate" != "$root" ]; then
-        canonical_root="$candidate"
-      fi
-    fi
-  fi
-
-  if [ -n "$canonical_root" ]; then
-    canonical_env="$canonical_root/ops/supabase/.env"
-    checked_paths="$checked_paths
+if [ -f "$root/ops/supabase/.env" ]; then
+  env_file="$root/ops/supabase/.env"
+elif [ -n "$canonical_root" ]; then
+  canonical_env="$canonical_root/ops/supabase/.env"
+  checked_paths="$checked_paths
 $canonical_env"
-    if [ -f "$canonical_env" ]; then
-      env_file="$canonical_env"
-    fi
+  if [ -f "$canonical_env" ]; then
+    env_file="$canonical_env"
   fi
 fi
 
@@ -75,6 +73,40 @@ trap 'cleanup; trap - EXIT; exit 129' HUP
 trap 'cleanup; trap - EXIT; exit 130' INT
 trap 'cleanup; trap - EXIT; exit 143' TERM
 
+remediation_dir="ops/supabase"
+if [ -n "$canonical_root" ]; then
+  remediation_dir="$canonical_root/ops/supabase"
+fi
+
+posix_quote() {
+  case "$1" in
+    ""|*[!a-zA-Z0-9_./-]*)
+      sq="'"
+      q_sq="'\\"$sq"$sq"
+      val="$1"
+      res=""
+      while :; do
+        case "$val" in
+          *"$sq"*)
+            prefix="${val%%$sq*}"
+            res="$res$prefix$q_sq"
+            val="${val#*$sq}"
+            ;;
+          *)
+            res="$res$val"
+            break
+            ;;
+        esac
+      done
+      printf '%s' "$sq$res$sq"
+      ;;
+    *)
+      printf '%s' "$1"
+      ;;
+  esac
+}
+remediation_dir="$(posix_quote "$remediation_dir")"
+
 [ -f "$compose_file" ] || {
   echo "Missing self-hosted Supabase compose file: $compose_file" >&2
   exit 1
@@ -82,7 +114,7 @@ trap 'cleanup; trap - EXIT; exit 143' TERM
 
 docker compose --env-file "$env_file" -f "$compose_file" config --quiet
 docker compose --env-file "$env_file" -f "$compose_file" ps --status running db | grep -q . || {
-  echo "Self-hosted Supabase db service is not running. Start it with: docker compose --env-file $env_file -f ops/supabase/docker-compose.yml up -d" >&2
+  echo "Self-hosted Supabase db service is not running. Start it with: (cd $remediation_dir && docker compose up -d)" >&2
   exit 1
 }
 
