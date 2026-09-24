@@ -70,7 +70,8 @@ import WhatsAppCard from './integrations/WhatsAppCard'
 import TelegramBotCard from './integrations/TelegramBotCard'
 import MercadoPagoCard from './integrations/MercadoPagoCard'
 import type { FinancialOperationalMetrics } from '@/lib/admin/financial-metrics'
-import { resolveBusinessProfileSync } from '@/lib/config/business-profile'
+import { resolveBusinessProfileSync, type BusinessProfile } from '@/lib/config/business-profile'
+import { buildDefaultSofiaSystemPrompt } from '@/lib/sofia/default-prompt'
 
 interface Usuario {
   id: string
@@ -741,21 +742,19 @@ export default function AdminDashboard({
   // --- Ações de Prompt ---
 
   const defaultProfile = resolveBusinessProfileSync()
-  const businessName = systemConfigs?.BUSINESS_NAME || defaultProfile.name
-  const businessLocation = systemConfigs?.BUSINESS_LOCATION || defaultProfile.location
-  const personaRole = systemConfigs?.SOFIA_PERSONA_ROLE || (businessName === defaultProfile.name ? 'assistente virtual amigável' : defaultProfile.personaRole)
+  const resolvedProfile: BusinessProfile = {
+    name: systemConfigs?.BUSINESS_NAME?.trim() || defaultProfile.name,
+    shortName: systemConfigs?.BUSINESS_SHORT_NAME?.trim() || defaultProfile.shortName,
+    location: systemConfigs?.BUSINESS_LOCATION?.trim() || defaultProfile.location,
+    pickupAddress: systemConfigs?.BUSINESS_PICKUP_ADDRESS?.trim() || defaultProfile.pickupAddress,
+    description: systemConfigs?.BUSINESS_DESCRIPTION?.trim() || defaultProfile.description,
+    personaRole: systemConfigs?.SOFIA_PERSONA_ROLE?.trim() || defaultProfile.personaRole,
+  }
 
-  const systemPromptStatic = `Você é a Sofía, ${personaRole} da ${businessName} em ${businessLocation}.
-Sua personalidade é acolhedora, simpática e clara, com linguagem natural e sem exageros.
-Você deve usar emojis com moderação (no máximo 1 ou 2 por mensagem).
-
-DIRETRIZES RÍGIDAS DE COMPORTAMENTO:
-1. Responda apenas com base no CONTEXTO DE SUPORTE fornecido abaixo.
-2. Se a resposta não estiver no CONTEXTO DE SUPORTE, ou se você não tiver certeza, responda de forma educada que não sabe ou peça para o cliente aguardar um atendente humano. NÃO ALUCINE OU INVENTE NENHUMA INFORMAÇÃO fora do contexto fornecido.
-3. Responda em Português do Brasil (pt-BR).
-4. Suas respostas devem ser breves e direto ao ponto.`
-
-  const [promptValue, setPromptValue] = useState(systemConfigs?.SOFIA_SYSTEM_PROMPT || systemPromptStatic)
+  const defaultPrompt = buildDefaultSofiaSystemPrompt(resolvedProfile)
+  const [promptValue, setPromptValue] = useState(
+    systemConfigs?.SOFIA_SYSTEM_PROMPT?.trim() ? systemConfigs.SOFIA_SYSTEM_PROMPT : defaultPrompt,
+  )
   const [savingPrompt, setSavingPrompt] = useState(false)
 
   const handleCopyPrompt = () => {
