@@ -17,6 +17,10 @@
 import { isValidElement, type ReactElement, type ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 import { resetRetiredProviderConfigKeyWarningsForTests } from '@/lib/config/retired-config-keys'
+import {
+  DEEPSEEK_DEFAULT_MODEL,
+  escolherModeloDeepSeek,
+} from '@/lib/ai/deepseek'
 
 const mocks = vi.hoisted(() => ({
   redirect: vi.fn((path: string) => {
@@ -327,6 +331,70 @@ describe('admin page server-to-client configuration projection', () => {
     expect(systemConfigs.DEEPSEEK_MODEL).toBe('deepseek-flash')
   })
 
+  it('projects DEEPSEEK_DEFAULT_MODEL when no model is configured in database or environment', async () => {
+    applyEnvironment({})
+    mocks.createClient.mockResolvedValue(supabaseClient({ rows: [] }))
+
+    const systemConfigs = await projectAdminDashboardProps()
+
+    expect(systemConfigs.DEEPSEEK_MODEL).toBe(DEEPSEEK_DEFAULT_MODEL)
+  })
+
+  it('projects DEEPSEEK_DEFAULT_MODEL when stored model is blank and environment has no model', async () => {
+    applyEnvironment({})
+    mocks.createClient.mockResolvedValue(
+      supabaseClient({ rows: configRows({ DEEPSEEK_MODEL: '   ' }) }),
+    )
+
+    const systemConfigs = await projectAdminDashboardProps()
+
+    expect(systemConfigs.DEEPSEEK_MODEL).toBe(DEEPSEEK_DEFAULT_MODEL)
+  })
+
+  it('projects DEEPSEEK_DEFAULT_MODEL when stored model is a placeholder and environment has no model', async () => {
+    applyEnvironment({})
+    mocks.createClient.mockResolvedValue(
+      supabaseClient({ rows: configRows({ DEEPSEEK_MODEL: 'your_model_placeholder' }) }),
+    )
+
+    const systemConfigs = await projectAdminDashboardProps()
+
+    expect(systemConfigs.DEEPSEEK_MODEL).toBe(DEEPSEEK_DEFAULT_MODEL)
+  })
+
+  it('projects the environment model when stored model is an unusable placeholder', async () => {
+    applyEnvironment({ DEEPSEEK_MODEL: 'deepseek-v4-pro' })
+    mocks.createClient.mockResolvedValue(
+      supabaseClient({ rows: configRows({ DEEPSEEK_MODEL: 'insert_here_your_model' }) }),
+    )
+
+    const systemConfigs = await projectAdminDashboardProps()
+
+    expect(systemConfigs.DEEPSEEK_MODEL).toBe('deepseek-v4-pro')
+  })
+
+  it('projects the environment model when stored model is blank/whitespace', async () => {
+    applyEnvironment({ DEEPSEEK_MODEL: 'deepseek-v4-pro' })
+    mocks.createClient.mockResolvedValue(
+      supabaseClient({ rows: configRows({ DEEPSEEK_MODEL: '   ' }) }),
+    )
+
+    const systemConfigs = await projectAdminDashboardProps()
+
+    expect(systemConfigs.DEEPSEEK_MODEL).toBe('deepseek-v4-pro')
+  })
+
+  it('projects DEEPSEEK_DEFAULT_MODEL when both stored and environment models are placeholders', async () => {
+    applyEnvironment({ DEEPSEEK_MODEL: 'your_env_placeholder' })
+    mocks.createClient.mockResolvedValue(
+      supabaseClient({ rows: configRows({ DEEPSEEK_MODEL: 'your_db_placeholder' }) }),
+    )
+
+    const systemConfigs = await projectAdminDashboardProps()
+
+    expect(systemConfigs.DEEPSEEK_MODEL).toBe(DEEPSEEK_DEFAULT_MODEL)
+  })
+
   it('drops the retired provider keys from its defaults and from the environment fallback chain', async () => {
     applyEnvironment({
       OPENROUTER_API_KEY: 'sk-openrouter-retired-environment-secret',
@@ -489,5 +557,46 @@ describe('admin page retired provider migration signal', () => {
     await projectAdminDashboardProps()
 
     expect(warnSpy).not.toHaveBeenCalled()
+  })
+})
+
+describe('synchronous DeepSeek model resolver (escolherModeloDeepSeek)', () => {
+  it('prefers a usable stored model over environment and default', () => {
+    expect(escolherModeloDeepSeek('deepseek-v4-pro', 'deepseek-chat')).toBe('deepseek-v4-pro')
+  })
+
+  it('trims whitespace on stored model', () => {
+    expect(escolherModeloDeepSeek('  deepseek-v4-pro  ', 'deepseek-chat')).toBe('deepseek-v4-pro')
+  })
+
+  it('falls back to environment model when stored model is a placeholder', () => {
+    expect(escolherModeloDeepSeek('your_model_placeholder', 'deepseek-chat')).toBe('deepseek-chat')
+    expect(escolherModeloDeepSeek('insert_here', 'deepseek-chat')).toBe('deepseek-chat')
+    expect(escolherModeloDeepSeek('your-api-key', 'deepseek-chat')).toBe('deepseek-chat')
+  })
+
+  it('falls back to environment model when stored model is blank, empty, or whitespace', () => {
+    expect(escolherModeloDeepSeek('', 'deepseek-chat')).toBe('deepseek-chat')
+    expect(escolherModeloDeepSeek('   ', 'deepseek-chat')).toBe('deepseek-chat')
+  })
+
+  it('falls back to environment model when stored model is null or undefined', () => {
+    expect(escolherModeloDeepSeek(null, 'deepseek-chat')).toBe('deepseek-chat')
+    expect(escolherModeloDeepSeek(undefined, 'deepseek-chat')).toBe('deepseek-chat')
+  })
+
+  it('falls back to DEEPSEEK_DEFAULT_MODEL when stored model and env model are placeholders', () => {
+    expect(escolherModeloDeepSeek('placeholder', 'your_key_here')).toBe(DEEPSEEK_DEFAULT_MODEL)
+  })
+
+  it('falls back to DEEPSEEK_DEFAULT_MODEL when stored model is blank and env is empty or null', () => {
+    expect(escolherModeloDeepSeek('', '')).toBe(DEEPSEEK_DEFAULT_MODEL)
+    expect(escolherModeloDeepSeek('  ', null)).toBe(DEEPSEEK_DEFAULT_MODEL)
+    expect(escolherModeloDeepSeek(undefined, undefined)).toBe(DEEPSEEK_DEFAULT_MODEL)
+  })
+
+  it('rejects values with internal whitespace or control characters', () => {
+    expect(escolherModeloDeepSeek('deepseek v4 pro', 'deepseek-chat')).toBe('deepseek-chat')
+    expect(escolherModeloDeepSeek('deepseek\u0000model', 'deepseek-chat')).toBe('deepseek-chat')
   })
 })

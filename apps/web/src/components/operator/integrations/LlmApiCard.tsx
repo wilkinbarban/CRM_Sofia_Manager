@@ -50,13 +50,14 @@ function safeErrorMessage(code: string | undefined): string {
 }
 
 export default function LlmApiCard({ initialConfigs, showToast }: IntegrationCardProps) {
-  // The stored model is not a secret, so it may cross the server boundary; the
-  // API key never does, and the credential input starts blank by construction.
-  const configuredModel = initialConfigs?.DEEPSEEK_MODEL?.trim() || ''
+  // The resolved effective model crosses the server boundary as a safe projection.
+  // The credential never crosses, and its input starts blank by construction.
+  const initialEffectiveModel = initialConfigs?.DEEPSEEK_MODEL?.trim() || ''
 
   const [apiKey, setApiKey] = useState('')
   const [showApiKey, setShowApiKey] = useState(false)
-  const [model, setModel] = useState(configuredModel)
+  const [effectiveModel, setEffectiveModel] = useState(initialEffectiveModel)
+  const [model, setModel] = useState(initialEffectiveModel)
   const [isConfigured, setIsConfigured] = useState(initialConfigs?.DEEPSEEK_CONFIGURED === 'true')
 
   const [models, setModels] = useState<DeepSeekModelOption[]>([])
@@ -97,10 +98,16 @@ export default function LlmApiCard({ initialConfigs, showToast }: IntegrationCar
     void loadModels()
   }, [loadModels])
 
+  useEffect(() => {
+    const next = initialConfigs?.DEEPSEEK_MODEL?.trim() || ''
+    setEffectiveModel(next)
+  }, [initialConfigs?.DEEPSEEK_MODEL])
+
   // Selectable options come from the authorized server action only: the stored
-  // model is kept in state so an untouched save preserves it, but it never
-  // becomes a locally invented option.
+  // or effective model is rendered separately as a badge/label and never
+  // mutates the select options or becomes a locally invented option.
   const modelOptions: DeepSeekModelOption[] = models
+  const isEffectiveModelInCatalog = models.some((option) => option.id === effectiveModel)
 
   const handleTestModel = async () => {
     const trimmedModel = model.trim()
@@ -159,6 +166,9 @@ export default function LlmApiCard({ initialConfigs, showToast }: IntegrationCar
       if (trimmedKey) {
         setApiKey('')
         setIsConfigured(true)
+      }
+      if (trimmedModel) {
+        setEffectiveModel(trimmedModel)
       }
 
       showToast('success', 'Configurações da DeepSeek salvas com sucesso!')
@@ -265,9 +275,36 @@ export default function LlmApiCard({ initialConfigs, showToast }: IntegrationCar
           </button>
         </div>
 
+        {effectiveModel && (
+          <div className="flex items-center gap-2">
+            <span
+              data-testid="deepseek-effective-model-badge"
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium border ${
+                !loadingModels && models.length > 0 && !isEffectiveModelInCatalog
+                  ? 'bg-amber-500/10 text-amber-300 border-amber-500/30'
+                  : 'bg-zinc-800/60 text-zinc-300 border-zinc-700/60'
+              }`}
+            >
+              <span className="text-zinc-400">Modelo efetivo:</span>
+              <span className="font-mono font-semibold text-zinc-100">{effectiveModel}</span>
+              {!loadingModels && models.length > 0 && !isEffectiveModelInCatalog && (
+                <span className="text-[10px] uppercase tracking-wide font-bold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40">
+                  Fora do catálogo
+                </span>
+              )}
+            </span>
+          </div>
+        )}
+
         <select
           id="deepseek-model"
-          value={modelOptions.length === 0 ? '' : model}
+          value={
+            modelOptions.length === 0
+              ? ''
+              : modelOptions.some((o) => o.id === model)
+              ? model
+              : (modelOptions[0]?.id ?? '')
+          }
           onChange={(e) => setModel(e.target.value)}
           disabled={loadingModels || modelOptions.length === 0}
           className="w-full px-3 py-2.5 bg-zinc-950/60 border border-zinc-800 focus:border-sky-500/80 rounded-xl text-xs text-zinc-200 outline-none cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"

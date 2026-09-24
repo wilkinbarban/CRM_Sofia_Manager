@@ -1,7 +1,7 @@
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { listarUsuariosAdmin, obterEstatisticasMensagens } from '@/app/actions/admin'
-import { escolherChaveDeepSeek } from '@/lib/ai/deepseek'
+import { escolherChaveDeepSeek, escolherModeloDeepSeek } from '@/lib/ai/deepseek'
 import AdminDashboard from '@/components/operator/AdminDashboard'
 import { OperatorWorkspaceHeader } from '@/components/operator/OperatorWorkspaceHeader'
 import {
@@ -44,6 +44,12 @@ const DEEPSEEK_CONFIGURED_KEY = 'DEEPSEEK_CONFIGURED'
  * placeholders and whitespace rejected) to the pair this component already
  * holds, so the panel reports the provider as configured exactly when
  * generation can use it.
+ *
+ * `DEEPSEEK_MODEL` is projected using the shared model resolver
+ * (`escolherModeloDeepSeek`: a usable stored value, then a usable environment
+ * value, then `DEEPSEEK_DEFAULT_MODEL` — placeholders and blanks rejected), so
+ * placeholders, blank stored values, and no value project the actual effective
+ * model rather than raw stored state.
  */
 function toClientSystemConfigs(systemConfigs: Record<string, string>): Record<string, string> {
   const clientConfigs: Record<string, string> = {}
@@ -56,6 +62,11 @@ function toClientSystemConfigs(systemConfigs: Record<string, string>): Record<st
     if (SECRET_CONFIG_KEY_PATTERN.test(key)) continue
     clientConfigs[key] = value
   }
+
+  clientConfigs.DEEPSEEK_MODEL = escolherModeloDeepSeek(
+    systemConfigs.DEEPSEEK_MODEL,
+    process.env.DEEPSEEK_MODEL,
+  )
 
   const deepSeekApiKey = escolherChaveDeepSeek(
     systemConfigs.DEEPSEEK_API_KEY,
@@ -174,9 +185,6 @@ export default async function AdminPage({ searchParams }: AdminPageProps) {
   }
   if (!systemConfigs.WHATSAPP_PHONE_NUMBER_ID && process.env.WHATSAPP_PHONE_NUMBER_ID) {
     systemConfigs.WHATSAPP_PHONE_NUMBER_ID = process.env.WHATSAPP_PHONE_NUMBER_ID
-  }
-  if (!systemConfigs.DEEPSEEK_MODEL && process.env.DEEPSEEK_MODEL) {
-    systemConfigs.DEEPSEEK_MODEL = process.env.DEEPSEEK_MODEL
   }
   if (!systemConfigs.WHATSAPP_APP_SECRET && process.env.WHATSAPP_APP_SECRET) {
     systemConfigs.WHATSAPP_APP_SECRET = process.env.WHATSAPP_APP_SECRET
