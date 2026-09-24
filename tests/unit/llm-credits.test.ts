@@ -7,15 +7,31 @@ import {
   resetLlmCreditStatusCacheForTests,
   type LlmCreditProvider,
 } from '@/lib/ai/credits'
+import { removerConfiguracaoAdmin, salvarConfiguracaoAdmin } from '@/app/actions/admin'
 
 const DEEPSEEK_BALANCE_URL = 'https://api.deepseek.com/user/balance'
 
 const mocks = vi.hoisted(() => ({
   obterConfiguracaoSistema: vi.fn(),
+  createClient: vi.fn(),
+  createAdminClient: vi.fn(),
+  revalidatePath: vi.fn(),
 }))
 
 vi.mock('@/lib/config/sistema', () => ({
   obterConfiguracaoSistema: mocks.obterConfiguracaoSistema,
+}))
+
+vi.mock('@/lib/supabase/server', () => ({
+  createClient: mocks.createClient,
+}))
+
+vi.mock('@/lib/supabase/admin', () => ({
+  createAdminClient: mocks.createAdminClient,
+}))
+
+vi.mock('next/cache', () => ({
+  revalidatePath: mocks.revalidatePath,
 }))
 
 const originalEnv = process.env
@@ -30,6 +46,40 @@ function mockDeepSeekKey(stored: string | null) {
   mocks.obterConfiguracaoSistema.mockImplementation(async (key: string) => (
     key === 'DEEPSEEK_API_KEY' ? stored : null
   ))
+}
+
+function mockOperatorAdmin() {
+  const upsert = vi.fn().mockResolvedValue({ error: null })
+  const deleteFn = vi.fn().mockReturnValue({ eq: vi.fn().mockResolvedValue({ error: null }) })
+  const insert = vi.fn().mockResolvedValue({ error: null })
+
+  mocks.createClient.mockResolvedValue({
+    auth: {
+      getUser: vi.fn().mockResolvedValue({
+        data: { user: { id: 'admin-123' } },
+        error: null,
+      }),
+    },
+    from: vi.fn(() => ({
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      single: vi.fn().mockResolvedValue({
+        data: { funcao: 'admin', ativo: true },
+        error: null,
+      }),
+    })),
+  })
+
+  mocks.createAdminClient.mockReturnValue({
+    from: vi.fn((table: string) => {
+      if (table === 'configuracoes_sistema') {
+        return { upsert, delete: deleteFn }
+      }
+      return { insert }
+    }),
+  })
+
+  return { upsert, deleteFn, insert }
 }
 
 afterEach(() => {
@@ -351,5 +401,68 @@ describe('LLM credit helpers', () => {
     invalidateLlmCreditStatusCache()
     await getLlmCreditStatus({ now: new Date('2026-07-10T12:06:00.000Z') })
     expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('invalidates credit cache when salvarConfiguracaoAdmin updates DEEPSEEK_API_KEY', async () => {
+    mockOperatorAdmin()
+    mockDeepSeekKey('sk-deepseek-old-key')
+    const fetchMock = vi.fn(async () => balanceResponse('1.5'))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const initial = await getLlmCreditStatus({ now: new Date('2026-07-10T12:00:00.000Z') })
+    expect(initial.balanceUsd).toBe(1.5)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+
+    // Admin updates DEEPSEEK_API_KEY
+    mockDeepSeekKey('sk-deepseek-new-key')
+    fetchMock.mockImplementation(async () => balanceResponse('8.0'))
+
+    const writeResult = await salvarConfiguracaoAdmin('DEEPSEEK_API_KEY', 'sk-deepseek-new-key')
+    expect(writeResult).toEqual({ success: true })
+
+    // Next getLlmCreditStatus call must fetch fresh balance because cache was invalidated
+    const updated = await getLlmCreditStatus({ now: new Date('2026-07-10T12:01:00.000Z') })
+    expect(updated.balanceUsd).toBe(8.0)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('invalidates credit cache when admin write path clears DEEPSEEK_API_KEY', async () => {
+    mockOperatorAdmin()
+    mockDeepSeekKey('sk-deepseek-key')
+    const fetchMock = vi.fn(async () => balanceResponse('2.5'))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await getLlmCreditStatus({ now: new Date('2026-07-10T12:00:00.000Z') })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+
+    mockDeepSeekKey(null)
+    delete process.env.DEEPSEEK_API_KEY
+
+    const clearResult = await removerConfiguracaoAdmin('DEEPSEEK_API_KEY')
+    expect(clearResult).toEqual({ success: true })
+
+    const clearedStatus = await getLlmCreditStatus({ now: new Date('2026-07-10T12:01:00.000Z') })
+    expect(clearedStatus).toMatchObject({
+      balanceUsd: null,
+      state: 'unknown',
+      color: 'neutral',
+    })
+  })
+
+  it('does not invalidate credit cache when salvarConfiguracaoAdmin updates an unrelated key', async () => {
+    mockOperatorAdmin()
+    mockDeepSeekKey('sk-deepseek-key')
+    const fetchMock = vi.fn(async () => balanceResponse('2.5'))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await getLlmCreditStatus({ now: new Date('2026-07-10T12:00:00.000Z') })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+
+    const writeResult = await salvarConfiguracaoAdmin('WHATSAPP_PHONE_NUMBER_ID', '123456789')
+    expect(writeResult).toEqual({ success: true })
+
+    // Cache remains warm
+    await getLlmCreditStatus({ now: new Date('2026-07-10T12:01:00.000Z') })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 })
