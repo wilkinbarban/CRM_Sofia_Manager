@@ -420,4 +420,176 @@ describe('LlmApiCard — integração DeepSeek', () => {
     expect(await screen.findByText(/Nenhuma chave DeepSeek válida/i)).toBeInTheDocument()
     expect(vi.mocked(testAuthorizedDeepSeekModel).mock.calls[0]).toEqual(['deepseek-chat'])
   })
+
+  it('desabilita o teste e não envia modelo ao salvar quando a listagem de modelos falha mesmo com modelo inicial configurado', async () => {
+    vi.mocked(listAuthorizedDeepSeekModels).mockResolvedValue({
+      success: false,
+      error: 'DEEPSEEK_NOT_CONFIGURED',
+    })
+
+    renderCard({ DEEPSEEK_CONFIGURED: 'true', DEEPSEEK_MODEL: 'deepseek-chat' })
+
+    expect(await screen.findByText(/Nenhuma chave DeepSeek válida/i)).toBeInTheDocument()
+
+    const select = screen.getByLabelText(/DEEPSEEK_MODEL/i) as HTMLSelectElement
+    expect(select.value).toBe('')
+
+    const testButton = screen.getByRole('button', { name: /Testar modelo/i })
+    expect(testButton).toBeDisabled()
+
+    const keyInput = screen.getByLabelText(/DEEPSEEK_API_KEY/i) as HTMLInputElement
+    fireEvent.change(keyInput, { target: { value: 'sk-new-key' } })
+
+    fireEvent.click(screen.getByRole('button', { name: /Salvar configurações da DeepSeek/i }))
+
+    await waitFor(() => {
+      expect(vi.mocked(salvarConfiguracaoAdmin)).toHaveBeenCalledWith(
+        'DEEPSEEK_API_KEY',
+        'sk-new-key'
+      )
+    })
+    expect(vi.mocked(salvarConfiguracaoAdmin)).not.toHaveBeenCalledWith(
+      'DEEPSEEK_MODEL',
+      expect.anything()
+    )
+  })
+
+  it('desabilita o botão de testar e não envia modelo quando o catálogo retorna vazio com modelo inicial configurado', async () => {
+    vi.mocked(listAuthorizedDeepSeekModels).mockResolvedValue({ success: true, models: [] })
+
+    renderCard({ DEEPSEEK_CONFIGURED: 'true', DEEPSEEK_MODEL: 'deepseek-chat' })
+
+    expect(await screen.findByText(/Nenhum modelo autorizado/i)).toBeInTheDocument()
+
+    const select = screen.getByLabelText(/DEEPSEEK_MODEL/i) as HTMLSelectElement
+    expect(select.value).toBe('')
+
+    const testButton = screen.getByRole('button', { name: /Testar modelo/i })
+    expect(testButton).toBeDisabled()
+
+    const keyInput = screen.getByLabelText(/DEEPSEEK_API_KEY/i) as HTMLInputElement
+    fireEvent.change(keyInput, { target: { value: 'sk-new-key-2' } })
+
+    fireEvent.click(screen.getByRole('button', { name: /Salvar configurações da DeepSeek/i }))
+
+    await waitFor(() => {
+      expect(vi.mocked(salvarConfiguracaoAdmin)).toHaveBeenCalledWith(
+        'DEEPSEEK_API_KEY',
+        'sk-new-key-2'
+      )
+    })
+    expect(vi.mocked(salvarConfiguracaoAdmin)).not.toHaveBeenCalledWith(
+      'DEEPSEEK_MODEL',
+      expect.anything()
+    )
+  })
+
+  it('alinha a seleção do catálogo, o teste e o salvamento quando o modelo efetivo está fora do catálogo', async () => {
+    renderCard({ DEEPSEEK_CONFIGURED: 'true', DEEPSEEK_MODEL: 'deepseek-flash' })
+    await waitForModels()
+
+    const badge = screen.getByTestId('deepseek-effective-model-badge')
+    expect(badge).toHaveTextContent('Modelo efetivo:')
+    expect(badge).toHaveTextContent('deepseek-flash')
+    expect(within(badge).getByText(/Fora do catálogo/i)).toBeInTheDocument()
+
+    const select = screen.getByLabelText(/DEEPSEEK_MODEL/i) as HTMLSelectElement
+    expect(select.value).toBe('deepseek-chat')
+
+    fireEvent.click(screen.getByRole('button', { name: /Testar modelo/i }))
+    await waitFor(() => {
+      expect(vi.mocked(testAuthorizedDeepSeekModel)).toHaveBeenCalledTimes(1)
+    })
+    expect(vi.mocked(testAuthorizedDeepSeekModel).mock.calls[0]).toEqual(['deepseek-chat'])
+
+    fireEvent.click(screen.getByRole('button', { name: /Salvar configurações da DeepSeek/i }))
+    await waitFor(() => {
+      expect(vi.mocked(salvarConfiguracaoAdmin)).toHaveBeenCalledWith(
+        'DEEPSEEK_MODEL',
+        'deepseek-chat'
+      )
+    })
+
+    expect(badge).toHaveTextContent('deepseek-chat')
+    expect(screen.queryByText(/Fora do catálogo/i)).not.toBeInTheDocument()
+  })
+
+  it('preserva a seleção do modelo ao recarregar a lista e usa o modelo selecionado no teste e no salvamento', async () => {
+    renderCard({ DEEPSEEK_CONFIGURED: 'true', DEEPSEEK_MODEL: 'deepseek-chat' })
+    await waitForModels()
+
+    const select = screen.getByLabelText(/DEEPSEEK_MODEL/i) as HTMLSelectElement
+    expect(select.value).toBe('deepseek-chat')
+
+    // Usuário seleciona reasoner
+    fireEvent.change(select, { target: { value: 'deepseek-reasoner' } })
+    expect(select.value).toBe('deepseek-reasoner')
+
+    // Recarregar modelos retorna novo array (como na resposta real de rede)
+    vi.mocked(listAuthorizedDeepSeekModels).mockResolvedValueOnce({
+      success: true,
+      models: [...AUTHORIZED_MODELS],
+    })
+    fireEvent.click(screen.getByRole('button', { name: /Recarregar modelos/i }))
+
+    await waitFor(() => {
+      expect(vi.mocked(listAuthorizedDeepSeekModels)).toHaveBeenCalledTimes(2)
+    })
+    await waitFor(() => {
+      expect(screen.queryByText(/Carregando modelos autorizados/i)).not.toBeInTheDocument()
+    })
+
+    // A seleção deve permanecer reasoner mesmo após o reload dos modelos
+    expect(select.value).toBe('deepseek-reasoner')
+
+    // Testar modelo deve usar reasoner
+    fireEvent.click(screen.getByRole('button', { name: /Testar modelo/i }))
+    await waitFor(() => {
+      expect(vi.mocked(testAuthorizedDeepSeekModel)).toHaveBeenCalledTimes(1)
+    })
+    expect(vi.mocked(testAuthorizedDeepSeekModel)).toHaveBeenCalledWith('deepseek-reasoner')
+
+    // O badge de modelo efetivo permanece intacto até o salvamento
+    const badge = screen.getByTestId('deepseek-effective-model-badge')
+    expect(badge).toHaveTextContent('deepseek-chat')
+
+    // Salvar configurações deve usar reasoner
+    fireEvent.click(screen.getByRole('button', { name: /Salvar configurações da DeepSeek/i }))
+    await waitFor(() => {
+      expect(vi.mocked(salvarConfiguracaoAdmin)).toHaveBeenCalledWith(
+        'DEEPSEEK_MODEL',
+        'deepseek-reasoner'
+      )
+    })
+
+    // Após salvar, o badge de modelo efetivo atualiza para reasoner
+    expect(badge).toHaveTextContent('deepseek-reasoner')
+    expect(screen.queryByText(/Fora do catálogo/i)).not.toBeInTheDocument()
+  })
+
+  it('reverte para o modelo configurado inicial quando o modelo selecionado deixa de existir após recarga', async () => {
+    renderCard({ DEEPSEEK_CONFIGURED: 'true', DEEPSEEK_MODEL: 'deepseek-chat' })
+    await waitForModels()
+
+    const select = screen.getByLabelText(/DEEPSEEK_MODEL/i) as HTMLSelectElement
+    fireEvent.change(select, { target: { value: 'deepseek-reasoner' } })
+    expect(select.value).toBe('deepseek-reasoner')
+
+    // Recarrega apenas com deepseek-chat no catálogo (reasoner foi descontinuado pelo provedor)
+    vi.mocked(listAuthorizedDeepSeekModels).mockResolvedValueOnce({
+      success: true,
+      models: [{ id: 'deepseek-chat', label: 'DeepSeek Chat (v3)' }],
+    })
+    fireEvent.click(screen.getByRole('button', { name: /Recarregar modelos/i }))
+
+    await waitFor(() => {
+      expect(vi.mocked(listAuthorizedDeepSeekModels)).toHaveBeenCalledTimes(2)
+    })
+    await waitFor(() => {
+      expect(screen.queryByText(/Carregando modelos autorizados/i)).not.toBeInTheDocument()
+    })
+
+    // Como reasoner não está mais no catálogo, recua com segurança para o modelo configurado inicial
+    expect(select.value).toBe('deepseek-chat')
+  })
 })
