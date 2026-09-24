@@ -42,6 +42,16 @@ function balanceResponse(totalBalance = '2.5'): Response {
   }), { status: 200 })
 }
 
+function createDeferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res
+    reject = rej
+  })
+  return { promise, resolve, reject }
+}
+
 function mockDeepSeekKey(stored: string | null) {
   mocks.obterConfiguracaoSistema.mockImplementation(async (key: string) => (
     key === 'DEEPSEEK_API_KEY' ? stored : null
@@ -550,5 +560,268 @@ describe('LLM credit helpers', () => {
       state: 'fresh',
       color: 'green',
     })
+  })
+})
+
+describe('LLM credit cache concurrency and interleaving', () => {
+  it('prevents cross-credential cache poisoning when in-flight fetch for old key fails with transient error after new key succeeded', async () => {
+    mockDeepSeekKey('sk-deepseek-key-a')
+    vi.stubGlobal('fetch', vi.fn(async () => balanceResponse('2.5')))
+
+    // Warm cache with Key A
+    const initial = await getLlmCreditStatus({ now: new Date('2026-07-10T12:00:00.000Z') })
+    expect(initial.balanceUsd).toBe(2.5)
+
+    const deferredA = createDeferred<Response>()
+    const deferredB = createDeferred<Response>()
+
+    const fetchMock = vi.fn((_url: string, init?: RequestInit) => {
+      const auth = (init?.headers as Record<string, string>)?.Authorization
+      if (auth?.includes('sk-deepseek-key-a')) return deferredA.promise
+      if (auth?.includes('sk-deepseek-key-b')) return deferredB.promise
+      return Promise.reject(new Error(`unexpected request for ${auth}`))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    // Call 1 starts with Key A (forceRefresh to trigger fetch)
+    const call1Promise = getLlmCreditStatus({
+      forceRefresh: true,
+      now: new Date('2026-07-10T12:01:00.000Z'),
+    })
+
+    // Rotate credential to Key B
+    mockDeepSeekKey('sk-deepseek-key-b')
+
+    // Call 2 starts with Key B
+    const call2Promise = getLlmCreditStatus({
+      now: new Date('2026-07-10T12:02:00.000Z'),
+    })
+
+    // Key B fetch resolves fresh balance 8.0 first
+    deferredB.resolve(balanceResponse('8.0'))
+    const statusB = await call2Promise
+    expect(statusB.balanceUsd).toBe(8.0)
+    expect(statusB.state).toBe('fresh')
+
+    // Key A fetch fails with transient 503 afterwards
+    deferredA.resolve(new Response('Service Unavailable', { status: 503 }))
+    const statusA = await call1Promise
+    expect(statusA.state).toBe('unknown')
+
+    // Key B cache must not be poisoned by Key A's failure or balance
+    const cachedB = await getLlmCreditStatus({
+      now: new Date('2026-07-10T12:03:00.000Z'),
+    })
+    expect(cachedB.balanceUsd).toBe(8.0)
+    expect(cachedB.state).toBe('fresh')
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('prevents older successful fetch from clobbering newer credential cache', async () => {
+    mockDeepSeekKey('sk-deepseek-key-a')
+
+    const deferredA = createDeferred<Response>()
+    const deferredB = createDeferred<Response>()
+
+    const fetchMock = vi.fn((_url: string, init?: RequestInit) => {
+      const auth = (init?.headers as Record<string, string>)?.Authorization
+      if (auth?.includes('sk-deepseek-key-a')) return deferredA.promise
+      if (auth?.includes('sk-deepseek-key-b')) return deferredB.promise
+      return Promise.reject(new Error(`unexpected request for ${auth}`))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    // Call 1 starts with Key A
+    const call1Promise = getLlmCreditStatus({ now: new Date('2026-07-10T12:00:00.000Z') })
+
+    // Credential rotates to Key B
+    mockDeepSeekKey('sk-deepseek-key-b')
+
+    // Call 2 starts with Key B
+    const call2Promise = getLlmCreditStatus({ now: new Date('2026-07-10T12:01:00.000Z') })
+
+    // Call 2 with Key B resolves first with 8.0
+    deferredB.resolve(balanceResponse('8.0'))
+    const statusB = await call2Promise
+    expect(statusB.balanceUsd).toBe(8.0)
+    expect(statusB.state).toBe('fresh')
+
+    // Call 1 with Key A resolves later with 2.0
+    deferredA.resolve(balanceResponse('2.0'))
+    const statusA = await call1Promise
+    expect(statusA.balanceUsd).toBe(2.0)
+
+    // Subsequent read for Key B must still hit Key B's cache and not Key A's 2.0
+    const subsequentB = await getLlmCreditStatus({ now: new Date('2026-07-10T12:02:00.000Z') })
+    expect(subsequentB.balanceUsd).toBe(8.0)
+    expect(subsequentB.state).toBe('fresh')
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('prevents older 401 response from clearing newer credential cache', async () => {
+    mockDeepSeekKey('sk-deepseek-key-a')
+
+    const deferredA = createDeferred<Response>()
+    const deferredB = createDeferred<Response>()
+
+    const fetchMock = vi.fn((_url: string, init?: RequestInit) => {
+      const auth = (init?.headers as Record<string, string>)?.Authorization
+      if (auth?.includes('sk-deepseek-key-a')) return deferredA.promise
+      if (auth?.includes('sk-deepseek-key-b')) return deferredB.promise
+      return Promise.reject(new Error(`unexpected request for ${auth}`))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    // Call 1 starts with Key A
+    const call1Promise = getLlmCreditStatus({ now: new Date('2026-07-10T12:00:00.000Z') })
+
+    // Credential rotates to Key B
+    mockDeepSeekKey('sk-deepseek-key-b')
+
+    // Call 2 starts with Key B
+    const call2Promise = getLlmCreditStatus({ now: new Date('2026-07-10T12:01:00.000Z') })
+
+    // Call 2 with Key B resolves fresh 8.0
+    deferredB.resolve(balanceResponse('8.0'))
+    const statusB = await call2Promise
+    expect(statusB.balanceUsd).toBe(8.0)
+    expect(statusB.state).toBe('fresh')
+
+    // Call 1 with Key A fails with 401
+    deferredA.resolve(new Response('Unauthorized', { status: 401 }))
+    const statusA = await call1Promise
+    expect(statusA.state).toBe('unknown')
+    expect(statusA.error).toContain('401')
+
+    // Key B cache must NOT have been invalidated by Key A's 401
+    const subsequentB = await getLlmCreditStatus({ now: new Date('2026-07-10T12:02:00.000Z') })
+    expect(subsequentB.balanceUsd).toBe(8.0)
+    expect(subsequentB.state).toBe('fresh')
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('prevents same-key older failed fetch from clobbering newer successful cache into stale', async () => {
+    mockDeepSeekKey('sk-deepseek-key-a')
+    vi.stubGlobal('fetch', vi.fn(async () => balanceResponse('2.5')))
+
+    // Warm cache with initial balance
+    const initial = await getLlmCreditStatus({ now: new Date('2026-07-10T12:00:00.000Z') })
+    expect(initial.balanceUsd).toBe(2.5)
+
+    const deferred1 = createDeferred<Response>()
+    const deferred2 = createDeferred<Response>()
+
+    const fetchMock = vi.fn()
+    fetchMock.mockImplementationOnce(() => deferred1.promise)
+    fetchMock.mockImplementationOnce(() => deferred2.promise)
+    vi.stubGlobal('fetch', fetchMock)
+
+    // Call 1 starts
+    const call1Promise = getLlmCreditStatus({
+      forceRefresh: true,
+      now: new Date('2026-07-10T12:01:00.000Z'),
+    })
+
+    // Call 2 starts
+    const call2Promise = getLlmCreditStatus({
+      forceRefresh: true,
+      now: new Date('2026-07-10T12:02:00.000Z'),
+    })
+
+    // Call 2 completes fresh with 5.0
+    deferred2.resolve(balanceResponse('5.0'))
+    const status2 = await call2Promise
+    expect(status2.balanceUsd).toBe(5.0)
+    expect(status2.state).toBe('fresh')
+
+    // Call 1 fails with transient 504
+    deferred1.resolve(new Response('Gateway Timeout', { status: 504 }))
+    const status1 = await call1Promise
+    expect(status1.error).toContain('504')
+
+    // Cache must remain fresh 5.0 from Call 2, not overwritten as stale
+    const cached = await getLlmCreditStatus({ now: new Date('2026-07-10T12:03:00.000Z') })
+    expect(cached.balanceUsd).toBe(5.0)
+    expect(cached.state).toBe('fresh')
+    expect(cached.error).toBeUndefined()
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not resurrect explicitly invalidated cache when in-flight fetch finishes afterwards', async () => {
+    mockDeepSeekKey('sk-deepseek-key-a')
+
+    const deferred = createDeferred<Response>()
+    let fetchCalled = false
+    const fetchMock = vi.fn(() => {
+      fetchCalled = true
+      return deferred.promise
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    // Call 1 starts fetch
+    const call1Promise = getLlmCreditStatus({
+      forceRefresh: true,
+      now: new Date('2026-07-10T12:00:00.000Z'),
+    })
+
+    // Wait until fetchMock is confirmed in flight before invalidating
+    await vi.waitFor(() => expect(fetchCalled).toBe(true))
+
+    // Invalidation occurs while fetch is in-flight
+    invalidateLlmCreditStatusCache()
+
+    // Call 1 fetch completes with 2.5
+    deferred.resolve(balanceResponse('2.5'))
+    const status1 = await call1Promise
+    expect(status1.balanceUsd).toBe(2.5)
+
+    // Cache must NOT be resurrected: next non-forced call must miss cache and trigger a new fetch
+    fetchMock.mockImplementationOnce(async () => balanceResponse('9.0'))
+
+    const subsequent = await getLlmCreditStatus({ now: new Date('2026-07-10T12:01:00.000Z') })
+    expect(subsequent.balanceUsd).toBe(9.0)
+    expect(subsequent.state).toBe('fresh')
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not resurrect explicitly invalidated cache as stale when in-flight fetch fails with transient error', async () => {
+    mockDeepSeekKey('sk-deepseek-key-a')
+    vi.stubGlobal('fetch', vi.fn(async () => balanceResponse('2.5')))
+
+    // Warm cache with initial balance
+    const initial = await getLlmCreditStatus({ now: new Date('2026-07-10T12:00:00.000Z') })
+    expect(initial.balanceUsd).toBe(2.5)
+
+    const deferred = createDeferred<Response>()
+    let fetchCalled = false
+    const fetchMock = vi.fn(() => {
+      fetchCalled = true
+      return deferred.promise
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    // Call 1 starts fetch with forceRefresh
+    const call1Promise = getLlmCreditStatus({
+      forceRefresh: true,
+      now: new Date('2026-07-10T12:01:00.000Z'),
+    })
+
+    // Wait until fetch is in flight
+    await vi.waitFor(() => expect(fetchCalled).toBe(true))
+
+    // Invalidation occurs while fetch is in flight
+    invalidateLlmCreditStatusCache()
+
+    // Fetch fails with transient 503
+    deferred.resolve(new Response('Service Unavailable', { status: 503 }))
+    const status1 = await call1Promise
+    expect(status1.state).toBe('unknown')
+
+    // Next call must not receive stale 2.5
+    fetchMock.mockImplementationOnce(async () => balanceResponse('4.0'))
+    const subsequent = await getLlmCreditStatus({ now: new Date('2026-07-10T12:02:00.000Z') })
+    expect(subsequent.balanceUsd).toBe(4.0)
+    expect(subsequent.state).toBe('fresh')
+    expect(fetchMock).toHaveBeenCalledTimes(2)
   })
 })
