@@ -97,7 +97,7 @@ describe('Evolution canonical payment-proof intake', () => {
     expect(client.from).not.toHaveBeenCalled()
   })
   it.each([
-    ['object', { valueOf: () => 'message-77' }], ['array', ['message-77']], ['number', 77], ['empty', ''], ['trimmed', ' message-77 '], ['control', 'message-\u0001-77'], ['oversized', 'a'.repeat(257)],
+    ['object', { valueOf: (): string => 'message-77' }], ['array', ['message-77']], ['number', 77], ['empty', ''], ['trimmed', ' message-77 '], ['control', 'message-\u0001-77'], ['oversized', 'a'.repeat(257)],
   ])('rejects dedicated-secret document candidates with an invalid delivery ID (%s) before admin or downstream work', async (_name, id) => {
     const { client } = adminClient(); mocks.createAdminClient.mockReturnValue(client)
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
