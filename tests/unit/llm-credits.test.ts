@@ -465,4 +465,90 @@ describe('LLM credit helpers', () => {
     await getLlmCreditStatus({ now: new Date('2026-07-10T12:01:00.000Z') })
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })
+
+  it('prevents callers from mutating cached credit status via the initially returned fresh object or subsequent cache reads', async () => {
+    mockDeepSeekKey('sk-deepseek-database-key')
+    const fetchMock = vi.fn(async () => balanceResponse('2.5'))
+    vi.stubGlobal('fetch', fetchMock)
+
+    // Initial fresh fetch
+    const initial = await getLlmCreditStatus({ now: new Date('2026-07-10T12:00:00.000Z') })
+    expect(initial.balanceUsd).toBe(2.5)
+    expect(initial.state).toBe('fresh')
+    expect(initial.color).toBe('green')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+
+    // Caller mutates the initial fresh object
+    initial.balanceUsd = 999
+    initial.state = 'unknown'
+    initial.color = 'neutral'
+    initial.error = 'external corruption'
+
+    // Cached fresh read must not reflect caller mutation
+    const cached = await getLlmCreditStatus({ now: new Date('2026-07-10T12:05:00.000Z') })
+    expect(cached).not.toBe(initial)
+    expect(cached.balanceUsd).toBe(2.5)
+    expect(cached.state).toBe('fresh')
+    expect(cached.color).toBe('green')
+    expect(cached.error).toBeUndefined()
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+
+    // Caller mutates the cached read object
+    cached.balanceUsd = 888
+    cached.state = 'stale'
+
+    // Subsequent cached read must still remain uncorrupted
+    const subsequent = await getLlmCreditStatus({ now: new Date('2026-07-10T12:10:00.000Z') })
+    expect(subsequent).not.toBe(cached)
+    expect(subsequent.balanceUsd).toBe(2.5)
+    expect(subsequent.state).toBe('fresh')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('prevents callers from mutating cached credit status via returned stale fallback objects', async () => {
+    mockDeepSeekKey('sk-deepseek-database-key')
+    vi.stubGlobal('fetch', vi.fn(async () => balanceResponse('2.5')))
+
+    const fresh = await getLlmCreditStatus({ now: new Date('2026-07-10T12:00:00.000Z') })
+    expect(fresh.balanceUsd).toBe(2.5)
+
+    // Transient failure forces stale fallback
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('provider down', { status: 503 })))
+
+    const stale = await getLlmCreditStatus({
+      forceRefresh: true,
+      now: new Date('2026-07-10T12:31:00.000Z'),
+    })
+    expect(stale).toMatchObject({
+      balanceUsd: 2.5,
+      state: 'stale',
+      color: 'green',
+    })
+
+    // Caller mutates the returned stale fallback object
+    stale.balanceUsd = 777
+    stale.state = 'unknown'
+    stale.color = 'neutral'
+
+    // Another transient failure should still fall back to the original cached balance
+    const staleSecond = await getLlmCreditStatus({
+      forceRefresh: true,
+      now: new Date('2026-07-10T12:32:00.000Z'),
+    })
+    expect(staleSecond).not.toBe(stale)
+    expect(staleSecond.balanceUsd).toBe(2.5)
+    expect(staleSecond.state).toBe('stale')
+    expect(staleSecond.color).toBe('green')
+
+    // When provider recovers, next attempt fetches and returns new fresh balance
+    vi.stubGlobal('fetch', vi.fn(async () => balanceResponse('5.0')))
+    const recovered = await getLlmCreditStatus({
+      now: new Date('2026-07-10T12:33:00.000Z'),
+    })
+    expect(recovered).toMatchObject({
+      balanceUsd: 5.0,
+      state: 'fresh',
+      color: 'green',
+    })
+  })
 })
