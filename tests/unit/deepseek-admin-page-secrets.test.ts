@@ -600,4 +600,3 @@ describe('synchronous DeepSeek model resolver (escolherModeloDeepSeek)', () => {
     expect(escolherModeloDeepSeek('deepseek\u0000model', 'deepseek-chat')).toBe('deepseek-chat')
   })
 })
-
