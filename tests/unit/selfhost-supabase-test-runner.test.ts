@@ -168,7 +168,7 @@ describe('self-hosted Supabase SQL test runner', () => {
   })
 
   it('falls back to worktree list --porcelain when git common-dir discovery fails', () => {
-    withTempRepo(({ tempDir, mainRepo, linkedWorktree, fakeBinDir, dockerLog }) => {
+    withTempRepo(({ mainRepo, linkedWorktree, fakeBinDir, dockerLog }) => {
       writeFileSync(join(mainRepo, 'ops/supabase/.env'), 'POSTGRES_PASSWORD=fallback_secret_pw\n')
 
       // Stub git that fails rev-parse --git-common-dir but delegates all other commands
