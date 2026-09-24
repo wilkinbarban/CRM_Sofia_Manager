@@ -44,15 +44,22 @@ async function enviarMensagemDireta(chatId: string, texto: string): Promise<bool
   }
 }
 
-function obterMensagemBoasVindasTelegram(profile: BusinessProfile): string {
+export function obterMensagemBoasVindasTelegram(profile: BusinessProfile): string {
   const brand = profile.shortName || profile.name
-  return `🍖 *Olá! Seja bem-vindo(a) à ${brand}!*
+  const role = profile.personaRole || 'assistente virtual'
+  return `*Olá! Seja bem-vindo(a) à ${brand}!*
 
-Sou a Sofía, assistente virtual da ${profile.name} em ${profile.location}. 😊
+Sou a Sofía, ${role} da ${profile.name} em ${profile.location}. 😊
 
 Para continuar o atendimento e personalizar sua experiência, preciso que você compartilhe seu número de telefone. É rapidinho!
 
 👇 *Toque no botão abaixo para compartilhar:*`
+}
+
+export function buildTelegramContactConfirmationMessage(contatoNome: string): string {
+  return `✅ *Obrigado, ${contatoNome}!* Seu número foi registrado.
+
+Como posso te ajudar hoje? 😊`
 }
 
 
@@ -612,11 +619,7 @@ export async function POST(request: Request) {
       }
 
       // Responder com confirmação e disparar RAG
-      await enviarMensagemDireta(telegramChatId,
-        `✅ *Obrigado, ${contatoNome}!* Seu número foi registrado.
-
-Como posso te ajudar com o churrasco hoje? 🥩`
-      )
+      await enviarMensagemDireta(telegramChatId, buildTelegramContactConfirmationMessage(contatoNome))
 
       if (iaAtiva) {
         processarRagPipeline(conversationId, safeContactDisplay, 'telegram').catch((err) => {
