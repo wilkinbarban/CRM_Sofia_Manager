@@ -8,15 +8,18 @@ const root = process.cwd()
 const runnerPath = join(root, 'scripts/run-selfhost-supabase-tests.sh')
 const packageJson = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) as { scripts: Record<string, string> }
 
-function withTempRepo(callback: (context: {
-  tempDir: string
-  mainRepo: string
-  linkedWorktree: string
-  fakeBinDir: string
-  dockerLog: string
-}) => void) {
+function withTempRepo(
+  callback: (context: {
+    tempDir: string
+    mainRepo: string
+    linkedWorktree: string
+    fakeBinDir: string
+    dockerLog: string
+  }) => void,
+  options: { mainRepoName?: string } = {},
+) {
   const tempDir = mkdtempSync(join(tmpdir(), 'selfhost-runner-test-'))
-  const mainRepo = join(tempDir, 'main-repo')
+  const mainRepo = join(tempDir, options.mainRepoName ?? 'main-repo')
   const linkedWorktree = join(tempDir, 'linked-wt')
   const fakeBinDir = join(tempDir, 'bin')
   const dockerLog = join(tempDir, 'docker.log')
@@ -43,16 +46,92 @@ function withTempRepo(callback: (context: {
 
     execFileSync('git', ['-C', mainRepo, 'worktree', 'add', linkedWorktree, '-b', 'branch-wt'])
 
-    // Default stub docker that logs invocations and simulates minimal responses
+    // Default stub docker with strict subcommand and argument boundary handling
     const fakeDocker = join(fakeBinDir, 'docker')
     writeFileSync(fakeDocker, `#!/bin/sh
 echo "$@" >> "${dockerLog}"
-case "$*" in
-  *"compose"*"ps"*) echo "db running" ;;
-  *"inspect"*) echo "true" ;;
-  *"pgtap"*) echo "1" ;;
+subcmd="$1"
+shift || true
+
+case "$subcmd" in
+  compose)
+    compose_action=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --env-file|-f)
+          shift 2 || shift $#
+          ;;
+        --env-file=*|-f=*)
+          shift
+          ;;
+        config|ps|exec|up|down)
+          compose_action="$1"
+          shift
+          break
+          ;;
+        *)
+          shift
+          ;;
+      esac
+    done
+
+    case "$compose_action" in
+      config)
+        exit 0
+        ;;
+      ps)
+        if [ "\${FAKE_DOCKER_DB_DOWN:-0}" = "1" ]; then
+          exit 0
+        fi
+        echo "db running"
+        exit 0
+        ;;
+      exec)
+        exit 0
+        ;;
+      *)
+        exit 0
+        ;;
+    esac
+    ;;
+
+  inspect)
+    if [ "\${FAKE_DOCKER_CONTAINER_STOPPED:-0}" = "1" ]; then
+      echo "false"
+    else
+      echo "true"
+    fi
+    exit 0
+    ;;
+
+  exec)
+    is_pgtap=0
+    for arg in "$@"; do
+      case "$arg" in
+        *"extname = 'pgtap'"*|*"pgtap"*)
+          is_pgtap=1
+          ;;
+      esac
+    done
+
+    if [ "$is_pgtap" = "1" ]; then
+      if [ "\${FAKE_DOCKER_NO_PGTAP:-0}" = "1" ]; then
+        echo "0"
+      else
+        echo "1"
+      fi
+    fi
+    exit 0
+    ;;
+
+  cp)
+    exit 0
+    ;;
+
+  *)
+    exit 1
+    ;;
 esac
-exit 0
 `)
     chmodSync(fakeDocker, 0o755)
 
@@ -141,6 +220,7 @@ describe('self-hosted Supabase SQL test runner', () => {
     expect(runner).toContain('Checked paths:')
     expect(runner).toContain('(cd ops/supabase && ./generate-env.sh)')
     expect(runner).toContain('Missing POSTGRES_PASSWORD in $env_file')
+    expect(runner).toContain('Self-hosted Supabase db service is not running. Start it with: (cd $remediation_dir && docker compose up -d)')
   })
 
   it('automatically discovers canonical checkout .env from linked worktrees without copying or symlinking', () => {
@@ -250,5 +330,125 @@ exec /usr/bin/git "$@"
       expect(res.status).toBe(1)
       expect(res.stderr).toContain(`Missing POSTGRES_PASSWORD in ${canonicalEnv}`)
     })
+  })
+
+  it('diagnoses DB service down with safe canonical remediation in linked worktree and canonical checkout', () => {
+    withTempRepo(({ mainRepo, linkedWorktree, fakeBinDir }) => {
+      writeFileSync(join(mainRepo, 'ops/supabase/.env'), 'POSTGRES_PASSWORD=canonical_secret_pw\n')
+
+      const env = { ...process.env, PATH: `${fakeBinDir}:${process.env.PATH}`, FAKE_DOCKER_DB_DOWN: '1' }
+
+      // 1. Invoked from linked worktree: must remediate with canonical checkout ops/supabase
+      const resWt = spawnSync('sh', [join(linkedWorktree, 'scripts/run-selfhost-supabase-tests.sh')], {
+        env,
+        encoding: 'utf8',
+      })
+
+      expect(resWt.status).toBe(1)
+      expect(resWt.stderr).toContain('Self-hosted Supabase db service is not running.')
+      expect(resWt.stderr).toContain(`Start it with: (cd ${mainRepo}/ops/supabase && docker compose up -d)`)
+
+      // 2. Invoked from canonical checkout: must remediate with local ops/supabase
+      const resMain = spawnSync('sh', [join(mainRepo, 'scripts/run-selfhost-supabase-tests.sh')], {
+        env,
+        encoding: 'utf8',
+      })
+
+      expect(resMain.status).toBe(1)
+      expect(resMain.stderr).toContain('Self-hosted Supabase db service is not running.')
+      expect(resMain.stderr).toContain('Start it with: (cd ops/supabase && docker compose up -d)')
+    })
+  })
+
+  it('diagnoses stopped container and missing pgTAP extension via fake Docker boundaries', () => {
+    withTempRepo(({ mainRepo, linkedWorktree, fakeBinDir }) => {
+      writeFileSync(join(mainRepo, 'ops/supabase/.env'), 'POSTGRES_PASSWORD=canonical_secret_pw\n')
+
+      // 1. Container stopped
+      const envStopped = { ...process.env, PATH: `${fakeBinDir}:${process.env.PATH}`, FAKE_DOCKER_CONTAINER_STOPPED: '1' }
+      const resStopped = spawnSync('sh', [join(linkedWorktree, 'scripts/run-selfhost-supabase-tests.sh')], {
+        env: envStopped,
+        encoding: 'utf8',
+      })
+      expect(resStopped.status).toBe(1)
+      expect(resStopped.stderr).toContain('Expected self-hosted database container is not running: asados-supabase-db')
+
+      // 2. pgTAP extension missing
+      const envNoPgtap = { ...process.env, PATH: `${fakeBinDir}:${process.env.PATH}`, FAKE_DOCKER_NO_PGTAP: '1' }
+      const resNoPgtap = spawnSync('sh', [join(linkedWorktree, 'scripts/run-selfhost-supabase-tests.sh')], {
+        env: envNoPgtap,
+        encoding: 'utf8',
+      })
+      expect(resNoPgtap.status).toBe(1)
+      expect(resNoPgtap.stderr).toContain('pgTAP extension is unavailable in asados-supabase-db')
+    })
+  })
+
+  it('rejects test files outside supabase/tests and diagnoses missing compose file', () => {
+    withTempRepo(({ mainRepo, linkedWorktree, fakeBinDir }) => {
+      writeFileSync(join(mainRepo, 'ops/supabase/.env'), 'POSTGRES_PASSWORD=canonical_secret_pw\n')
+      const env = { ...process.env, PATH: `${fakeBinDir}:${process.env.PATH}` }
+
+      // 1. Reject file outside supabase/tests
+      const resInvalidFile = spawnSync('sh', [join(linkedWorktree, 'scripts/run-selfhost-supabase-tests.sh'), 'outside/invalid.sql'], {
+        env,
+        encoding: 'utf8',
+      })
+      expect(resInvalidFile.status).toBe(2)
+      expect(resInvalidFile.stderr).toContain('Only files under supabase/tests may be run:')
+
+      // 2. Missing compose file
+      rmSync(join(linkedWorktree, 'ops/supabase/docker-compose.yml'))
+      const resMissingCompose = spawnSync('sh', [join(linkedWorktree, 'scripts/run-selfhost-supabase-tests.sh')], {
+        env,
+        encoding: 'utf8',
+      })
+      expect(resMissingCompose.status).toBe(1)
+      expect(resMissingCompose.stderr).toContain('Missing self-hosted Supabase compose file:')
+    })
+  })
+
+  it('enforces fake Docker argument boundaries by rejecting unknown subcommands', () => {
+    withTempRepo(({ fakeBinDir }) => {
+      const res = spawnSync('docker', ['unknown-subcommand'], {
+        env: { ...process.env, PATH: `${fakeBinDir}:${process.env.PATH}` },
+        encoding: 'utf8',
+      })
+      expect(res.status).toBe(1)
+    })
+  })
+
+  it('emits copy-paste safe POSIX-quoted remediation when canonical path contains whitespace and shell metacharacters', () => {
+    withTempRepo(
+      ({ mainRepo, linkedWorktree, fakeBinDir }) => {
+        writeFileSync(join(mainRepo, 'ops/supabase/.env'), 'POSTGRES_PASSWORD=canonical_secret_pw\n')
+
+        const env = { ...process.env, PATH: `${fakeBinDir}:${process.env.PATH}`, FAKE_DOCKER_DB_DOWN: '1' }
+        const res = spawnSync('sh', [join(linkedWorktree, 'scripts/run-selfhost-supabase-tests.sh')], {
+          env,
+          encoding: 'utf8',
+        })
+
+        expect(res.status).toBe(1)
+        expect(res.stderr).toContain('Self-hosted Supabase db service is not running.')
+
+        const canonicalOps = join(mainRepo, 'ops/supabase')
+        const expectedQuoted = `'${canonicalOps.replace(/'/g, "'\\''")}'`
+        expect(res.stderr).toContain(`Start it with: (cd ${expectedQuoted} && docker compose up -d)`)
+
+        // Verify copy-paste safety in POSIX shell without executing docker compose up
+        const match = res.stderr.match(/Start it with: \(cd (.+) && docker compose up -d\)/)
+        expect(match).not.toBeNull()
+        const targetPath = match?.[1]
+        expect(targetPath).toBe(expectedQuoted)
+        if (!targetPath) {
+          throw new Error('Expected targetPath to be present')
+        }
+
+        const evaluated = execFileSync('sh', ['-c', `cd ${targetPath} && pwd`], { encoding: 'utf8' }).trim()
+        expect(evaluated).toBe(canonicalOps)
+      },
+      { mainRepoName: "canonical repo with spaces $dollar and 'quote" },
+    )
   })
 })
