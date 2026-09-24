@@ -2,7 +2,11 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { allowsIntegrationMock } from '@/lib/runtime/environment'
 import { processarRagPipeline } from '@/lib/ai/openrouter'
 import { obterConfiguracaoSistema, obterSofiaGlobalChannelConfig } from '@/lib/config/sistema'
-import { getBusinessProfile, type BusinessProfile } from '@/lib/config/business-profile'
+import { getBusinessProfile } from '@/lib/config/business-profile'
+import {
+  buildTelegramContactConfirmationMessage,
+  obterMensagemBoasVindasTelegram,
+} from '@/lib/telegram/messages'
 import { verificarHorarioAtendimento } from '@/lib/horarios/verificar'
 import { deriveTelegramMessageKey } from '@/lib/telegram/idempotency'
 import { downloadTelegramDocument } from '@/lib/telegram/document-download'
@@ -43,19 +47,6 @@ async function enviarMensagemDireta(chatId: string, texto: string): Promise<bool
     return false
   }
 }
-
-function obterMensagemBoasVindasTelegram(profile: BusinessProfile): string {
-  const brand = profile.shortName || profile.name
-  return `🍖 *Olá! Seja bem-vindo(a) à ${brand}!*
-
-Sou a Sofía, assistente virtual da ${profile.name} em ${profile.location}. 😊
-
-Para continuar o atendimento e personalizar sua experiência, preciso que você compartilhe seu número de telefone. É rapidinho!
-
-👇 *Toque no botão abaixo para compartilhar:*`
-}
-
-
 
 type TelegramMessage = {
   message_id: string | number
@@ -612,11 +603,7 @@ export async function POST(request: Request) {
       }
 
       // Responder com confirmação e disparar RAG
-      await enviarMensagemDireta(telegramChatId,
-        `✅ *Obrigado, ${contatoNome}!* Seu número foi registrado.
-
-Como posso te ajudar com o churrasco hoje? 🥩`
-      )
+      await enviarMensagemDireta(telegramChatId, buildTelegramContactConfirmationMessage(contatoNome))
 
       if (iaAtiva) {
         processarRagPipeline(conversationId, safeContactDisplay, 'telegram').catch((err) => {

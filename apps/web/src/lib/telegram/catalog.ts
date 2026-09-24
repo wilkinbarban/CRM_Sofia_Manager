@@ -20,7 +20,7 @@ export const TELEGRAM_CATALOG_VIEW_CALLBACK = 'catalog:view'
  * Os cartões oficiais só saem depois do clique explícito neste botão.
  */
 const TELEGRAM_CATALOG_PROMPT_TEXT =
-  '🍖 Quer dar uma olhada no nosso cardápio? Toque no botão abaixo para ver os combos oficiais.'
+  'Quer dar uma olhada no nosso catálogo? Toque no botão abaixo para ver os itens disponíveis.'
 
 export type TelegramCatalogPrompt = {
   text: string
@@ -82,8 +82,8 @@ export function buildTelegramCatalogCard(
   return {
     photo: normalizeTelegramPhotoUrl(product.url_imagem, baseUrl),
     caption: [
-      `🔥 *${product.nome}*`,
-      product.descricao || 'Assado preparado especialmente para o seu domingo.',
+      `*${product.nome}*`,
+      product.descricao || 'Consulte os detalhes deste item.',
       '',
       `💰 *${formatarPrecoBrl(product.preco_centavos)}*`,
     ].join('\n'),
