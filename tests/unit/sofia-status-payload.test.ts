@@ -100,4 +100,66 @@ describe('Sofia status payload runtime model', () => {
     })
     expect(mocks.obterConfiguracaoSistema.mock.calls.map((args) => args[0])).toEqual(['DEEPSEEK_MODEL'])
   })
+
+  it('projects stale credit status with preserved balance when provider is temporarily unavailable', async () => {
+    mocks.getLlmCreditStatus.mockResolvedValue({
+      provider: 'deepseek',
+      balanceUsd: 4.5,
+      state: 'stale',
+      fetchedAt: '2026-07-10T12:00:00.000Z',
+      expiresAt: '2026-07-10T12:30:00.000Z',
+      freshnessMs: 1_800_000,
+      color: 'green',
+      error: 'deepseek credits request failed with HTTP 503',
+    })
+
+    const result = await obterStatusSofiaAtendimento()
+
+    expect(result).toEqual({
+      success: true,
+      data: expect.objectContaining({
+        credits: {
+          provider: 'deepseek',
+          balanceUsd: 4.5,
+          state: 'stale',
+          fetchedAt: '2026-07-10T12:00:00.000Z',
+          expiresAt: '2026-07-10T12:30:00.000Z',
+          freshnessMs: 1_800_000,
+          color: 'green',
+          error: 'deepseek credits request failed with HTTP 503',
+        },
+      }),
+    })
+  })
+
+  it('projects neutral unknown credit status when credential is missing or revoked', async () => {
+    mocks.getLlmCreditStatus.mockResolvedValue({
+      provider: 'deepseek',
+      balanceUsd: null,
+      state: 'unknown',
+      fetchedAt: null,
+      expiresAt: null,
+      freshnessMs: 1_800_000,
+      color: 'neutral',
+      error: 'deepseek credits request failed with HTTP 401',
+    })
+
+    const result = await obterStatusSofiaAtendimento()
+
+    expect(result).toEqual({
+      success: true,
+      data: expect.objectContaining({
+        credits: {
+          provider: 'deepseek',
+          balanceUsd: null,
+          state: 'unknown',
+          fetchedAt: null,
+          expiresAt: null,
+          freshnessMs: 1_800_000,
+          color: 'neutral',
+          error: 'deepseek credits request failed with HTTP 401',
+        },
+      }),
+    })
+  })
 })
