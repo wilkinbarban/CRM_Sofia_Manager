@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useCallback, useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import {
   Bot,
   Key,
@@ -68,36 +68,58 @@ export default function LlmApiCard({ initialConfigs, showToast }: IntegrationCar
   const [testingModel, setTestingModel] = useState(false)
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null)
 
+  // Track the latest catalog request sequence so out-of-order asynchronous
+  // responses or rejections never overwrite newer state.
+  const latestRequestIdRef = useRef(0)
+
   // Models come from the authorized action only: the card never ships a
   // hard-coded catalog, so a provider-side change cannot desync the UI.
   const loadModels = useCallback(async () => {
+    const requestId = ++latestRequestIdRef.current
     setLoadingModels(true)
     setModelsError(null)
 
-    try {
-      const res = await listAuthorizedDeepSeekModels()
-      if (res.success && res.models.length > 0) {
-        setModels(res.models)
-        setModel((current) => {
-          if (current && res.models.some((option) => option.id === current)) return current
-          if (initialEffectiveModel && res.models.some((option) => option.id === initialEffectiveModel)) {
-            return initialEffectiveModel
-          }
-          return res.models[0]?.id ?? ''
-        })
-      } else {
-        setModels([])
-        setModel('')
-        if (!res.success) {
-          setModelsError(safeErrorMessage(res.error))
-        }
-      }
-    } catch {
+    const resetCatalogSelection = (errorMessage?: string) => {
       setModels([])
       setModel('')
-      setModelsError(GENERIC_ERROR_MESSAGE)
+      if (errorMessage) {
+        setModelsError(errorMessage)
+      }
+    }
+
+    try {
+      const res = await listAuthorizedDeepSeekModels()
+      if (requestId !== latestRequestIdRef.current) {
+        return
+      }
+
+      if (!res.success) {
+        resetCatalogSelection(safeErrorMessage(res.error))
+        return
+      }
+
+      if (res.models.length === 0) {
+        resetCatalogSelection()
+        return
+      }
+
+      setModels(res.models)
+      setModel((current) => {
+        if (current && res.models.some((option) => option.id === current)) return current
+        if (initialEffectiveModel && res.models.some((option) => option.id === initialEffectiveModel)) {
+          return initialEffectiveModel
+        }
+        return res.models[0]?.id ?? ''
+      })
+    } catch {
+      if (requestId !== latestRequestIdRef.current) {
+        return
+      }
+      resetCatalogSelection(GENERIC_ERROR_MESSAGE)
     } finally {
-      setLoadingModels(false)
+      if (requestId === latestRequestIdRef.current) {
+        setLoadingModels(false)
+      }
     }
   }, [initialEffectiveModel])
 

@@ -21,6 +21,18 @@ const AUTHORIZED_MODELS = [
 
 const RAW_SECRET = 'sk-raw-secret-must-never-render'
 
+function createDeferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res
+    reject = rej
+  })
+  return { promise, resolve, reject }
+}
+
+type ListAuthorizedModelsResult = Awaited<ReturnType<typeof listAuthorizedDeepSeekModels>>
+
 describe('LlmApiCard — integração DeepSeek', () => {
   const showToast = vi.fn()
 
@@ -591,5 +603,186 @@ describe('LlmApiCard — integração DeepSeek', () => {
 
     // Como reasoner não está mais no catálogo, recua com segurança para o modelo configurado inicial
     expect(select.value).toBe('deepseek-chat')
+  })
+
+  describe('regressões de concorrência com deferred-promises (latest-request-wins)', () => {
+    it('garante que a resposta mais recente vença quando carregamentos de catálogo resolvem fora de ordem', async () => {
+      const initialDeferred = createDeferred<ListAuthorizedModelsResult>()
+      const reloadDeferred = createDeferred<ListAuthorizedModelsResult>()
+
+      vi.mocked(listAuthorizedDeepSeekModels)
+        .mockImplementationOnce(() => initialDeferred.promise)
+        .mockImplementationOnce(() => reloadDeferred.promise)
+
+      renderCard({ DEEPSEEK_CONFIGURED: 'true', DEEPSEEK_MODEL: 'deepseek-chat' })
+      expect(vi.mocked(listAuthorizedDeepSeekModels)).toHaveBeenCalledTimes(1)
+
+      // Enquanto a carga inicial está pendente, o operador salva uma chave, disparando novo loadModels()
+      const keyInput = screen.getByLabelText(/DEEPSEEK_API_KEY/i) as HTMLInputElement
+      fireEvent.change(keyInput, { target: { value: 'sk-new-key' } })
+      fireEvent.click(screen.getByRole('button', { name: /Salvar configurações da DeepSeek/i }))
+
+      await waitFor(() => {
+        expect(vi.mocked(listAuthorizedDeepSeekModels)).toHaveBeenCalledTimes(2)
+      })
+
+      const NEWER_MODELS = [{ id: 'deepseek-reasoner', label: 'DeepSeek Reasoner (R1)' }]
+      const OLDER_MODELS = [{ id: 'deepseek-chat', label: 'DeepSeek Chat (v3)' }]
+
+      // Resposta mais recente (requisição 2) resolve primeiro com sucesso
+      await act(async () => {
+        reloadDeferred.resolve({ success: true, models: NEWER_MODELS })
+      })
+
+      const select = screen.getByLabelText(/DEEPSEEK_MODEL/i) as HTMLSelectElement
+      await waitFor(() => {
+        expect(select.value).toBe('deepseek-reasoner')
+      })
+      expect(within(select).getByRole('option', { name: 'DeepSeek Reasoner (R1)' })).toBeInTheDocument()
+      expect(within(select).queryByRole('option', { name: 'DeepSeek Chat (v3)' })).not.toBeInTheDocument()
+
+      // Resposta mais antiga (requisição 1) resolve depois (fora de ordem)
+      await act(async () => {
+        initialDeferred.resolve({ success: true, models: OLDER_MODELS })
+      })
+
+      // A resposta mais recente deve continuar vencendo; a mais antiga não pode sobrescrever o catálogo
+      expect(select.value).toBe('deepseek-reasoner')
+      expect(within(select).getByRole('option', { name: 'DeepSeek Reasoner (R1)' })).toBeInTheDocument()
+      expect(within(select).queryByRole('option', { name: 'DeepSeek Chat (v3)' })).not.toBeInTheDocument()
+    })
+
+    it('ignora rejeição de carregamento mais antigo quando a resposta mais recente já foi aplicada', async () => {
+      const initialDeferred = createDeferred<ListAuthorizedModelsResult>()
+      const reloadDeferred = createDeferred<ListAuthorizedModelsResult>()
+
+      vi.mocked(listAuthorizedDeepSeekModels)
+        .mockImplementationOnce(() => initialDeferred.promise)
+        .mockImplementationOnce(() => reloadDeferred.promise)
+
+      renderCard({ DEEPSEEK_CONFIGURED: 'true', DEEPSEEK_MODEL: 'deepseek-chat' })
+      expect(vi.mocked(listAuthorizedDeepSeekModels)).toHaveBeenCalledTimes(1)
+
+      const keyInput = screen.getByLabelText(/DEEPSEEK_API_KEY/i) as HTMLInputElement
+      fireEvent.change(keyInput, { target: { value: 'sk-new-key' } })
+      fireEvent.click(screen.getByRole('button', { name: /Salvar configurações da DeepSeek/i }))
+
+      await waitFor(() => {
+        expect(vi.mocked(listAuthorizedDeepSeekModels)).toHaveBeenCalledTimes(2)
+      })
+
+      const NEWER_MODELS = [{ id: 'deepseek-reasoner', label: 'DeepSeek Reasoner (R1)' }]
+
+      // Resposta mais recente resolve com sucesso
+      await act(async () => {
+        reloadDeferred.resolve({ success: true, models: NEWER_MODELS })
+      })
+
+      const select = screen.getByLabelText(/DEEPSEEK_MODEL/i) as HTMLSelectElement
+      await waitFor(() => {
+        expect(select.value).toBe('deepseek-reasoner')
+      })
+
+      // Requisição mais antiga é rejeitada com erro de rede posteriormente
+      await act(async () => {
+        initialDeferred.reject(new Error('Network timeout'))
+      })
+
+      // O catálogo bem-sucedido mais recente deve permanecer intacto, sem erro na UI
+      expect(select.value).toBe('deepseek-reasoner')
+      expect(within(select).getByRole('option', { name: 'DeepSeek Reasoner (R1)' })).toBeInTheDocument()
+      expect(screen.queryByText(/Não foi possível concluir a operação com a DeepSeek/i)).not.toBeInTheDocument()
+    })
+
+    it('ignora falha segura de carregamento mais antigo quando a resposta mais recente já foi aplicada', async () => {
+      const initialDeferred = createDeferred<ListAuthorizedModelsResult>()
+      const reloadDeferred = createDeferred<ListAuthorizedModelsResult>()
+
+      vi.mocked(listAuthorizedDeepSeekModels)
+        .mockImplementationOnce(() => initialDeferred.promise)
+        .mockImplementationOnce(() => reloadDeferred.promise)
+
+      renderCard({ DEEPSEEK_CONFIGURED: 'true', DEEPSEEK_MODEL: 'deepseek-chat' })
+      expect(vi.mocked(listAuthorizedDeepSeekModels)).toHaveBeenCalledTimes(1)
+
+      const keyInput = screen.getByLabelText(/DEEPSEEK_API_KEY/i) as HTMLInputElement
+      fireEvent.change(keyInput, { target: { value: 'sk-new-key' } })
+      fireEvent.click(screen.getByRole('button', { name: /Salvar configurações da DeepSeek/i }))
+
+      await waitFor(() => {
+        expect(vi.mocked(listAuthorizedDeepSeekModels)).toHaveBeenCalledTimes(2)
+      })
+
+      const NEWER_MODELS = [{ id: 'deepseek-reasoner', label: 'DeepSeek Reasoner (R1)' }]
+
+      // Resposta mais recente resolve com sucesso
+      await act(async () => {
+        reloadDeferred.resolve({ success: true, models: NEWER_MODELS })
+      })
+
+      const select = screen.getByLabelText(/DEEPSEEK_MODEL/i) as HTMLSelectElement
+      await waitFor(() => {
+        expect(select.value).toBe('deepseek-reasoner')
+      })
+
+      // Requisição mais antiga resolve com erro seguro da DeepSeek posteriormente
+      await act(async () => {
+        initialDeferred.resolve({ success: false, error: 'DEEPSEEK_HTTP_ERROR' })
+      })
+
+      // O catálogo bem-sucedido mais recente deve permanecer intacto, sem mensagem de erro na UI
+      expect(select.value).toBe('deepseek-reasoner')
+      expect(within(select).getByRole('option', { name: 'DeepSeek Reasoner (R1)' })).toBeInTheDocument()
+      expect(screen.queryByText(/recusou a consulta de modelos/i)).not.toBeInTheDocument()
+    })
+
+    it('preserva a seleção do modelo ativo quando recargas sobrepostas resolvem fora de ordem', async () => {
+      // Carga inicial completa normalmente
+      renderCard({ DEEPSEEK_CONFIGURED: 'true', DEEPSEEK_MODEL: 'deepseek-chat' })
+      await waitForModels()
+
+      const select = screen.getByLabelText(/DEEPSEEK_MODEL/i) as HTMLSelectElement
+      fireEvent.change(select, { target: { value: 'deepseek-reasoner' } })
+      expect(select.value).toBe('deepseek-reasoner')
+
+      const reload1Deferred = createDeferred<ListAuthorizedModelsResult>()
+      const reload2Deferred = createDeferred<ListAuthorizedModelsResult>()
+
+      vi.mocked(listAuthorizedDeepSeekModels)
+        .mockImplementationOnce(() => reload1Deferred.promise)
+        .mockImplementationOnce(() => reload2Deferred.promise)
+
+      // Dispara primeira recarga clicando em Recarregar
+      fireEvent.click(screen.getByRole('button', { name: /Recarregar modelos/i }))
+      expect(vi.mocked(listAuthorizedDeepSeekModels)).toHaveBeenCalledTimes(2)
+
+      // Enquanto a recarga 1 está pendente, salva chave para disparar recarga 2
+      const keyInput = screen.getByLabelText(/DEEPSEEK_API_KEY/i) as HTMLInputElement
+      fireEvent.change(keyInput, { target: { value: 'sk-another-key' } })
+      fireEvent.click(screen.getByRole('button', { name: /Salvar configurações da DeepSeek/i }))
+
+      await waitFor(() => {
+        expect(vi.mocked(listAuthorizedDeepSeekModels)).toHaveBeenCalledTimes(3)
+      })
+
+      // Recarga 2 (mais recente) resolve primeiro, mantendo deepseek-reasoner no catálogo
+      await act(async () => {
+        reload2Deferred.resolve({ success: true, models: AUTHORIZED_MODELS })
+      })
+
+      expect(select.value).toBe('deepseek-reasoner')
+
+      // Recarga 1 (mais antiga) resolve depois apenas com deepseek-chat
+      await act(async () => {
+        reload1Deferred.resolve({
+          success: true,
+          models: [{ id: 'deepseek-chat', label: 'DeepSeek Chat (v3)' }],
+        })
+      })
+
+      // A seleção deve permanecer 'deepseek-reasoner' porque a recarga 1 foi superada
+      expect(select.value).toBe('deepseek-reasoner')
+      expect(within(select).getByRole('option', { name: 'DeepSeek Reasoner (R1)' })).toBeInTheDocument()
+    })
   })
 })
