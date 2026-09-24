@@ -57,7 +57,7 @@ export default function LlmApiCard({ initialConfigs, showToast }: IntegrationCar
   const [apiKey, setApiKey] = useState('')
   const [showApiKey, setShowApiKey] = useState(false)
   const [effectiveModel, setEffectiveModel] = useState(initialEffectiveModel)
-  const [model, setModel] = useState(initialEffectiveModel)
+  const [model, setModel] = useState('')
   const [isConfigured, setIsConfigured] = useState(initialConfigs?.DEEPSEEK_CONFIGURED === 'true')
 
   const [models, setModels] = useState<DeepSeekModelOption[]>([])
@@ -76,23 +76,30 @@ export default function LlmApiCard({ initialConfigs, showToast }: IntegrationCar
 
     try {
       const res = await listAuthorizedDeepSeekModels()
-      if (res.success) {
+      if (res.success && res.models.length > 0) {
         setModels(res.models)
         setModel((current) => {
           if (current && res.models.some((option) => option.id === current)) return current
-          return res.models[0]?.id ?? current
+          if (initialEffectiveModel && res.models.some((option) => option.id === initialEffectiveModel)) {
+            return initialEffectiveModel
+          }
+          return res.models[0]?.id ?? ''
         })
       } else {
         setModels([])
-        setModelsError(safeErrorMessage(res.error))
+        setModel('')
+        if (!res.success) {
+          setModelsError(safeErrorMessage(res.error))
+        }
       }
     } catch {
       setModels([])
+      setModel('')
       setModelsError(GENERIC_ERROR_MESSAGE)
     } finally {
       setLoadingModels(false)
     }
-  }, [])
+  }, [initialEffectiveModel])
 
   useEffect(() => {
     void loadModels()
@@ -111,7 +118,7 @@ export default function LlmApiCard({ initialConfigs, showToast }: IntegrationCar
 
   const handleTestModel = async () => {
     const trimmedModel = model.trim()
-    if (!trimmedModel) {
+    if (!trimmedModel || modelOptions.length === 0) {
       showToast('error', 'Selecione um modelo DeepSeek antes de testar.')
       return
     }
@@ -141,7 +148,7 @@ export default function LlmApiCard({ initialConfigs, showToast }: IntegrationCar
     e.preventDefault()
 
     const trimmedKey = apiKey.trim()
-    const trimmedModel = model.trim()
+    const trimmedModel = modelOptions.length === 0 ? '' : model.trim()
 
     if (!trimmedKey && !trimmedModel) {
       showToast('error', 'Informe a chave da DeepSeek ou selecione um modelo antes de salvar.')
@@ -298,13 +305,7 @@ export default function LlmApiCard({ initialConfigs, showToast }: IntegrationCar
 
         <select
           id="deepseek-model"
-          value={
-            modelOptions.length === 0
-              ? ''
-              : modelOptions.some((o) => o.id === model)
-              ? model
-              : (modelOptions[0]?.id ?? '')
-          }
+          value={model}
           onChange={(e) => setModel(e.target.value)}
           disabled={loadingModels || modelOptions.length === 0}
           className="w-full px-3 py-2.5 bg-zinc-950/60 border border-zinc-800 focus:border-sky-500/80 rounded-xl text-xs text-zinc-200 outline-none cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
@@ -351,7 +352,7 @@ export default function LlmApiCard({ initialConfigs, showToast }: IntegrationCar
           <button
             type="button"
             onClick={() => void handleTestModel()}
-            disabled={testingModel || loadingModels || model.trim() === ''}
+            disabled={testingModel || loadingModels || model.trim() === '' || modelOptions.length === 0}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-sky-500/10 hover:bg-sky-500/20 text-sky-400 text-xs font-semibold border border-sky-500/30 transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
           >
             {testingModel ? (
