@@ -20,6 +20,7 @@ import {
   type DeepSeekModelOption,
 } from '@/lib/ai/deepseek'
 import { parseFinancialOperationalMetrics, validateReportingPeriod } from '@/lib/admin/financial-metrics'
+import { invalidateLlmCreditStatusCache } from '@/lib/ai/credits'
 
 /**
  * Helper para validar se o usuário atual está autenticado, ativo
@@ -454,9 +455,13 @@ export async function obterLogsAuditoria(limite: number = 100) {
 
 /**
  * Server Action: salvarConfiguracaoAdmin
- * Salva/upsert uma chave de configuração do sistema e gera log de auditoria.
+ * Salva/upsert ou remove uma chave de configuração do sistema e gera log de auditoria.
  */
-export async function salvarConfiguracaoAdmin(chave: string, valor: string) {
+export async function salvarConfiguracaoAdmin(
+  chave: string,
+  valor: string,
+  options?: { clear?: boolean }
+) {
   try {
     const check = await verificarPermissaoOperador()
     if (!check.authorized || !check.user) {
@@ -475,6 +480,37 @@ export async function salvarConfiguracaoAdmin(chave: string, valor: string) {
       chave.toUpperCase().includes('_KEY') ||
       chave.toUpperCase().includes('_TOKEN') ||
       chave.toUpperCase().includes('_SECRET')
+
+    if (options?.clear) {
+      const { error: deleteError } = await adminSupabase
+        .from('configuracoes_sistema')
+        .delete()
+        .eq('chave', chave)
+
+      if (deleteError) {
+        console.error('Erro ao remover configuração do sistema:', deleteError)
+        return { success: false, error: `ERRO_REMOVER_CONFIG: ${deleteError.message}` }
+      }
+
+      if (chave === 'DEEPSEEK_API_KEY') {
+        invalidateLlmCreditStatusCache()
+      }
+
+      const { error: logError } = await adminSupabase.from('logs_auditoria').insert({
+        usuario_id: check.user.id,
+        acao: 'remover_configuracao',
+        detalhes: {
+          chave,
+        },
+      })
+
+      if (logError) {
+        console.warn('Erro ao registrar log de auditoria para remover_configuracao:', logError.message)
+      }
+
+      revalidatePath('/atendimento/admin')
+      return { success: true }
+    }
 
     // Credential inputs are rendered write-only: the server-to-client projection
     // strips every `_KEY`/`_TOKEN`/`_SECRET` value, so an untouched input submits
@@ -496,6 +532,10 @@ export async function salvarConfiguracaoAdmin(chave: string, valor: string) {
     if (upsertError) {
       console.error('Erro ao salvar configuração do sistema:', upsertError)
       return { success: false, error: `ERRO_SALVAR_CONFIG: ${upsertError.message}` }
+    }
+
+    if (chave === 'DEEPSEEK_API_KEY') {
+      invalidateLlmCreditStatusCache()
     }
 
     const valorMascarado = ehSegredo
@@ -521,6 +561,14 @@ export async function salvarConfiguracaoAdmin(chave: string, valor: string) {
     console.error('Erro na action salvarConfiguracaoAdmin:', error)
     return { success: false, error: error.message || 'ERRO_INTERNO' }
   }
+}
+
+/**
+ * Server Action: removerConfiguracaoAdmin
+ * Remove uma chave de configuração do sistema e invalida caches vinculados.
+ */
+export async function removerConfiguracaoAdmin(chave: string) {
+  return salvarConfiguracaoAdmin(chave, '', { clear: true })
 }
 
 const totalPurgeRequestSchema = z.object({
