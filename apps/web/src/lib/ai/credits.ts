@@ -73,6 +73,10 @@ export function parseDeepSeekRemainingUsd(balancePayload: unknown): number | nul
   return null
 }
 
+function cloneStatus(status: LlmCreditStatus): LlmCreditStatus {
+  return { ...status }
+}
+
 function freshStatus(balanceUsd: number | null, now: Date): LlmCreditStatus {
   const fetchedAt = now.toISOString()
   const expiresAt = new Date(now.getTime() + THIRTY_MINUTES_MS).toISOString()
@@ -166,22 +170,23 @@ export async function getLlmCreditStatus(options: { forceRefresh?: boolean; now?
   }
 
   const credentialHash = hashCredential(apiKey)
-  const isMatchingCredential = cachedEntry?.credentialHash === credentialHash
+  const currentCached = cachedEntry
+  const isMatchingCredential = currentCached !== null && currentCached.credentialHash === credentialHash
   const isFresh =
     isMatchingCredential &&
-    cachedEntry?.status.state === 'fresh' &&
-    cachedEntry.status.expiresAt != null &&
-    new Date(cachedEntry.status.expiresAt).getTime() > now.getTime()
+    currentCached.status.state === 'fresh' &&
+    currentCached.status.expiresAt != null &&
+    new Date(currentCached.status.expiresAt).getTime() > now.getTime()
 
-  if (!options.forceRefresh && isFresh) {
-    return cachedEntry!.status
+  if (!options.forceRefresh && isFresh && currentCached !== null) {
+    return cloneStatus(currentCached.status)
   }
 
   try {
     const payload = await fetchDeepSeekBalance(apiKey)
     const status = freshStatus(parseDeepSeekRemainingUsd(payload), now)
-    cachedEntry = { status, credentialHash }
-    return status
+    cachedEntry = { status: cloneStatus(status), credentialHash }
+    return cloneStatus(status)
   } catch (error) {
     const isAuthRevoked =
       (error instanceof DeepSeekCreditsHttpError && (error.status === 401 || error.status === 403)) ||
@@ -198,8 +203,8 @@ export async function getLlmCreditStatus(options: { forceRefresh?: boolean; now?
 
     if (isMatchingCredential && cachedEntry && cachedEntry.status.balanceUsd != null) {
       const stale = staleStatus(cachedEntry, errorMessage)
-      cachedEntry = { status: stale, credentialHash }
-      return stale
+      cachedEntry = { status: cloneStatus(stale), credentialHash }
+      return cloneStatus(stale)
     }
 
     return unknownStatus(errorMessage)
