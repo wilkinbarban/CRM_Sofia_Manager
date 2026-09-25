@@ -1,15 +1,15 @@
 -- Exact seed-only cleanup: customized tag arrays and hours messages remain untouched.
 update public.base_conhecimento
-set tags = ARRAY['combo 1', 'frango recheado', 'cardápio', 'almoço', 'maionese', 'farofa', 'preço', 'família']
-where tags = ARRAY['combo 1', 'frango recheado', 'cardápio', 'almoço', 'maionese', 'farofa', 'preço', 'família', 'clássico brasa e sabor'];
+set tags = ARRAY['combo 1', 'frango recheado', 'cardápio', 'almoço', 'maionese', 'farofa', 'preço', 'família']::varchar(100)[]
+where tags = ARRAY['combo 1', 'frango recheado', 'cardápio', 'almoço', 'maionese', 'farofa', 'preço', 'família', 'clássico brasa e sabor']::varchar(100)[];
 
 update public.base_conhecimento
-set tags = ARRAY['combo 3', 'frango', 'costelinha', 'porco', 'batata rustica', 'preço']
-where tags = ARRAY['combo 3', 'dueto brasa & sabor', 'frango', 'costelinha', 'porco', 'batata rustica', 'preço'];
+set tags = ARRAY['combo 3', 'frango', 'costelinha', 'porco', 'batata rustica', 'preço']::varchar(100)[]
+where tags = ARRAY['combo 3', 'dueto brasa & sabor', 'frango', 'costelinha', 'porco', 'batata rustica', 'preço']::varchar(100)[];
 
 update public.base_conhecimento
-set tags = ARRAY['horários', 'retirada', 'balcão', 'delivery', 'entrega', 'agendamento', 'sem fila']
-where tags = ARRAY['horários', 'retirada', 'balcão', 'delivery', 'entrega', 'umbara', 'curitiba', 'agendamento', 'sem fila'];
+set tags = ARRAY['horários', 'retirada', 'balcão', 'delivery', 'entrega', 'agendamento', 'sem fila']::varchar(100)[]
+where tags = ARRAY['horários', 'retirada', 'balcão', 'delivery', 'entrega', 'umbara', 'curitiba', 'agendamento', 'sem fila']::varchar(100)[];
 
 update public.configuracoes_sistema
 set valor = 'Olá! No momento estamos fora do horário de atendimento.

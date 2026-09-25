@@ -15,7 +15,7 @@ const pickup = original.match(/'Janelas de Retirada \(Takeaway\)[^\n]+\n\s*'[^\n
 const seedMessage = hours.match(/'MENSAGEM_FORA_HORARIO',\s*'([^']+)'/)
 
 function assignments(sql: string) {
-  return [...sql.matchAll(/update public\.base_conhecimento\s+set tags = (ARRAY\[[^\]]+\])\s+where tags = (ARRAY\[[^\]]+\])/gi)]
+  return [...sql.matchAll(/update public\.base_conhecimento\s+set tags = (ARRAY\[[^\]]+\])(?:::varchar\(100\)\[\])?\s+where tags = (ARRAY\[[^\]]+\])(?:::varchar\(100\)\[\])?/gi)]
     .map((match) => ({ target: match[1], source: match[2] }))
 }
 
@@ -46,6 +46,15 @@ function hoursGuard(sql: string) {
 }
 
 describe('exact legacy tags and hours cleanup', () => {
+  it('types every tag equality operand to match the declared varchar(100)[] column', () => {
+    const schema = read('20260704160000_epica5_rag_knowledge.sql')
+    expect(schema).toMatch(/tags\s+VARCHAR\(100\)\[\]/i)
+    const sql = readFileSync(path, 'utf8')
+    const pairs = assignments(sql)
+    expect(pairs).toHaveLength(3)
+    const typedGuards = [...sql.matchAll(/set tags = ARRAY\[[^\]]+\]::varchar\(100\)\[\]\s+where tags = ARRAY\[[^\]]+\]::varchar\(100\)\[\]/gi)]
+    expect(typedGuards).toHaveLength(pairs.length)
+  })
   it('simulates seed conversion once and stability on a second pass', () => {
     const pairs = assignments(readFileSync(path, 'utf8'))
     expect(pairs).toHaveLength(3)
