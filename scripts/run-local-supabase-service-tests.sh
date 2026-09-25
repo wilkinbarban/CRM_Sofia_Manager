@@ -235,6 +235,16 @@ if [[ -z "$anon_key" || -z "$service_key" || "$anon_key" == ci-placeholder || "$
   exit 1
 fi
 
+receipt_test="$work/project/supabase/tests/sales_receipt_issuance.sql"
+[[ -f "$receipt_test" && ! -L "$receipt_test" && ! -L "$work/project/supabase/tests" ]] || {
+  printf '%s\n' 'Disposable receipt pgTAP test is missing or unsafe.' >&2
+  exit 1
+}
+if ! npx supabase test db --local --workdir "$work/project" "$receipt_test" >"$work/receipt-test.log" 2>&1; then
+  printf '%s\n' 'Disposable local receipt pgTAP test failed.' >&2
+  exit 1
+fi
+
 export NEXT_PUBLIC_SUPABASE_URL="$api_url"
 export NEXT_PUBLIC_SUPABASE_ANON_KEY="$anon_key"
 export SUPABASE_SERVICE_ROLE_KEY="$service_key"

@@ -337,6 +337,26 @@ describe('local Supabase service-backed test runner', () => {
     expect(result.stderr).not.toContain(runnerPath)
   })
 
+  it('runs only the copied receipt pgTAP file locally after safety gates and before Vitest and teardown', () => {
+    const runner = readFileSync(runnerPath, 'utf8')
+    const reset = runner.indexOf('npx supabase db reset --local --workdir "$work/project"')
+    const safety = runner.indexOf('Safety gate rejected missing or placeholder local Supabase credentials.')
+    const pathGuard = runner.indexOf('[[ -f "$receipt_test" && ! -L "$receipt_test" && ! -L "$work/project/supabase/tests" ]]')
+    const pgTap = runner.indexOf('npx supabase test db --local --workdir "$work/project" "$receipt_test"')
+    const vitest = runner.indexOf('scripts/workspace-preflight.sh run -- npx vitest run')
+
+    expect(runner).toContain('receipt_test="$work/project/supabase/tests/sales_receipt_issuance.sql"')
+    expect(runner).toContain('cp -a supabase "$work/project/supabase"')
+    expect(runner).toContain('npx supabase stop --workdir "$work/project" --no-backup')
+    expect(runner).not.toMatch(/supabase test db[^\n]*(?:--linked|--db-url)/)
+    expect(reset).toBeGreaterThan(-1)
+    expect(safety).toBeGreaterThan(reset)
+    expect(pathGuard).toBeGreaterThan(safety)
+    expect(pgTap).toBeGreaterThan(pathGuard)
+    expect(vitest).toBeGreaterThan(pgTap)
+    expect(runner).toContain('exit "$code"')
+  })
+
   it('keeps the cleanup and exit paths of the runner unchanged', () => {
     const runner = readFileSync(runnerPath, 'utf8')
 
