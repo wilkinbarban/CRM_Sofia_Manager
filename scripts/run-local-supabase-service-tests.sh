@@ -112,15 +112,92 @@ if changed != 8:
     raise SystemExit(f'expected 8 local-only ownership transfers, found {changed}')
 PY
 
+# Deterministic, bounded classification of disposable startup and reset failures.
+# Only fixed category labels and migration filenames validated against a strict
+# pattern may reach stderr; unrecognized lines, paths, URLs, and credentials are
+# never printed. Linux container startup failures (unhealthy/readiness, port
+# conflicts, runtime availability, migration/database errors, timeouts) collapse
+# into a closed label set that stays stable across log order and repeats.
+# The scan is bounded by line and byte counts and the output by label count, so a
+# huge or hostile log cannot stall the run or flood the operator.
+report_failure_log() {
+  local log=$1
+  [[ -r "$log" && ! -d "$log" ]] || return 0
+
+  local max_lines=2000
+  local max_bytes=524288
+  local max_migrations=5
+  local max_labels=20
+
+  local line lines=0
+  local unhealthy=false port_conflict=false runtime_unavailable=false
+  local database_error=false timed_out=false
+  local -a migrations=()
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    lines=$((lines + 1))
+    (( lines <= max_lines )) || break
+
+    if [[ "$line" =~ ^applying\ migration\ ([0-9]{14}_[a-z0-9_]+\.sql) ]]; then
+      if ((${#migrations[@]} < max_migrations)); then
+        migrations+=("${BASH_REMATCH[1]}")
+      fi
+    fi
+    case "$line" in
+      *unhealthy* | *'not ready'* | *readiness* | *'health check failed'*) unhealthy=true ;;
+    esac
+    case "$line" in
+      *'address already in use'* | *'port is already allocated'* | *'port already in use'* | *'ports are not available'*) port_conflict=true ;;
+    esac
+    case "$line" in
+      *'cannot connect to the docker daemon'* | *'error during connect'* | *'docker daemon'* | *'docker: command not found'* | *'cannot start container'* | *'failed to start container'* | *'exec format error'* | *'no space left on device'*) runtime_unavailable=true ;;
+    esac
+    case "$line" in
+      *'error:'* | *'fatal:'* | *'failed to apply migration'* | *'migration failed'* | *'panic:'*) database_error=true ;;
+    esac
+    case "$line" in
+      *'timed out'* | *timeout* | *'deadline exceeded'*) timed_out=true ;;
+    esac
+  # The guard above cannot close the read race: the log can become unreadable between the
+  # check and the read, and head/tr would then print the ephemeral private path on stderr.
+  # Only their stderr is discarded; the fixed labels below still reach the operator.
+  done < <(head -c "$max_bytes" "$log" 2>/dev/null | tr '[:upper:]' '[:lower:]' 2>/dev/null)
+
+  # Fixed emission order: the report is identical no matter how the log interleaves
+  # these conditions, and it never repeats a label.
+  local -a output=()
+  local name
+  if ((${#migrations[@]})); then
+    for name in "${migrations[@]}"; do
+      output+=("migration-file: $name")
+    done
+  fi
+  if [[ "$unhealthy" == true ]]; then output+=('startup-unhealthy-or-not-ready'); fi
+  if [[ "$port_conflict" == true ]]; then output+=('port-conflict'); fi
+  if [[ "$runtime_unavailable" == true ]]; then output+=('container-runtime-unavailable'); fi
+  if [[ "$database_error" == true ]]; then output+=('migration-or-database-error'); fi
+  if [[ "$timed_out" == true ]]; then output+=('startup-timeout'); fi
+
+  local index=0 total=${#output[@]}
+  if (( total > max_labels )); then total=$max_labels; fi
+  while (( index < total )); do
+    printf '%s\n' "${output[index]}" >&2
+    index=$((index + 1))
+  done
+  return 0
+}
+
 export SUPABASE_AUTH_SMS_TWILIO_AUTH_TOKEN='local-test-only'
 if ! npx supabase start --workdir "$work/project" >"$work/start.log" 2>&1; then
   printf '%s\n' 'Disposable local Supabase failed to start.' >&2
+  report_failure_log "$work/start.log"
   exit 1
 fi
 started_by_runner=true
 
 if ! npx supabase db reset --local --workdir "$work/project" >"$work/reset.log" 2>&1; then
   printf '%s\n' 'Disposable local Supabase reset or seed failed.' >&2
+  report_failure_log "$work/reset.log"
   exit 1
 fi
 npx supabase status --workdir "$work/project" -o env >"$work/status.env" 2>"$work/status.err"
