@@ -13,7 +13,7 @@ const workflow = readFileSync(join(root, '.github/workflows/pull-request.yml'), 
 // The only lines the runner may ever print for a failed startup or reset. Anything
 // else (raw log lines, paths, URLs, credentials) is a leak by definition.
 const allowedDiagnostic =
-  /^(?:migration-file: \d{14}_[a-z0-9_]+\.sql|startup-unhealthy-or-not-ready|port-conflict|container-runtime-unavailable|migration-or-database-error|startup-timeout)$/
+  /^(?:migration-file: \d{14}_[a-z0-9_]+\.sql|sqlstate: [0-9a-z]{5}|startup-unhealthy-or-not-ready|port-conflict|container-runtime-unavailable|migration-or-database-error|startup-timeout)$/
 
 const reportDiagnosticsSource = (() => {
   const block = readFileSync(runnerPath, 'utf8').match(/^report_failure_log\(\) \{[\s\S]*?^\}/m)?.[0]
@@ -101,6 +101,96 @@ describe('local Supabase service-backed test runner', () => {
     expect(result.stderr).toContain('startup-timeout')
     expectDiagnosticsAreSafe(result.stderr)
     for (const secret of secrets) expect(result.stderr).not.toContain(secret)
+  })
+
+  it('keeps the last five validated migration filenames so the failing migration survives', () => {
+    // Issue #222: the first five July migrations hid the migration that actually
+    // failed at the tail of the log. The report must retain the LAST five instead.
+    const input = Array.from(
+      { length: 8 },
+      (_, index) => `Applying migration 2025010100000${index}_seed_step_${index}.sql`,
+    ).join('\n')
+    const result = classifyFailureLog(input)
+
+    expect(result.status).toBe(0)
+    expect(result.stdout).toBe('')
+    expectDiagnosticsAreSafe(result.stderr)
+    expect(result.stderr.split('\n').filter((line) => line !== '')).toEqual([
+      'migration-file: 20250101000003_seed_step_3.sql',
+      'migration-file: 20250101000004_seed_step_4.sql',
+      'migration-file: 20250101000005_seed_step_5.sql',
+      'migration-file: 20250101000006_seed_step_6.sql',
+      'migration-file: 20250101000007_seed_step_7.sql',
+    ])
+    expect(result.stderr).not.toContain('seed_step_0')
+    expect(result.stderr).not.toContain('seed_step_1')
+    expect(result.stderr).not.toContain('seed_step_2')
+  })
+
+  it('surfaces only a strict five-character SQLSTATE code and no surrounding message', () => {
+    const input = [
+      'Applying migration 20250101000001_seed_step_1.sql',
+      'FAILED to apply migration: ERROR: relation "private_leads" does not exist (SQLSTATE 42P01)',
+      'ordinary line that matches no category',
+    ].join('\n')
+    const result = classifyFailureLog(input)
+
+    expect(result.status).toBe(0)
+    expect(result.stdout).toBe('')
+    expectDiagnosticsAreSafe(result.stderr)
+    expect(result.stderr).toContain('migration-file: 20250101000001_seed_step_1.sql')
+    expect(result.stderr).toContain('sqlstate: 42p01')
+    expect(result.stderr).toContain('migration-or-database-error')
+    expect(result.stderr).not.toContain('private_leads')
+    expect(result.stderr).not.toContain('does not exist')
+  })
+
+  it('rejects non-five-character or embedded SQLSTATE candidates and leaks no context', () => {
+    const input = [
+      'SQLSTATE 1234',
+      'SQLSTATE 123456',
+      'SQLSTATE leaked-password',
+      'SQLSTATE eyJhbGciOiJIUzI1NiJ9',
+      'SQLSTATE /home/private-user/secret-checkout',
+      'sqlstate=SERVICE_ROLE_KEY',
+    ].join('\n')
+    const result = classifyFailureLog(input)
+
+    expect(result.status).toBe(0)
+    expect(result.stdout).toBe('')
+    expect(result.stderr).toBe('')
+  })
+
+  it('retains every migration filename when the log has five or fewer', () => {
+    const input = Array.from(
+      { length: 5 },
+      (_, index) => `Applying migration 2025010100000${index}_seed_step_${index}.sql`,
+    ).join('\n')
+    const result = classifyFailureLog(input)
+
+    expect(result.stderr.split('\n').filter((line) => line !== '')).toEqual([
+      'migration-file: 20250101000000_seed_step_0.sql',
+      'migration-file: 20250101000001_seed_step_1.sql',
+      'migration-file: 20250101000002_seed_step_2.sql',
+      'migration-file: 20250101000003_seed_step_3.sql',
+      'migration-file: 20250101000004_seed_step_4.sql',
+    ])
+  })
+
+  it('reports the last SQLSTATE candidate while discarding everything around it', () => {
+    const input = [
+      'sqlstate 42601 earlier failure',
+      'sqlstate 23505 later failure password=leaked-password',
+    ].join('\n')
+    const result = classifyFailureLog(input)
+
+    expect(result.status).toBe(0)
+    expect(result.stdout).toBe('')
+    expectDiagnosticsAreSafe(result.stderr)
+    expect(result.stderr).toContain('sqlstate: 23505')
+    expect(result.stderr).not.toContain('42601')
+    expect(result.stderr).not.toContain('password')
+    expect(result.stderr).not.toContain('leaked-password')
   })
 
   it.each(['start', 'reset'])('bounds the %s diagnostic output under a malicious flood', (phase) => {

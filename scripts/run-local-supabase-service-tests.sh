@@ -113,13 +113,13 @@ if changed != 8:
 PY
 
 # Deterministic, bounded classification of disposable startup and reset failures.
-# Only fixed category labels and migration filenames validated against a strict
-# pattern may reach stderr; unrecognized lines, paths, URLs, and credentials are
-# never printed. Linux container startup failures (unhealthy/readiness, port
-# conflicts, runtime availability, migration/database errors, timeouts) collapse
-# into a closed label set that stays stable across log order and repeats.
-# The scan is bounded by line and byte counts and the output by label count, so a
-# huge or hostile log cannot stall the run or flood the operator.
+# Only fixed category labels, the last five migration filenames validated against a
+# strict pattern, and one strict SQLSTATE code may reach stderr; unrecognized lines,
+# paths, URLs, and credentials are never printed. Linux container startup failures
+# (unhealthy/readiness, port conflicts, runtime availability, migration/database
+# errors, timeouts) collapse into a closed label set that stays stable across log
+# order and repeats. The scan is bounded by line and byte counts and the output by
+# label count, so a huge or hostile log cannot stall the run or flood the operator.
 report_failure_log() {
   local log=$1
   [[ -r "$log" && ! -d "$log" ]] || return 0
@@ -132,16 +132,24 @@ report_failure_log() {
   local line lines=0
   local unhealthy=false port_conflict=false runtime_unavailable=false
   local database_error=false timed_out=false
+  local migration_count=0 sqlstate=''
   local -a migrations=()
 
   while IFS= read -r line || [[ -n "$line" ]]; do
     lines=$((lines + 1))
     (( lines <= max_lines )) || break
 
+    # Keep a fixed-size ring of the latest migration filenames: the failing
+    # migration sits at the tail of the log, so reporting the first five hides it.
     if [[ "$line" =~ ^applying\ migration\ ([0-9]{14}_[a-z0-9_]+\.sql) ]]; then
-      if ((${#migrations[@]} < max_migrations)); then
-        migrations+=("${BASH_REMATCH[1]}")
-      fi
+      migrations[$((migration_count % max_migrations))]="${BASH_REMATCH[1]}"
+      migration_count=$((migration_count + 1))
+    fi
+    # The only other token allowed to surface is a SQLSTATE code: exactly five
+    # ASCII alphanumerics, required to follow the literal sqlstate context, and
+    # bounded to the last occurrence. The surrounding message is never printed.
+    if [[ "$line" =~ sqlstate[^0-9a-z]{0,4}([0-9a-z]{5})([^0-9a-z]|$) ]]; then
+      sqlstate="${BASH_REMATCH[1]}"
     fi
     case "$line" in
       *unhealthy* | *'not ready'* | *readiness* | *'health check failed'*) unhealthy=true ;;
@@ -166,12 +174,20 @@ report_failure_log() {
   # Fixed emission order: the report is identical no matter how the log interleaves
   # these conditions, and it never repeats a label.
   local -a output=()
-  local name
-  if ((${#migrations[@]})); then
-    for name in "${migrations[@]}"; do
+  local name retained=0 start=0 offset=0
+  retained=${#migrations[@]}
+  if (( retained )); then
+    # Emit the retained tail in chronological order, oldest first, so the newest
+    # (failing) migration is the last filename the operator reads.
+    if (( migration_count >= max_migrations )); then
+      start=$(( migration_count % max_migrations ))
+    fi
+    for ((offset = 0; offset < retained; offset++)); do
+      name="${migrations[$(((start + offset) % max_migrations))]}"
       output+=("migration-file: $name")
     done
   fi
+  if [[ -n "$sqlstate" ]]; then output+=("sqlstate: $sqlstate"); fi
   if [[ "$unhealthy" == true ]]; then output+=('startup-unhealthy-or-not-ready'); fi
   if [[ "$port_conflict" == true ]]; then output+=('port-conflict'); fi
   if [[ "$runtime_unavailable" == true ]]; then output+=('container-runtime-unavailable'); fi
