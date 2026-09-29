@@ -92,6 +92,7 @@ function makeSandbox(): Sandbox {
     logPath,
     lockBase,
     env: (extra = {}) => ({
+      NODE_ENV: 'test',
       PATH: `${binDir}:${process.env.PATH ?? ''}`,
       HOME: process.env.HOME ?? dir,
       TMPDIR: dir,
