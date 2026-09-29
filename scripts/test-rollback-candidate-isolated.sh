@@ -165,16 +165,16 @@ fi
 # ------------------------------------------------------------------------------
 mkdir -p "$lock_dir"
 run_lock_dir="$lock_dir/run.lock"
-if [[ -d "$run_lock_dir" ]]; then
-  lock_pid="$(cat "$run_lock_dir/pid" 2>/dev/null || true)"
+check_lock() {
+  local lock_pid="$(cat "$run_lock_dir/pid" 2>/dev/null || true)"
   if [[ -n "$lock_pid" ]] && kill -0 "$lock_pid" 2>/dev/null; then
     printf 'error: Another isolated rollback harness run is active (pid: %s)\n' "$lock_pid" >&2
-    exit 1
   else
     printf 'error: Refusing to continue on stale harness lock (pid: %s)\n' "$lock_pid" >&2
-    exit 1
   fi
-fi
+  exit 1
+}
+[[ -d "$run_lock_dir" ]] && check_lock
 
 # ------------------------------------------------------------------------------
 # Subcommand: plan
@@ -194,20 +194,22 @@ fi
 # ------------------------------------------------------------------------------
 # Execution Lifecycle (Isolated Run)
 # ------------------------------------------------------------------------------
-mkdir -p "$run_lock_dir"
+mkdir "$run_lock_dir" 2>/dev/null || check_lock
+owned_lock=1
 printf '%s\n' "$$" > "$run_lock_dir/pid"
 
 started_by_runner=0
-work="$work_base"
+work="$work_base/run-${run_id}-$$"
 
 cleanup() {
   if [[ "${started_by_runner:-0}" == "1" ]]; then
     docker rm -f "$owned_container" 2>/dev/null || true
     docker rmi "$owned_image" 2>/dev/null || true
-    npx --no-install supabase stop --workdir "$work/project" --no-backup 2>/dev/null || true
-    rm -rf "$work"
+    [[ "${owned_network_created:-0}" == "1" ]] && docker network rm "$owned_network" 2>/dev/null || true
+    [[ "${owned_supabase:-0}" == "1" ]] && npx --no-install supabase stop --workdir "$work/project" --no-backup 2>/dev/null || true
+    [[ "${owned_work:-0}" == "1" ]] && rm -rf "$work"
   fi
-  rm -rf "$run_lock_dir" 2>/dev/null || true
+  [[ "${owned_lock:-0}" == "1" ]] && rm -rf "$run_lock_dir" 2>/dev/null || true
 }
 
 trap cleanup EXIT
@@ -216,12 +218,16 @@ trap 'cleanup; trap - EXIT; exit 130' INT
 trap 'cleanup; trap - EXIT; exit 143' TERM
 
 started_by_runner=1
+mkdir -p "$work_base"
+mkdir -m 700 "$work"
+owned_work=1
 mkdir -p "$work/project"
 
 # Extract source without mutating working tree
 git -C "$root" archive --format=tar "$source_commit" | tar -xf - -C "$work/project"
 
 # Disposable Supabase lifecycle
+owned_supabase=1
 npx --no-install supabase start --workdir "$work/project"
 npx --no-install supabase db reset --local --workdir "$work/project"
 status_env="$(npx --no-install supabase status --workdir "$work/project" -o env)"
@@ -241,6 +247,8 @@ if [[ -z "$synthetic_anon_key" || "$synthetic_anon_key" == *"placeholder"* ]]; t
 fi
 
 # Build isolated image with loopback public args
+docker network create "$owned_network"
+owned_network_created=1
 docker build -t "$owned_image" --build-arg "NEXT_PUBLIC_SUPABASE_URL=$public_url" --build-arg "NEXT_PUBLIC_SUPABASE_ANON_KEY=$synthetic_anon_key" -f "$work/project/Dockerfile" "$work/project"
 
 # Run container on harness-owned network with loopback port mapping
