@@ -203,7 +203,7 @@ work="$work_base/run-${run_id}-$$"
 
 cleanup() {
   if [[ "${started_by_runner:-0}" == "1" ]]; then
-    docker rm -f "$owned_container" 2>/dev/null || true
+    [[ "${owned_container_created:-0}" == "1" ]] && docker rm -f "$owned_container" 2>/dev/null || true
     docker rmi "$owned_image" 2>/dev/null || true
     [[ "${owned_network_created:-0}" == "1" ]] && docker network rm "$owned_network" 2>/dev/null || true
     [[ "${owned_supabase:-0}" == "1" ]] && npx --no-install supabase stop --workdir "$work/project" --no-backup 2>/dev/null || true
@@ -226,9 +226,11 @@ mkdir -p "$work/project"
 # Extract source without mutating working tree
 git -C "$root" archive --format=tar "$source_commit" | tar -xf - -C "$work/project"
 
-# Disposable Supabase lifecycle
-owned_supabase=1
+# Disposable Supabase lifecycle. The stack is claimed only after it starts, so a
+# failure caused by another stack holding the same project name can never make
+# the exit trap stop a stack this run does not own.
 npx --no-install supabase start --workdir "$work/project"
+owned_supabase=1
 npx --no-install supabase db reset --local --workdir "$work/project"
 status_env="$(npx --no-install supabase status --workdir "$work/project" -o env)"
 
@@ -251,8 +253,11 @@ docker network create "$owned_network"
 owned_network_created=1
 docker build -t "$owned_image" --build-arg "NEXT_PUBLIC_SUPABASE_URL=$public_url" --build-arg "NEXT_PUBLIC_SUPABASE_ANON_KEY=$synthetic_anon_key" -f "$work/project/Dockerfile" "$work/project"
 
-# Run container on harness-owned network with loopback port mapping
+# Run container on harness-owned network with loopback port mapping. The
+# container is claimed only after docker run succeeds, so the exit trap can never
+# remove a container this run did not create.
 docker run -d --network "$owned_network" --name "$owned_container" -p "127.0.0.1:${web_port}:3000" "$owned_image"
+owned_container_created=1
 
 # Probe loopback health
 curl --silent --show-error --fail --max-time 10 "http://127.0.0.1:${web_port}${probe_path}"
