@@ -44,12 +44,18 @@ export const metadata: Metadata = {
     type: 'website',
     images: [
       {
-        url: '/icon.png',
-        width: 512,
-        height: 512,
+        url: '/banners/banner-og-dark-1200x630.png',
+        width: 1200,
+        height: 630,
         alt: `${profile.name} - Atendimento Inteligente`,
       },
     ],
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: `${profile.name} | Atendimento Inteligente & Gestão de Pedidos`,
+    description: profile.description,
+    images: ['/banners/banner-og-dark-1200x630.png'],
   },
 }
 
