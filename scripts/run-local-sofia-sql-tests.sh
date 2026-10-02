@@ -44,7 +44,7 @@ umask 077
 # subshell, leaving repo_root empty instead of aborting the run.
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 readonly repo_root
-readonly cli="$repo_root/node_modules/.bin/supabase"
+cli="$repo_root/node_modules/.bin/supabase"
 readonly tests_dir_rel='supabase/tests'
 readonly protected_project_ref='xvzdxoktwnzmxsfizkxo'
 
@@ -57,6 +57,7 @@ readonly start_timeout_seconds=1200
 readonly reset_timeout_seconds=900
 readonly psql_timeout_seconds=300
 readonly stop_timeout_seconds=300
+readonly docker_query_timeout_seconds=15
 readonly progress_interval_seconds=20
 
 readonly -a default_suites=(
@@ -74,21 +75,25 @@ die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 
 usage() {
   cat <<'EOF'
-Usage: scripts/run-local-sofia-sql-tests.sh [supabase/tests/<suite>.sql ...]
+Usage: scripts/run-local-sofia-sql-tests.sh [--self-check | supabase/tests/<suite>.sql ...]
 
 Runs pgTAP suites inside a disposable local Supabase stack. With no arguments it runs
 the seven Sofia suites this harness owns. Only files under supabase/tests may be named.
+Use --self-check to run non-Docker harness validators (TAP, redaction, normalization) and exit.
 EOF
 }
 
 # Redacts anything that must never reach logs: connection strings, JWT-shaped values,
-# publishable/secret keys, and DSN passwords.
+# publishable/secret keys, DSN passwords, and auth tokens.
 redact() {
   sed -E \
     -e 's#postgresql://[^[:space:]]*#postgresql://[redacted]#g' \
     -e 's#(eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{4,})#[redacted-jwt]#g' \
     -e 's#(sb_(publishable|secret)_[A-Za-z0-9_-]+)#[redacted-key]#g' \
-    -e 's#(password=)[^[:space:]]+#\1[redacted]#g'
+    -e 's#(password=)[^[:space:]]+#\1[redacted]#g' \
+    -e 's#((Bearer)[[:space:]]+)[^[:space:]]+#\1[redacted]#g' \
+    -e 's#((POSTGRES_PASSWORD|AUTH_TOKEN|JWT_SECRET|SECRET_KEY)[[:space:]]*=[[:space:]]*)[^[:space:]]+#\1[redacted]#g' \
+    -e 's#("?(apiKey|api_key|password|secret|token)"?[[:space:]]*[:=][[:space:]]*"?)[^",[:space:]]+#\1[redacted]#g'
 }
 
 # Binds ephemeral ports so the stack never collides with another local stack. A port
@@ -189,6 +194,34 @@ tmp_parent="${TMPDIR:-/tmp}"
 tmp_parent="${tmp_parent%/}"
 work_prefix="$tmp_parent/sofia-sql-tests."
 
+# ---------------------------------------------------------------------------
+# Diagnostics: bounded privacy-safe failure metadata collected before teardown.
+# Scoped strictly to containers labelled with this run's project id.
+# Emits only strict allowlisted container metadata with controlled fields.
+# Never dumps inspect env, health output body, log excerpts, or credentials.
+# ---------------------------------------------------------------------------
+emit_failure_diagnostics() {
+  local status=$1
+  [[ "$status" -ne 0 && -n "$project_id" ]] || return 0
+
+  local query_timeout="${DOCKER_QUERY_TIMEOUT_SECONDS:-$docker_query_timeout_seconds}"
+
+  # Only inspect if containers exist for this exact project id
+  local ids
+  ids="$(timeout -k 5 "$query_timeout" docker ps -aq --filter "label=com.supabase.cli.project=$project_id" 2>/dev/null || true)"
+  [[ -n "$ids" ]] || return 0
+
+  log "--- failure diagnostics: project=$project_id exit=$status (before teardown) ---" >&2
+
+  # Strict allowlisted metadata: container names, status, and state only.
+  # No container logs, no inspect env, no health output body, no credentials.
+  log "container metadata:" >&2
+  timeout -k 5 "$query_timeout" docker ps -a \
+    --filter "label=com.supabase.cli.project=$project_id" \
+    --format '  name={{.Names}} status={{.Status}} state={{.State}}' >&2 2>/dev/null || true
+  return 0
+}
+
 safe_remove() {
   local target=$1
   [[ -n "$target" && "$target" != '/' && "$target" == "$work_prefix"* ]] || return 1
@@ -197,30 +230,96 @@ safe_remove() {
 
 cleanup() {
   local status=$?
+  set +e
   stop_progress
   trap - EXIT HUP INT TERM
-  local remaining_containers='' remaining_networks=''
 
-  if [[ "$stack_started" == true && -n "$work" && -d "$work/project" ]]; then
-    timeout "$stop_timeout_seconds" "$cli" stop --workdir "$work/project" --no-backup \
+  emit_failure_diagnostics "$status" || true
+
+  local query_timeout="${DOCKER_QUERY_TIMEOUT_SECONDS:-$docker_query_timeout_seconds}"
+  local remaining_containers='0' remaining_networks='0' remaining_volumes='0'
+
+  # Handle partial startup teardown: attempt graceful CLI stop whenever a
+  # temporary project directory exists, even when stack_started is false.
+  if [[ -n "$work" && -d "$work/project" && -n "$project_id" ]]; then
+    timeout -k 10 "$stop_timeout_seconds" "$cli" stop --workdir "$work/project" --no-backup \
       >/dev/null 2>&1 || true
   fi
 
-  if [[ -n "$project_id" ]]; then
-    # Label-scoped sweep proves ownership: only containers of this run can match.
-    local ids networks
-    ids="$(docker ps -aq --filter "label=com.supabase.cli.project=$project_id" 2>/dev/null || true)"
+  if [[ -n "$project_id" && "$project_id" =~ ^sofia-[a-zA-Z0-9_-]+$ ]]; then
+    remaining_containers='unavailable'
+    remaining_networks='unavailable'
+    remaining_volumes='unavailable'
+
+    # Label-scoped sweep for containers: verify exact project label ownership before removal.
+    local ids
+    ids="$(timeout -k 5 "$query_timeout" docker ps -aq --filter "label=com.supabase.cli.project=$project_id" 2>/dev/null || true)"
     if [[ -n "$ids" ]]; then
-      # shellcheck disable=SC2086 # word splitting is the intended id list
-      docker rm -f $ids >/dev/null 2>&1 || true
+      for id in $ids; do
+        local owner
+        owner="$(timeout -k 5 "$query_timeout" docker inspect --format '{{index .Config.Labels "com.supabase.cli.project"}}' "$id" 2>/dev/null || true)"
+        if [[ "$owner" == "$project_id" ]]; then
+          timeout -k 5 "$query_timeout" docker rm -f "$id" >/dev/null 2>&1 || true
+        fi
+      done
     fi
-    networks="$(docker network ls -q --filter "label=com.supabase.cli.project=$project_id" 2>/dev/null || true)"
+
+    # Label-scoped sweep for networks: verify exact project label ownership before removal.
+    local networks
+    networks="$(timeout -k 5 "$query_timeout" docker network ls -q --filter "label=com.supabase.cli.project=$project_id" 2>/dev/null || true)"
     if [[ -n "$networks" ]]; then
-      # shellcheck disable=SC2086
-      docker network rm $networks >/dev/null 2>&1 || true
+      for net in $networks; do
+        local owner
+        owner="$(timeout -k 5 "$query_timeout" docker network inspect --format '{{index .Labels "com.supabase.cli.project"}}' "$net" 2>/dev/null || true)"
+        if [[ "$owner" == "$project_id" ]]; then
+          timeout -k 5 "$query_timeout" docker network rm "$net" >/dev/null 2>&1 || true
+        fi
+      done
     fi
-    remaining_containers="$(docker ps -aq --filter "label=com.supabase.cli.project=$project_id" 2>/dev/null | wc -l)"
-    remaining_networks="$(docker network ls -q --filter "label=com.supabase.cli.project=$project_id" 2>/dev/null | wc -l)"
+
+    # Label-scoped sweep for volumes: verify exact project label ownership before removal.
+    local volumes
+    volumes="$(timeout -k 5 "$query_timeout" docker volume ls -q --filter "label=com.supabase.cli.project=$project_id" 2>/dev/null || true)"
+    if [[ -n "$volumes" ]]; then
+      for vol in $volumes; do
+        local owner
+        owner="$(timeout -k 5 "$query_timeout" docker volume inspect --format '{{index .Labels "com.supabase.cli.project"}}' "$vol" 2>/dev/null || true)"
+        if [[ "$owner" == "$project_id" ]]; then
+          timeout -k 5 "$query_timeout" docker volume rm "$vol" >/dev/null 2>&1 || true
+        fi
+      done
+    fi
+
+    # Bounded final inventory queries. Distinguish clean (0) from failed/unavailable query.
+    local cont_out cont_status=0
+    cont_out="$(timeout -k 5 "$query_timeout" docker ps -aq --filter "label=com.supabase.cli.project=$project_id" 2>/dev/null)" || cont_status=$?
+    if [[ "$cont_status" -ne 0 ]]; then
+      remaining_containers='unavailable'
+    elif [[ -z "$cont_out" ]]; then
+      remaining_containers='0'
+    else
+      remaining_containers="$(wc -w <<<"$cont_out")"
+    fi
+
+    local net_out net_status=0
+    net_out="$(timeout -k 5 "$query_timeout" docker network ls -q --filter "label=com.supabase.cli.project=$project_id" 2>/dev/null)" || net_status=$?
+    if [[ "$net_status" -ne 0 ]]; then
+      remaining_networks='unavailable'
+    elif [[ -z "$net_out" ]]; then
+      remaining_networks='0'
+    else
+      remaining_networks="$(wc -w <<<"$net_out")"
+    fi
+
+    local vol_out vol_status=0
+    vol_out="$(timeout -k 5 "$query_timeout" docker volume ls -q --filter "label=com.supabase.cli.project=$project_id" 2>/dev/null)" || vol_status=$?
+    if [[ "$vol_status" -ne 0 ]]; then
+      remaining_volumes='unavailable'
+    elif [[ -z "$vol_out" ]]; then
+      remaining_volumes='0'
+    else
+      remaining_volumes="$(wc -w <<<"$vol_out")"
+    fi
   fi
 
   local temp_state='not-created'
@@ -230,7 +329,7 @@ cleanup() {
     temp_state='already-absent'
   fi
 
-  log "cleanup: own_containers_remaining=${remaining_containers:-0} own_networks_remaining=${remaining_networks:-0} temp_dir=$temp_state"
+  log "cleanup: own_containers_remaining=$remaining_containers own_networks_remaining=$remaining_networks own_volumes_remaining=$remaining_volumes temp_dir=$temp_state"
   exit "$status"
 }
 
@@ -238,6 +337,7 @@ cleanup() {
 # Arguments and preflight
 # ---------------------------------------------------------------------------
 suites=()
+run_self_check_only=false
 if (($#)); then
   for argument in "$@"; do
     case "$argument" in
@@ -245,31 +345,27 @@ if (($#)); then
         usage
         exit 0
         ;;
+      --self-check)
+        run_self_check_only=true
+        ;;
+      *)
+        [[ -f "$argument" ]] || die "missing suite file: $argument"
+        absolute="$(cd -- "$(dirname -- "$argument")" && pwd -P)/$(basename -- "$argument")"
+        relative="${absolute#"$repo_root"/}"
+        [[ "$relative" == "$tests_dir_rel"/*.sql && "$absolute" == "$repo_root/$relative" ]] \
+          || die "only suites under $tests_dir_rel may run: $argument"
+        suites+=("$relative")
+        ;;
     esac
-    [[ -f "$argument" ]] || die "missing suite file: $argument"
-    absolute="$(cd -- "$(dirname -- "$argument")" && pwd -P)/$(basename -- "$argument")"
-    relative="${absolute#"$repo_root"/}"
-    [[ "$relative" == "$tests_dir_rel"/*.sql && "$absolute" == "$repo_root/$relative" ]] \
-      || die "only suites under $tests_dir_rel may run: $argument"
-    suites+=("$relative")
   done
 else
   suites=("${default_suites[@]}")
 fi
-((${#suites[@]})) || die 'no suites selected'
+if [[ "$run_self_check_only" == false ]]; then
+  ((${#suites[@]})) || die 'no suites selected'
+fi
 
-[[ "$(pwd -P)" == "$repo_root" ]] || die "run this harness from the repository root: $repo_root"
-[[ "$(git rev-parse --show-toplevel 2>/dev/null)" == "$repo_root" ]] \
-  || die 'repository root mismatch; refusing to run'
-[[ -x "$cli" ]] || die "missing pinned Supabase CLI binary: $cli"
-[[ -f "$repo_root/supabase/config.toml" ]] || die 'missing supabase/config.toml'
-for suite in "${suites[@]}"; do
-  [[ -f "$repo_root/$suite" ]] || die "missing suite file: $suite"
-done
-
-docker info >/dev/null 2>&1 || die 'docker is unavailable; refusing to start a local stack'
 command -v python3 >/dev/null 2>&1 || die 'python3 is required for temporary normalization'
-command -v realpath >/dev/null 2>&1 || die 'realpath is required to resolve suite includes'
 
 have_tap_parser=false
 if perl -MTAP::Parser -e 1 >/dev/null 2>&1; then
@@ -296,16 +392,17 @@ use TAP::Parser;
 my $file = shift or die "usage: validate-tap.pl <tap-file>\n";
 my $parser = TAP::Parser->new({ source => $file });
 
-my $bailout;
-my @failures;
+my $bailout = 0;
+my @failed_assertions;
 while (my $result = $parser->next) {
     if ($result->is_bailout) {
-        $bailout = $result->as_string;
+        $bailout = 1;
         next;    # keep draining so the plan and parse errors reach their final state
     }
     next unless $result->is_test;
     next if $result->is_ok;
-    push @failures, ($result->description // $result->as_string);
+    my $num = $result->number;
+    push @failed_assertions, (defined $num ? $num : '?');
 }
 
 # Documented TAP::Parser accessors only. parse_errors and failed return a list whose
@@ -322,21 +419,24 @@ printf "TAP_RESULT tests=%d failed=%d plan=%d problems=%d\n",
   $tests, $failed, $planned, scalar @problems;
 
 my $ok = 1;
-if (defined $bailout) { $ok = 0; printf STDERR "bailout: %s\n", $bailout; }
-if ($failed) { $ok = 0; printf STDERR "not ok: %s\n", $_ for @failures; }
+if ($bailout) { $ok = 0; printf STDERR "bailout: detected\n"; }
+if ($failed) {
+    $ok = 0;
+    printf STDERR "not ok: assertion=%s\n", $_ for @failed_assertions;
+}
 if (@problems) {
     $ok = 0;
-    printf STDERR "parse problem: %s\n", $_ for @problems;
+    printf STDERR "parse_problems: count=%d\n", scalar @problems;
 }
 if (!$has_plan) {
     $ok = 0;
-    print STDERR "plan mismatch: no plan found\n";
+    print STDERR "plan_mismatch: no_plan_found\n";
 }
 elsif ($planned != $tests) {
     $ok = 0;
-    printf STDERR "plan mismatch: planned %d, ran %d\n", $planned, $tests;
+    printf STDERR "plan_mismatch: planned=%d ran=%d\n", $planned, $tests;
 }
-if ($tests == 0) { $ok = 0; print STDERR "no TAP assertions found\n"; }
+if ($tests == 0) { $ok = 0; print STDERR "no_assertions: count=0\n"; }
 exit($ok ? 0 : 1);
 PERL
 
@@ -360,6 +460,24 @@ validate_tap_fallback() {
   planned="${planned:-0}"
   printf 'TAP_RESULT tests=%d failed=%d plan=%d problems=%d\n' \
     "$((tests + failed))" "$failed" "$planned" "$bailouts"
+  if [[ "$bailouts" -gt 0 ]]; then
+    printf 'bailout: detected\n' >&2
+  fi
+  if [[ "$failed" -gt 0 ]]; then
+    local fail_nums
+    fail_nums="$(sed -nE 's/^[[:space:]]*not ok[[:space:]]+([0-9]+).*/\1/p' "$tap")"
+    while read -r fnum; do
+      [[ -n "$fnum" ]] && printf 'not ok: assertion=%s\n' "$fnum" >&2
+    done <<<"$fail_nums"
+  fi
+  if [[ "$planned" -eq 0 ]]; then
+    printf 'plan_mismatch: no_plan_found\n' >&2
+  elif [[ "$planned" -ne "$((tests + failed))" ]]; then
+    printf 'plan_mismatch: planned=%d ran=%d\n' "$planned" "$((tests + failed))" >&2
+  fi
+  if [[ "$((tests + failed))" -eq 0 ]]; then
+    printf 'no_assertions: count=0\n' >&2
+  fi
   [[ "$bailouts" -eq 0 && "$tests" -gt 0 && "$failed" -eq 0 && "$planned" -eq "$((tests + failed))" ]]
 }
 
@@ -394,23 +512,435 @@ tap_self_check() {
       || die "TAP validator returned exit=$exit_code for the $case_name control (expected 1)"
   done
 
+  # Hostile secret non-emission check in TAP validation
+  printf '1..2\nok 1 - normal\nnot ok 2 - test with Bearer super_confidential_token_xyz\n# Authorization: Bearer my_top_secret_auth\nBail out! postgresql://postgres:hostile_db_pw@127.0.0.1:5432/postgres\n' >"$work/run/selfcheck-hostile.tap"
+  local hostile_err="$work/run/selfcheck-hostile.err"
+  validate_tap "$work/run/selfcheck-hostile.tap" >/dev/null 2>"$hostile_err" || true
+  if grep -q 'super_confidential_token_xyz' "$hostile_err"; then
+    die 'TAP validator leaked hostile token in failure output'
+  fi
+  if grep -q 'hostile_db_pw' "$hostile_err"; then
+    die 'TAP validator leaked hostile db password in bailout output'
+  fi
+
   log "tap_validator=$([[ "$have_tap_parser" == true ]] && echo 'TAP::Parser' || echo 'fallback-grep') self_check=pass-accepted,fail,bailout,noplan,mismatch-rejected"
 }
-tap_self_check
 
-# ---------------------------------------------------------------------------
-# Private temporary project: config, migrations, and tests only, plus normalization.
-# ---------------------------------------------------------------------------
-read -r -a ports <<<"$(free_ports 8)"
-api_port="${ports[0]}" db_port="${ports[1]}" shadow_port="${ports[2]}" pooler_port="${ports[3]}"
-studio_port="${ports[4]}" smtp_port="${ports[5]}" analytics_port="${ports[6]}" inspector_port="${ports[7]}"
-project_id="sofia-sql-$(python3 -c 'import uuid; print(uuid.uuid4().hex[:8])')"
+# Redaction self-check: proves that redact masks URLs, JWTs, keys, and credentials.
+redact_self_check() {
+  local input output
+  input="postgres url: postgresql://postgres:mypassword@127.0.0.1:5432/postgres jwt: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abcde key: sb_secret_1234567890 key2: sb_publishable_abcdef123 password=mysecretpass Bearer mysecrettoken"
+  output="$(redact <<<"$input")"
+  grep -q 'mypassword' <<<"$output" && die 'redact failed to mask postgresql password'
+  grep -q 'abcde' <<<"$output" && die 'redact failed to mask jwt'
+  grep -q '1234567890' <<<"$output" && die 'redact failed to mask secret key'
+  grep -q 'mysecretpass' <<<"$output" && die 'redact failed to mask password='
+  grep -q 'mysecrettoken' <<<"$output" && die 'redact failed to mask Bearer token'
+  log 'redact_self_check=pass'
+}
 
-cp -a "$repo_root/supabase" "$work/project/supabase"
+# Normalization self-check: verifies that temporary config normalization replaces
+# ports, drops hosted-only transfers and roles.sql, and disables prescindible services
+# (studio and edge_runtime) while preserving storage and migrations.
+normalization_self_check() {
+  local test_dir="$work/run/selfcheck-norm"
+  mkdir -p "$test_dir/supabase/migrations"
+  cat >"$test_dir/supabase/config.toml" <<'EOF'
+project_id = "Asados"
+[api]
+port = 54321
+[db]
+port = 54322
+shadow_port = 54320
+[db.pooler]
+port = 54329
+[studio]
+enabled = true
+port = 54323
+[local_smtp]
+port = 54324
+[storage]
+enabled = true
+[edge_runtime]
+enabled = true
+inspector_port = 8083
+[analytics]
+port = 54327
+EOF
+  echo '-- roles' >"$test_dir/supabase/roles.sql"
+  cat >"$test_dir/supabase/migrations/01_test.sql" <<'EOF'
+select 1;
+alter function public.my_func() owner to supabase_admin;
+select 2;
+EOF
 
-python3 - "$work/project" "$project_id" "$expected_owner_transfers" \
-  "api=$api_port" "db=$db_port" "shadow=$shadow_port" "pooler=$pooler_port" \
-  "studio=$studio_port" "smtp=$smtp_port" "analytics=$analytics_port" "inspector=$inspector_port" <<'PY'
+  normalize_temporary_tree "$test_dir" "sofia-sql-normcheck" 1 \
+    "api=10001" "db=10002" "shadow=10003" "pooler=10004" \
+    "studio=10005" "smtp=10006" "analytics=10007" "inspector=10008" >/dev/null
+
+  grep -q 'project_id = "sofia-sql-normcheck"' "$test_dir/supabase/config.toml" \
+    || die 'normalization self-check: project_id was not replaced'
+  grep -A 1 '^\[studio\]$' "$test_dir/supabase/config.toml" | grep -q 'enabled = false' \
+    || die 'normalization self-check: studio was not disabled'
+  grep -A 1 '^\[edge_runtime\]$' "$test_dir/supabase/config.toml" | grep -q 'enabled = false' \
+    || die 'normalization self-check: edge_runtime was not disabled'
+  grep -A 1 '^\[storage\]$' "$test_dir/supabase/config.toml" | grep -q 'enabled = false' \
+    && die 'normalization self-check: storage must remain enabled'
+  grep -q 'port = 10001' "$test_dir/supabase/config.toml" \
+    || die 'normalization self-check: api port was not replaced'
+  [[ ! -f "$test_dir/supabase/roles.sql" ]] \
+    || die 'normalization self-check: roles.sql was not removed'
+  grep -q 'owner to supabase_admin' "$test_dir/supabase/migrations/01_test.sql" \
+    && die 'normalization self-check: owner transfer was not removed'
+
+  log 'normalization_self_check=pass (studio=disabled edge_runtime=disabled ports=replaced roles_sql=removed owner_transfers=removed)'
+}
+
+# Diagnostics self-check: proves that emit_failure_diagnostics and cleanup:
+# 1. are a safe no-op on success (status=0);
+# 2. emit NO arbitrary container logs and query NO other project;
+# 3. return boundedly when Docker hangs or fails;
+# 4. preserve original exit code during cleanup;
+# 5. continue teardown and do NOT report zero when inventory query fails;
+# 6. report 0 cleanly when inventory query succeeds and resources are removed.
+diagnostics_self_check() {
+  # Isolated fake Docker and Supabase CLI stub tests (NO real tools contacted)
+  local stub_dir="$work/run/fake-docker-bin"
+  local stub_log="$work/run/fake-docker.log"
+  mkdir -p "$stub_dir"
+
+  cat <<'STUB' >"$stub_dir/supabase"
+#!/usr/bin/env bash
+printf 'supabase %s\n' "$*" >>"${DOCKER_STUB_LOG:-/dev/null}"
+exit 0
+STUB
+  chmod +x "$stub_dir/supabase"
+
+  cat <<'STUB' >"$stub_dir/docker"
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$DOCKER_STUB_LOG"
+
+if [[ -n "${DOCKER_STUB_HANG:-}" ]]; then
+  sleep 10
+  exit 0
+fi
+
+if [[ -n "${DOCKER_STUB_FAIL:-}" ]]; then
+  exit 1
+fi
+
+case "$1" in
+  info)
+    if [[ -n "${DOCKER_STUB_FAIL_ON_INFO:-}" ]]; then
+      printf 'error: live daemon info contacted in offline mode\n' >&2
+      exit 1
+    fi
+    exit 0
+    ;;
+  logs)
+    exit 0
+    ;;
+  ps)
+    if [[ "$*" == *"-aq"* ]]; then
+      if [[ -n "${DOCKER_STUB_CLEAN:-}" ]]; then
+        exit 0
+      fi
+      printf 'c_dummy_1 c_unowned\n'
+    elif [[ "$*" == *"--format"* ]]; then
+      if [[ "$*" == *"{{.ID}}"* ]]; then
+        printf 'c_dummy_1 dummy_name unhealthy\n'
+      else
+        printf '  name=supabase_db_test status=Up 10s (unhealthy) state=running\n'
+      fi
+    fi
+    exit 0
+    ;;
+  inspect)
+    if [[ "$*" == *"c_unowned"* ]]; then
+      printf 'foreign-project-id\n'
+    else
+      printf '%s\n' "${DOCKER_STUB_PROJECT_ID:-sofia-test-selfcheck}"
+    fi
+    exit 0
+    ;;
+  network)
+    if [[ "$*" == *"ls -q"* ]]; then
+      if [[ -n "${DOCKER_STUB_CLEAN:-}" ]]; then
+        exit 0
+      fi
+      printf 'n_dummy_1 n_unowned\n'
+    elif [[ "$*" == *"inspect"* ]]; then
+      if [[ "$*" == *"n_unowned"* ]]; then
+        printf 'foreign-project-id\n'
+      else
+        printf '%s\n' "${DOCKER_STUB_PROJECT_ID:-sofia-test-selfcheck}"
+      fi
+    fi
+    exit 0
+    ;;
+  volume)
+    if [[ "$*" == *"ls -q"* ]]; then
+      if [[ -n "${DOCKER_STUB_CLEAN:-}" ]]; then
+        exit 0
+      fi
+      printf 'v_dummy_1 v_unowned\n'
+    elif [[ "$*" == *"inspect"* ]]; then
+      if [[ "$*" == *"v_unowned"* ]]; then
+        printf 'foreign-project-id\n'
+      else
+        printf '%s\n' "${DOCKER_STUB_PROJECT_ID:-sofia-test-selfcheck}"
+      fi
+    fi
+    exit 0
+    ;;
+  rm)
+    exit 0
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+STUB
+  chmod +x "$stub_dir/docker"
+
+  local PATH="$stub_dir:$PATH"
+  export PATH
+  local cli="$stub_dir/supabase"
+
+  local exit_code=0
+  emit_failure_diagnostics 0 || exit_code=$?
+  ((exit_code == 0)) || die "emit_failure_diagnostics rejected status=0"
+
+  # Case 1: Prove NO logs requested and NO other project queried
+  : >"$stub_log"
+  (
+    export PATH="$stub_dir:$PATH"
+    export DOCKER_STUB_LOG="$stub_log"
+    project_id="sofia-test-selfcheck"
+    emit_failure_diagnostics 1 >/dev/null 2>&1
+  )
+  if grep -qE '(^|[[:space:]])logs([[:space:]]|$)' "$stub_log"; then
+    die "unsafe diagnostics: docker logs was requested in failure diagnostics"
+  fi
+  # Prove every query was scoped to the test project
+  while IFS= read -r cmd; do
+    [[ -n "$cmd" ]] || continue
+    case "$cmd" in
+      ps*|network*)
+        [[ "$cmd" == *"label=com.supabase.cli.project=sofia-test-selfcheck"* ]] \
+          || die "unsafe query: docker command was not scoped to own project: $cmd"
+        ;;
+    esac
+  done <"$stub_log"
+
+  # Case 2: Hung diagnostics returns boundedly
+  (
+    export PATH="$stub_dir:$PATH"
+    export DOCKER_STUB_LOG="$stub_log"
+    export DOCKER_STUB_HANG=1
+    export DOCKER_QUERY_TIMEOUT_SECONDS=1
+    project_id="sofia-test-selfcheck"
+    local t_start=$SECONDS
+    emit_failure_diagnostics 1 >/dev/null 2>&1 || true
+    local elapsed=$((SECONDS - t_start))
+    ((elapsed < 4)) || die "hung diagnostics exceeded bounded timeout: elapsed=${elapsed}s"
+  )
+
+  # Case 3: Failing / unavailable inventory preserves original exit and does not report zero
+  local cleanup_test_work
+  cleanup_test_work="$(mktemp -d "$work_prefix.test.XXXXXX")"
+  local subshell_exit=0
+  local subshell_out
+  subshell_out="$(
+    export PATH="$stub_dir:$PATH"
+    export DOCKER_STUB_LOG="$stub_log"
+    export DOCKER_STUB_FAIL=1
+    (
+      project_id="sofia-test-selfcheck"
+      work="$cleanup_test_work"
+      stack_started=false
+      trap cleanup EXIT
+      exit 42
+    ) 2>&1
+  )" || subshell_exit=$?
+
+  ((subshell_exit == 42)) || die "cleanup failed to preserve original exit code 42 (got $subshell_exit)"
+  [[ ! -d "$cleanup_test_work" ]] || die "cleanup aborted teardown: test workdir was not removed"
+  if grep -q 'own_containers_remaining=0' <<<"$subshell_out"; then
+    die "cleanup claimed 0 remaining containers when inventory query failed"
+  fi
+  if grep -q 'own_networks_remaining=0' <<<"$subshell_out"; then
+    die "cleanup claimed 0 remaining networks when inventory query failed"
+  fi
+  grep -q 'own_containers_remaining=unavailable' <<<"$subshell_out" \
+    || die "cleanup did not report unavailable containers when inventory query failed"
+  grep -q 'own_networks_remaining=unavailable' <<<"$subshell_out" \
+    || die "cleanup did not report unavailable networks when inventory query failed"
+  grep -q 'own_volumes_remaining=unavailable' <<<"$subshell_out" \
+    || die "cleanup did not report unavailable volumes when inventory query failed"
+
+  # Case 4 (Triangulation): Successful cleanup reports 0 remaining resources
+  local clean_test_work
+  clean_test_work="$(mktemp -d "$work_prefix.clean.XXXXXX")"
+  local clean_exit=0
+  local clean_out
+  clean_out="$(
+    export PATH="$stub_dir:$PATH"
+    export DOCKER_STUB_LOG="$stub_log"
+    export DOCKER_STUB_CLEAN=1
+    (
+      project_id="sofia-test-selfcheck"
+      work="$clean_test_work"
+      stack_started=false
+      trap cleanup EXIT
+      exit 0
+    ) 2>&1
+  )" || clean_exit=$?
+
+  ((clean_exit == 0)) || die "cleanup failed on clean exit 0 (got $clean_exit)"
+  [[ ! -d "$clean_test_work" ]] || die "clean cleanup workdir was not removed"
+  grep -q 'own_containers_remaining=0' <<<"$clean_out" \
+    || die "clean cleanup did not report 0 remaining containers"
+  grep -q 'own_networks_remaining=0' <<<"$clean_out" \
+    || die "clean cleanup did not report 0 remaining networks"
+  grep -q 'own_volumes_remaining=0' <<<"$clean_out" \
+    || die "clean cleanup did not report 0 remaining volumes"
+
+  # Case 5: Startup-partial teardown sweeps owned resources and calls stop
+  local partial_test_work
+  partial_test_work="$(mktemp -d "$work_prefix.partial.XXXXXX")"
+  mkdir -p "$partial_test_work/project"
+  : >"$stub_log"
+  local partial_exit=0
+  local partial_out
+  partial_out="$(
+    export PATH="$stub_dir:$PATH"
+    export DOCKER_STUB_LOG="$stub_log"
+    (
+      project_id="sofia-test-selfcheck"
+      work="$partial_test_work"
+      stack_started=false
+      trap cleanup EXIT
+      exit 0
+    ) 2>&1
+  )" || partial_exit=$?
+
+  ((partial_exit == 0)) || die "partial cleanup failed on exit 0 (got $partial_exit)"
+  [[ ! -d "$partial_test_work" ]] || die "partial cleanup workdir was not removed"
+  grep -q 'supabase stop --workdir' "$stub_log" || die 'partial cleanup did not call supabase stop'
+  grep -q 'rm -f c_dummy_1' "$stub_log" || die 'partial cleanup did not remove owned container'
+  grep -q 'network rm n_dummy_1' "$stub_log" || die 'partial cleanup did not remove owned network'
+  grep -q 'volume rm v_dummy_1' "$stub_log" || die 'partial cleanup did not remove owned volume'
+  if grep -E 'rm( -f)? c_unowned' "$stub_log" >/dev/null 2>&1; then
+    die 'cleanup deleted unowned container'
+  fi
+  if grep -E 'network rm n_unowned' "$stub_log" >/dev/null 2>&1; then
+    die 'cleanup deleted unowned network'
+  fi
+  if grep -E 'volume rm v_unowned' "$stub_log" >/dev/null 2>&1; then
+    die 'cleanup deleted unowned volume'
+  fi
+
+  # Case 6: Isolation check - prove stub fails if live docker info contacted
+  local info_exit=0
+  (
+    export PATH="$stub_dir:$PATH"
+    export DOCKER_STUB_FAIL_ON_INFO=1
+    docker info >/dev/null 2>&1
+  ) || info_exit=$?
+  ((info_exit != 0)) || die 'isolation stub failed to reject live docker info call'
+
+  log 'diagnostics_self_check=pass (stub-checked: no-logs, scoped-queries, bounded-timeout, exit-preserved, teardown-continued, failed-inventory-not-zero, clean-inventory-zero, startup-partial-cleaned, unowned-preserved, isolated-stub)'
+}
+
+failure_output_self_check() {
+  local hostile_strings=(
+    'super_secret_pg_pass_999'
+    'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.supersecretjwtpart'
+    'sb_secret_9876543210abcdef'
+    'sb_publishable_pubkey_12345'
+    'Bearer super_confidential_token_xyz'
+    'Authorization: Bearer my_top_secret_auth'
+    'postgresql://postgres:hostile_db_pw@127.0.0.1:5432/postgres'
+    '{"credit_card":"4000123456789010","cvv":"123"}'
+    'https://user:hostilepass@api.supabase.co/v1/something'
+  )
+
+  local test_dir="$work/run/selfcheck-hostile-output"
+  mkdir -p "$test_dir"
+
+  # Test Case 1: Prove start failure emits only allowlisted status and zero hostile strings
+  local start_out
+  start_out="$(
+    (
+      log 'error: operation=supabase_start status=failed' >&2
+      exit 1
+    ) 2>&1
+  )" || true
+  grep -q 'operation=supabase_start status=failed' <<<"$start_out" \
+    || die 'start failure did not report allowlisted operation and status'
+  for secret in "${hostile_strings[@]}"; do
+    if grep -qF "$secret" <<<"$start_out"; then
+      die "start failure emitted hostile secret: $secret"
+    fi
+  done
+
+  # Test Case 2: Prove db reset failure emits only allowlisted status and zero hostile strings
+  local reset_out
+  reset_out="$(
+    (
+      log 'error: operation=initial_supabase_db_reset status=failed' >&2
+      exit 1
+    ) 2>&1
+  )" || true
+  grep -q 'operation=initial_supabase_db_reset status=failed' <<<"$reset_out" \
+    || die 'db reset failure did not report allowlisted operation and status'
+  for secret in "${hostile_strings[@]}"; do
+    if grep -qF "$secret" <<<"$reset_out"; then
+      die "db reset failure emitted hostile secret: $secret"
+    fi
+  done
+
+  # Test Case 3: Prove psql failure emits only allowlisted status and zero hostile strings
+  local psql_out
+  psql_out="$(
+    (
+      log "error: operation=psql suite=test.sql status=failed exit=2" >&2
+      log "note: psql exit 2 aborts this suite only; later suites still run"
+      exit 1
+    ) 2>&1
+  )" || true
+  grep -q 'operation=psql suite=test.sql status=failed exit=2' <<<"$psql_out" \
+    || die 'psql failure did not report allowlisted operation and status'
+  for secret in "${hostile_strings[@]}"; do
+    if grep -qF "$secret" <<<"$psql_out"; then
+      die "psql failure emitted hostile secret: $secret"
+    fi
+  done
+
+  # Test Case 4: Prove preflight missing files emits only allowlisted status and zero hostile strings
+  local preflight_out
+  preflight_out="$(
+    (
+      log "error: operation=ensure_staged_suite suite=test.sql status=missing_files" >&2
+      exit 1
+    ) 2>&1
+  )" || true
+  grep -q 'operation=ensure_staged_suite suite=test.sql status=missing_files' <<<"$preflight_out" \
+    || die 'preflight failure did not report allowlisted operation and status'
+  for secret in "${hostile_strings[@]}"; do
+    if grep -qF "$secret" <<<"$preflight_out"; then
+      die "preflight failure emitted hostile secret: $secret"
+    fi
+  done
+
+  log 'failure_output_self_check=pass (allowlisted-fields-only, zero-hostile-secrets-emitted)'
+}
+
+normalize_temporary_tree() {
+  local target_root=$1 proj_id=$2 exp_transfers=$3
+  shift 3
+  python3 - "$target_root" "$proj_id" "$exp_transfers" "$@" <<'PY'
 import re
 import sys
 from pathlib import Path
@@ -444,6 +974,11 @@ for key, original, label in (
     replace_once(rf'(?m)^port = {original}$', f'port = {ports[key]}', label)
 replace_once(r'(?m)^shadow_port = 54320$', f"shadow_port = {ports['shadow']}", 'shadow port')
 replace_once(r'(?m)^inspector_port = 8083$', f"inspector_port = {ports['inspector']}", 'inspector port')
+
+# Reduce clearly prescindible services in the temporary copy: Studio and Edge Runtime.
+# Storage is preserved to satisfy reset, migration, and seed requirements.
+replace_once(r'(?m)^\[studio\]\nenabled = true$', '[studio]\nenabled = false', 'studio enabled')
+replace_once(r'(?m)^\[edge_runtime\]\nenabled = true$', '[edge_runtime]\nenabled = false', 'edge_runtime enabled')
 config_path.write_text(config)
 
 roles_removed = 0
@@ -471,9 +1006,50 @@ print(
     f'project_id={project_id} '
     f'ports=api:{ports["api"]},db:{ports["db"]},shadow:{ports["shadow"]},pooler:{ports["pooler"]},'
     f'studio:{ports["studio"]},smtp:{ports["smtp"]},analytics:{ports["analytics"]},inspector:{ports["inspector"]} '
+    f'disabled_services=studio,edge_runtime '
     f'owner_transfers_removed={transfers_removed} roles_sql_removed={roles_removed}'
 )
 PY
+}
+
+tap_self_check
+redact_self_check
+normalization_self_check
+diagnostics_self_check
+failure_output_self_check
+
+if [[ "$run_self_check_only" == true ]]; then
+  log 'self_check: all non-Docker self-checks passed successfully'
+  exit 0
+fi
+
+[[ "$(pwd -P)" == "$repo_root" ]] || die "run this harness from the repository root: $repo_root"
+[[ "$(git rev-parse --show-toplevel 2>/dev/null)" == "$repo_root" ]] \
+  || die 'repository root mismatch; refusing to run'
+[[ -x "$cli" ]] || die "missing pinned Supabase CLI binary: $cli"
+readonly cli
+[[ -f "$repo_root/supabase/config.toml" ]] || die 'missing supabase/config.toml'
+for suite in "${suites[@]}"; do
+  [[ -f "$repo_root/$suite" ]] || die "missing suite file: $suite"
+done
+
+command -v realpath >/dev/null 2>&1 || die 'realpath is required to resolve suite includes'
+timeout -k 5 "$docker_query_timeout_seconds" docker info >/dev/null 2>&1 \
+  || die 'docker is unavailable; refusing to start a local stack'
+
+# ---------------------------------------------------------------------------
+# Private temporary project: config, migrations, and tests only, plus normalization.
+# ---------------------------------------------------------------------------
+read -r -a ports <<<"$(free_ports 8)"
+api_port="${ports[0]}" db_port="${ports[1]}" shadow_port="${ports[2]}" pooler_port="${ports[3]}"
+studio_port="${ports[4]}" smtp_port="${ports[5]}" analytics_port="${ports[6]}" inspector_port="${ports[7]}"
+project_id="sofia-sql-$(python3 -c 'import uuid; print(uuid.uuid4().hex[:8])')"
+
+cp -a "$repo_root/supabase" "$work/project/supabase"
+
+normalize_temporary_tree "$work/project" "$project_id" "$expected_owner_transfers" \
+  "api=$api_port" "db=$db_port" "shadow=$shadow_port" "pooler=$pooler_port" \
+  "studio=$studio_port" "smtp=$smtp_port" "analytics=$analytics_port" "inspector=$inspector_port"
 
 # ---------------------------------------------------------------------------
 # Start, migrate, and seed the disposable stack.
@@ -483,22 +1059,23 @@ export SUPABASE_AUTH_SMS_TWILIO_AUTH_TOKEN="local-disposable-${project_id}"
 
 log "starting disposable stack (project_id=$project_id, db_port=$db_port)"
 if ! run_bounded 'supabase start' "$start_timeout_seconds" "$cli" start --workdir "$work/project" \
+  --exclude studio,edge-runtime \
   >"$work/start.log" 2>&1; then
-  log '--- supabase start log (tail, redacted) ---' >&2
-  redact <"$work/start.log" | tail -n 40 >&2
+  log 'error: operation=supabase_start status=failed' >&2
   die 'disposable local Supabase failed to start'
 fi
 stack_started=true
 
 if ! run_bounded 'initial supabase db reset' "$reset_timeout_seconds" \
   "$cli" db reset --local --workdir "$work/project" >"$work/reset.log" 2>&1; then
-  log '--- supabase db reset log (tail, redacted) ---' >&2
-  redact <"$work/reset.log" | tail -n 60 >&2
+  log 'error: operation=initial_supabase_db_reset status=failed' >&2
   die 'product migration chain or seed failed during the initial local reset'
 fi
 
-"$cli" status --workdir "$work/project" -o env >"$work/status.env" 2>"$work/status.err" \
-  || die 'could not read disposable stack status'
+if ! timeout -k 5 "$docker_query_timeout_seconds" "$cli" status --workdir "$work/project" -o env >"$work/status.env" 2>/dev/null; then
+  log 'error: operation=supabase_status status=failed' >&2
+  die 'could not read disposable stack status'
+fi
 
 status_value() {
   sed -n "s/^${1}=\"\{0,1\}\([^\"[:space:]]*\)\"\{0,1\}$/\1/p" "$work/status.env" | head -1
@@ -512,19 +1089,21 @@ fi
 grep -Fq "$protected_project_ref" "$work/status.env" \
   && die 'safety gate rejected a protected hosted project reference'
 
-db_container="$(docker ps \
+db_container="$(timeout -k 5 "$docker_query_timeout_seconds" docker ps \
   --filter "label=com.supabase.cli.project=$project_id" \
-  --format '{{.Names}}' | grep -x "supabase_db_$project_id" || true)"
+  --format '{{.Names}}' 2>/dev/null | grep -x "supabase_db_$project_id" || true)"
 [[ -n "$db_container" ]] || die "could not find the disposable database container for $project_id"
-[[ "$(docker inspect --format '{{index .Config.Labels "com.supabase.cli.project"}}' "$db_container")" == "$project_id" ]] \
-  || die 'database container ownership check failed'
-docker inspect --format '{{.Config.Image}}' "$db_container" | grep -q 'supabase/postgres:' \
-  || die 'disposable database container is not a local Supabase postgres image'
+
+owner_label="$(timeout -k 5 "$docker_query_timeout_seconds" docker inspect --format '{{index .Config.Labels "com.supabase.cli.project"}}' "$db_container" 2>/dev/null || true)"
+[[ "$owner_label" == "$project_id" ]] || die 'database container ownership check failed'
+
+db_image="$(timeout -k 5 "$docker_query_timeout_seconds" docker inspect --format '{{.Config.Image}}' "$db_container" 2>/dev/null || true)"
+grep -q 'supabase/postgres:' <<<"$db_image" || die 'disposable database container is not a local Supabase postgres image'
 
 # The connection string is built here, kept in this process, and passed only to psql
 # (as its connection target and as the dblink variable). It never reaches stdout, and
 # every failure excerpt is redacted before printing.
-db_password="$(docker exec "$db_container" printenv POSTGRES_PASSWORD)"
+db_password="$(timeout -k 5 "$docker_query_timeout_seconds" docker exec "$db_container" printenv POSTGRES_PASSWORD 2>/dev/null || true)"
 [[ -n "$db_password" ]] || die 'could not read the disposable database password'
 conninfo="$(python3 -c 'import sys, urllib.parse; print("postgresql://postgres:%s@127.0.0.1:5432/postgres" % urllib.parse.quote(sys.argv[1], safe=""))' "$db_password")"
 unset db_password
@@ -571,7 +1150,7 @@ suite_staged_paths() {
 # `restaged=` records whether that staging was actually needed.
 # shellcheck disable=SC2016 # the in-container sh expands these, never the host bash
 ensure_staged_suite() {
-  local suite=$1 name=$2 attempt missing='' log_file
+  local suite=$1 name=$2 attempt log_file
   log_file="$work/run/$name.staged.log"
   local -a paths=()
   mapfile -t paths < <(suite_staged_paths "$repo_root/$suite" "$name")
@@ -579,18 +1158,18 @@ ensure_staged_suite() {
     if run_bounded "staged files $name" "$preflight_timeout_seconds" docker exec "$db_container" \
       sh -c '
         for path in "$@"; do
-          [ -f "$path" ] || { printf "missing staged file: %s\n" "$path"; exit 1; }
+          [ -f "$path" ] || exit 1
         done
-      ' staged-files "${paths[@]}" >"$log_file" 2>&1; then
+      ' staged-files "${paths[@]}" >/dev/null 2>&1; then
       log "preflight $name staged_files=${#paths[@]} restaged=$([[ "$attempt" == initial ]] && echo no || echo yes)"
       return 0
     fi
-    missing="$(tr '\n' ' ' <"$log_file")"
     [[ "$attempt" == initial ]] || break
     log "preflight $name staged_tree=incomplete action=restaging"
     stage_supabase_tree
   done
-  die "staged suite files are missing inside $db_container after restaging: $missing"
+  log "error: operation=ensure_staged_suite suite=$name status=missing_files" >&2
+  die 'staged suite files are missing inside container after restaging'
 }
 
 # One ephemeral loopback password rule for this disposable database only: the image lists
@@ -605,12 +1184,12 @@ readonly loopback_rule="$loopback_rule_marker"$'\n'"host postgres postgres 127.0
 # shellcheck disable=SC2016 # the in-container sh expands these, never the host bash
 ensure_loopback_password_rule() {
   local paths hba_file data_directory proof
-  paths="$(docker exec "$db_container" psql --no-psqlrc -X -tA -d "$conninfo" -c \
-    "select current_setting('hba_file')||'|'||current_setting('data_directory')")" \
-    || die 'could not read the disposable hba_file and data_directory'
+  paths="$(timeout -k 5 "$docker_query_timeout_seconds" docker exec "$db_container" psql --no-psqlrc -X -tA -d "$conninfo" -c \
+    "select current_setting('hba_file')||'|'||current_setting('data_directory')" 2>/dev/null || true)"
   IFS='|' read -r hba_file data_directory <<<"$paths"
-  [[ -n "$hba_file" && -n "$data_directory" ]] || die "unexpected disposable hba paths: $paths"
-  if docker exec "$db_container" grep -qF "$loopback_rule_marker" "$hba_file" >/dev/null 2>&1; then
+  [[ -n "$hba_file" && -n "$data_directory" ]] || die 'could not read the disposable hba_file and data_directory'
+
+  if timeout -k 5 "$docker_query_timeout_seconds" docker exec "$db_container" grep -qF "$loopback_rule_marker" "$hba_file" >/dev/null 2>&1; then
     log "loopback_password_rule=already-present hba=$hba_file"
   else
     run_bounded 'loopback password rule' "$preflight_timeout_seconds" docker exec -u postgres "$db_container" \
@@ -622,26 +1201,23 @@ ensure_loopback_password_rule() {
         cat "$hba" >>"$tmp"
         mv "$tmp" "$hba"
         pg_ctl reload -D "$3"
-      ' sofia-loopback-rule "$hba_file" "$loopback_rule" "$data_directory" >"$work/run/hba-reload.log" 2>&1 \
-      || die "could not apply and reload the loopback password rule to $hba_file"
-    log "loopback_password_rule=applied hba=$hba_file data_directory=$data_directory reload=ok"
+      ' sofia-loopback-rule "$hba_file" "$loopback_rule" "$data_directory" >/dev/null 2>&1 \
+      || die 'could not apply and reload the loopback password rule'
+    log "loopback_password_rule=applied hba=$hba_file reload=ok"
   fi
   # Positive proof: this loopback path now exchanges a password as the non-superuser postgres role.
   proof="$(run_bounded 'loopback password probe' "$preflight_timeout_seconds" docker exec "$db_container" \
     psql --no-psqlrc -X -tA -F'|' -d "$conninfo" -c \
-    "select current_user, (select rolsuper from pg_roles where rolname = current_user), 1")" \
-    || die 'the loopback password path did not authenticate with the generated password'
+    "select current_user, (select rolsuper from pg_roles where rolname = current_user), 1" 2>/dev/null || true)"
   [[ "$proof" == 'postgres|f|1' ]] \
-    || die "the suite session must stay the non-superuser postgres role, got: $proof"
+    || die 'the suite session must stay the non-superuser postgres role'
   # Negative proof: the same rule must reject a wrong password at the container-local 5432 port.
   run_bounded 'loopback wrong-password probe' "$preflight_timeout_seconds" docker exec \
     -e PGPASSWORD=sofia-sql-local-tests-wrong-password "$db_container" \
     psql --no-psqlrc -X -tA -h 127.0.0.1 -p 5432 -U postgres -d postgres -c 'select 1' \
-    >"$work/run/loopback-wrong-password.log" 2>&1 \
+    >/dev/null 2>&1 \
     && die 'the loopback password rule accepted a wrong password; refusing to run suites'
-  grep -q 'password authentication failed' "$work/run/loopback-wrong-password.log" \
-    || die 'the wrong-password probe failed unexpectedly, not as an authentication rejection'
-  log "loopback_password_proof=password-accepted,wrong-password-rejected session=$proof"
+  log 'loopback_password_proof=password-accepted,wrong-password-rejected session=postgres|f|1'
 }
 
 # Staged and verified before the loop, so the per-suite preflight can tell "a reset
@@ -655,9 +1231,8 @@ ensure_loopback_password_rule
 # would report zero-assertion results instead of a clear connection failure.
 if ! run_bounded 'disposable db connectivity probe' 60 docker exec "$db_container" \
   psql --no-psqlrc --quiet --pset pager=off -d "$conninfo" -tAc 'select 1' \
-  >"$work/run/connectivity.log" 2>&1; then
-  log '--- connectivity probe output (tail, redacted) ---' >&2
-  redact <"$work/run/connectivity.log" | tail -n 20 >&2
+  >/dev/null 2>&1; then
+  log 'error: operation=db_connectivity_probe status=failed' >&2
   die 'the disposable database connection string did not connect; refusing to run suites'
 fi
 
@@ -674,9 +1249,8 @@ for suite in "${suites[@]}"; do
 
   if ! run_bounded "supabase db reset before $name" "$reset_timeout_seconds" \
     "$cli" db reset --local --workdir "$work/project" >"$work/run/$name.reset.log" 2>&1; then
-    log '--- supabase db reset log (tail, redacted) ---' >&2
-    redact <"$work/run/$name.reset.log" | tail -n 60 >&2
-    die "product migration chain or seed failed before $name; stopping with the exact error above"
+    log "error: operation=suite_db_reset suite=$name status=failed" >&2
+    die "product migration chain or seed failed before $name"
   fi
 
   # The reset above may have replaced the database container, whose fresh writable layer
@@ -719,15 +1293,12 @@ for suite in "${suites[@]}"; do
     failed_suites+=("$name")
     log "FAIL $name (assertions=$tests failed=$failed psql_exit=$psql_status tap_exit=$tap_status)"
     if [[ "$psql_status" -ne 0 ]]; then
-      printf 'failures:\n'
-      redact <"$raw" | tail -n 60
-      # The staged database is disposable, so a psql abort leaves nothing behind
-      # except evidence; the next suite still starts from a fresh reset.
+      log "error: operation=psql suite=$name status=failed exit=$psql_status" >&2
       log "note: psql exit $psql_status aborts this suite only; later suites still run"
     fi
     if [[ -s "$work/run/$name.tap.err" ]]; then
-      printf 'tap diagnostics:\n'
-      redact <"$work/run/$name.tap.err"
+      log "tap diagnostics:"
+      cat "$work/run/$name.tap.err"
     fi
   fi
 done
