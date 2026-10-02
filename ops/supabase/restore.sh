@@ -18,7 +18,7 @@ backup="$(CDPATH= cd -- "$backup_argument" && pwd)"
 (cd "$backup" && sha256sum -c SHA256SUMS)
 cd "$here"
 
-clients="studio api-gw auth rest realtime storage meta functions"
+clients="api-gw auth rest realtime storage functions"
 restart_clients() {
   docker compose up -d $clients >/dev/null
 }
