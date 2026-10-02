@@ -58,7 +58,8 @@ check_not_production_identifier() {
         "$val" == *"$PRODUCTION_ORIGIN"* || \
         "$val" == *"$PRODUCTION_IMAGE_ID"* || \
         "$val" == *"4d897d994bee8aa7332b57ca13dfad1d4c3c8430"* || \
-        "$val" =~ ^asados-web: ]]; then
+        "$val" =~ ^asados-web: || \
+        "$val" =~ ^crm-sofia-web: ]]; then
     printf 'error: Refusing: production identifier supplied through %s\n' "$var_name" >&2
     exit 1
   fi

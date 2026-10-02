@@ -144,6 +144,7 @@ describe('isolated rollback-candidate compatibility harness', () => {
 
   it.each([
     ['ROLLBACK_HARNESS_IMAGE_TAG', 'asados-web:4d897d994bee8aa7332b57ca13dfad1d4c3c8430'],
+    ['ROLLBACK_HARNESS_IMAGE_TAG', 'crm-sofia-web:candidate-tag-20261002'],
     ['ROLLBACK_HARNESS_LOCK_DIR', `/tmp/${PRODUCTION_PROJECT_REF}/lock`],
     ['ROLLBACK_HARNESS_PROBE_PATH', `/${PRODUCTION_ORIGIN}/admin`],
     ['ROLLBACK_HARNESS_EXPECTED_DIGEST', PRODUCTION_IMAGE_ID],

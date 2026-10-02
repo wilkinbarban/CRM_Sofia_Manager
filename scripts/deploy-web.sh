@@ -107,9 +107,11 @@ recreate_and_verify() {
     SOFIA_INBOUND_BATCH_TELEGRAM_ENQUEUE_ENABLED=false \
     SOFIA_INBOUND_BATCH_EVOLUTION_ENQUEUE_ENABLED=false \
     SOFIA_CUSTOMER_MEMORY_ENABLED=false \
+    CRM_SOFIA_WEB_IMAGE="$ref" \
     ASADOS_WEB_IMAGE="$ref" docker compose -f "$root/docker-compose.yml" \
       --project-directory "$root" --project-name "$compose_project" up -d --no-deps --force-recreate web
   else
+    CRM_SOFIA_WEB_IMAGE="$ref" \
     ASADOS_WEB_IMAGE="$ref" docker compose -f "$root/docker-compose.yml" \
       --project-directory "$root" --project-name "$compose_project" up -d --no-deps --force-recreate web
   fi
@@ -176,7 +178,9 @@ case "$action" in
       current_id="$(docker inspect asados-web --format '{{.Image}}')"
     fi
     rollback_ref="asados-web:rollback-${current_id#sha256:}"
+    rollback_ref_modern="crm-sofia-web:rollback-${current_id#sha256:}"
     docker image tag "$current_id" "$rollback_ref"
+    docker image tag "$current_id" "$rollback_ref_modern"
     previous_id="$(image_id "$rollback_ref")"
 
     if ! recreate_and_verify "$candidate_ref" "$candidate_id" "$close_operational_gates"; then

@@ -1,6 +1,6 @@
 services:
   web:
-    image: ${ASADOS_WEB_IMAGE:-asados-web:latest}
+    image: ${CRM_SOFIA_WEB_IMAGE:-${ASADOS_WEB_IMAGE:-asados-web:latest}}
     build:
       context: .
       dockerfile: Dockerfile

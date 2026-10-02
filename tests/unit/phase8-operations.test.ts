@@ -54,7 +54,11 @@ describe('Phase 8 operational artifacts', () => {
     const compose = read('docker-compose.yml')
     const deploy = read('scripts', 'deploy-web.sh')
 
-    expect(compose).toContain('image: ${ASADOS_WEB_IMAGE:-asados-web:latest}')
+    expect(compose).toContain('image: ${CRM_SOFIA_WEB_IMAGE:-${ASADOS_WEB_IMAGE:-asados-web:latest}}')
+    expect(deploy).toContain('CRM_SOFIA_WEB_IMAGE="$ref"')
+    expect(deploy).toContain('ASADOS_WEB_IMAGE="$ref"')
+    expect(deploy).toContain('crm-sofia-web:rollback-')
+    expect(deploy).toContain('asados-web:rollback-')
     expect(deploy).toContain('deploy <local-immutable-image-ref>')
     expect(deploy).toContain('deploy --closed-gates <local-immutable-image-ref>')
     expect(deploy).toContain('rollback')

@@ -50,15 +50,17 @@ Record checksums, container image IDs, Compose config hashes, migration count, D
 ## Promotion gates
 
 1. Build and tag the candidate from the recorded clean commit, for example
-   `asados-web:<commit-sha>`. Never use `latest` as the deployment input.
+   `crm-sofia-web:<commit-sha>` or `asados-web:<commit-sha>`. Never use `latest` as the deployment input.
 2. Deploy it through the guarded Web-only workflow:
 
    ```bash
-   sudo scripts/deploy-web.sh deploy "asados-web:<commit-sha>" \
+   sudo scripts/deploy-web.sh deploy "crm-sofia-web:<commit-sha>" \
      | tee "phase8-deploy-$stamp.txt"
    ```
 
-   The script retains the current image under an immutable rollback tag, recreates
+   The script retains the current image under dual immutable rollback tags (`asados-web:rollback-...`
+   and `crm-sofia-web:rollback-...`), injects both `CRM_SOFIA_WEB_IMAGE` and `ASADOS_WEB_IMAGE`
+   into Docker Compose (where `CRM_SOFIA_WEB_IMAGE` takes precedence), recreates
    only `web`, waits for Docker health, checks exact image identity, and runs the
    direct and HTTPS read-only smoke. A failed promotion automatically restores
    the retained image.

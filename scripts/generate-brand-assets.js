@@ -1,3 +1,14 @@
+/**
+ * Deprecation Guard:
+ * The legacy brand asset generator is deprecated and disabled to retain verified brand assets
+ * and preserve file history. New brand assets are permanently integrated as verified static files
+ * under apps/web/public and verified by tests/unit/brand-asset-metadata.test.ts.
+ */
+console.error(
+  'Error: scripts/generate-brand-assets.js is deprecated and disabled to prevent overwriting verified brand assets. Retaining verified assets and file history.'
+)
+process.exit(1)
+
 const sharp = require('sharp')
 const fs = require('fs')
 const path = require('path')
