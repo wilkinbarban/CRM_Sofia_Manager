@@ -1,11 +1,40 @@
-import { describe, expect, it } from 'vitest'
-import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdtempSync, rmSync, statSync } from 'node:fs'
+import { describe, expect, it, afterAll } from 'vitest'
+import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdtempSync, rmSync, statSync, mkdirSync, symlinkSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { spawnSync } from 'node:child_process'
 
 const root = process.cwd()
 const read = (...parts: string[]) => readFileSync(join(root, ...parts), 'utf8')
+const BASH_BIN = '/usr/bin/bash'
+const PYTHON_BIN = '/usr/bin/python3'
+const NODE_BIN = process.execPath
+
+function populateSafeBin(binDir: string) {
+  mkdirSync(binDir, { recursive: true })
+  const SAFE_BINS = ['bash', 'sh', 'python3', 'awk', 'cat', 'grep', 'sed', 'tr', 'date', 'rm', 'mkdir', 'dirname', 'basename', 'sleep', 'env', 'sort', 'cut', 'head', 'tail', 'touch', 'printf', 'true', 'false', 'mktemp', 'cp', 'mv', 'uname', 'which', 'flock', 'id', 'pwd']
+  for (const b of SAFE_BINS) {
+    const t = b === 'python3' ? PYTHON_BIN : (b === 'bash' || b === 'sh' ? BASH_BIN : `/usr/bin/${b}`)
+    if (!existsSync(t)) {
+      throw new Error(`Required host binary missing for safe PATH stubbing: ${t}`)
+    }
+    try { symlinkSync(t, join(binDir, b)) } catch {}
+  }
+  if (!existsSync(NODE_BIN)) {
+    throw new Error(`Required node binary missing for safe PATH stubbing: ${NODE_BIN}`)
+  }
+  try { symlinkSync(NODE_BIN, join(binDir, 'node')) } catch {}
+  writeFileSync(join(binDir, 'curl'), '#!/bin/sh\necho "deny-by-default: curl disabled in test harness" >&2\nexit 1\n', { mode: 0o755 })
+}
+
+const isolatedRunnerDir = mkdtempSync(join(tmpdir(), 'isolated-runner-'))
+const isolatedRunnerBin = join(isolatedRunnerDir, 'bin')
+populateSafeBin(isolatedRunnerBin)
+writeFileSync(join(isolatedRunnerBin, 'docker'), '#!/bin/sh\necho "deny-by-default: docker disabled in runner harness" >&2\nexit 1\n', { mode: 0o755 })
+
+afterAll(() => {
+  rmSync(isolatedRunnerDir, { recursive: true, force: true })
+})
 
 const DEFAULT_OPERATIONAL_GATES: Record<string, string> = {
   PAYMENT_PROOF_CANONICAL_INGEST_ENABLED: 'false',
@@ -35,7 +64,9 @@ function setupMockDeployEnvironment(options?: {
   const sandboxScripts = join(sandboxRoot, 'scripts')
   const sandboxBin = join(sandboxRoot, 'bin')
   const sandboxState = join(sandboxRoot, 'state')
-  spawnSync('mkdir', ['-p', sandboxScripts, sandboxBin, sandboxState])
+  mkdirSync(sandboxScripts, { recursive: true })
+  mkdirSync(sandboxState, { recursive: true })
+  populateSafeBin(sandboxBin)
 
   const commandsLog = join(sandboxRoot, 'commands.log')
   const scriptsLog = join(sandboxRoot, 'scripts.log')
@@ -79,7 +110,7 @@ function setupMockDeployEnvironment(options?: {
   // Stubs for absolute child scripts invoked by deploy-web.sh ($smoke, $ingress_limit_probe, $preflight)
   const makeScriptStub = (name: string, body: string) => {
     const p = join(sandboxScripts, name)
-    const content = `#!/usr/bin/env bash\nset -euo pipefail\n${body}\n`
+    const content = `#!${BASH_BIN}\nset -euo pipefail\n${body}\n`
     writeFileSync(p, content, { mode: 0o755 })
   }
 
@@ -214,18 +245,46 @@ case "\$cmd" in
   compose)
     echo "compose-invocation: CRM_SOFIA_WEB_IMAGE=\${CRM_SOFIA_WEB_IMAGE:-unset} ASADOS_WEB_IMAGE=\${ASADOS_WEB_IMAGE:-unset} args: \$*" >> "${commandsLog}"
     env | grep '_ENABLED=' | sort >> "${commandsLog}" || true
-    if [[ "\$*" == *"web"* ]]; then
-      requested="\${CRM_SOFIA_WEB_IMAGE:-}"
-      if [[ -n "\$requested" ]]; then
-        resolved_id="\$(awk -v r="\$requested" '\$1 == r { print \$2; exit } \$2 == r { print \$2; exit }' "\$TAGS_FILE")"
-        if [[ -z "\$resolved_id" ]]; then
-          echo "Error: compose target image not found: \$requested" >&2
-          exit 1
-        fi
-        echo "\$resolved_id" > "\$CONTAINER_FILE"
+    subcmd=""
+    skip_next=false
+    for a in "\$@"; do
+      if [[ "\$skip_next" == true ]]; then
+        skip_next=false
+        continue
       fi
-    fi
-    exit 0
+      case "\$a" in
+        -f|--file|--project-directory|--project-name|-p|--env-file)
+          skip_next=true
+          ;;
+        -*)
+          ;;
+        *)
+          subcmd="\$a"
+          break
+          ;;
+      esac
+    done
+    case "\$subcmd" in
+      config|ps) exit 0 ;;
+      up)
+        if [[ "\$*" == *"web"* ]]; then
+          requested="\${CRM_SOFIA_WEB_IMAGE:-}"
+          if [[ -n "\$requested" ]]; then
+            resolved_id="\$(awk -v r="\$requested" '\$1 == r { print \$2; exit } \$2 == r { print \$2; exit }' "\$TAGS_FILE")"
+            if [[ -z "\$resolved_id" ]]; then
+              echo "Error: compose target image not found: \$requested" >&2
+              exit 1
+            fi
+            echo "\$resolved_id" > "\$CONTAINER_FILE"
+          fi
+        fi
+        exit 0
+        ;;
+      *)
+        echo "Error: unknown docker compose command: \$subcmd" >&2
+        exit 1
+        ;;
+    esac
     ;;
   stop)
     echo "stop args: $*" >> "${commandsLog}"
@@ -240,9 +299,11 @@ esac
   const dockerPath = join(sandboxBin, 'docker')
   writeFileSync(dockerPath, dockerScript, { mode: 0o755 })
 
-  const env = {
-    ...process.env,
-    PATH: `${sandboxBin}:${process.env.PATH}`,
+  const env: Record<string, string> = {
+    PATH: sandboxBin,
+    HOME: sandboxRoot,
+    TMPDIR: sandboxRoot,
+    PYTHONDONTWRITEBYTECODE: '1',
     CRM_SOFIA_WEB_IMAGE: 'ambient-crm-wrong:latest',
     ASADOS_WEB_IMAGE: 'ambient-asados-wrong:latest',
     ASADOS_DEPLOY_STATE_ROOT: sandboxState,
@@ -450,10 +511,13 @@ describe('Web Image Compatibility & Dual Tagging', () => {
       const runner = join(root, 'scripts', 'test-rollback-candidate-isolated.sh')
 
       const runWithTag = (tag: string) => {
-        return spawnSync('bash', [runner, 'plan'], {
+        return spawnSync(BASH_BIN, [runner, 'plan'], {
           cwd: root,
           env: {
-            ...process.env,
+            PATH: isolatedRunnerBin,
+            HOME: isolatedRunnerDir,
+            TMPDIR: isolatedRunnerDir,
+            PYTHONDONTWRITEBYTECODE: '1',
             ROLLBACK_HARNESS_IMAGE_TAG: tag,
             ROLLBACK_HARNESS_MIN_FREE_BYTES: '1024',
           },
@@ -494,8 +558,13 @@ describe('Web Image Compatibility & Dual Tagging', () => {
         }
       }
 
-      const res = spawnSync('node', [script], {
+      const res = spawnSync(NODE_BIN, [script], {
         cwd: root,
+        env: {
+          PATH: isolatedRunnerBin,
+          HOME: isolatedRunnerDir,
+          TMPDIR: isolatedRunnerDir,
+        },
         encoding: 'utf8',
       })
 
@@ -1372,6 +1441,42 @@ describe('Web Image Compatibility & Dual Tagging', () => {
         } finally {
           harness.cleanup()
         }
+      })
+
+      it('proves closed PATH executes deny stubs for curl and forbidden docker commands with zero network fallback', () => {
+        const harness = setupMockDeployEnvironment()
+        try {
+          expect(harness.env.SHELL).toBeUndefined()
+          expect(harness.env.USER).toBeUndefined()
+
+          const resCurl = spawnSync('curl', ['--help'], { env: harness.env, encoding: 'utf8' })
+          expect(resCurl.status).not.toBe(0)
+          expect(resCurl.stderr).toContain('deny-by-default: curl disabled in test harness')
+
+          const resDocker = spawnSync('docker', ['forbidden-command'], { env: harness.env, encoding: 'utf8' })
+          expect(resDocker.status).not.toBe(0)
+          expect(resDocker.stderr).toContain('Error: unknown docker command: forbidden-command')
+
+          const resComposeUnknown = spawnSync('docker', ['compose', 'forbidden-subcommand'], { env: harness.env, encoding: 'utf8' })
+          expect(resComposeUnknown.status).not.toBe(0)
+          expect(resComposeUnknown.stderr).toContain('Error: unknown docker compose command: forbidden-subcommand')
+
+          const resComposePs = spawnSync('docker', ['compose', 'ps'], { env: harness.env, encoding: 'utf8' })
+          expect(resComposePs.status).toBe(0)
+
+          const resComposeConfig = spawnSync('docker', ['compose', 'config'], { env: harness.env, encoding: 'utf8' })
+          expect(resComposeConfig.status).toBe(0)
+        } finally {
+          harness.cleanup()
+        }
+      })
+
+      it('proves sandbox cleanup deterministically removes created directory', () => {
+        const harness = setupMockDeployEnvironment()
+        const rootDir = harness.sandboxRoot
+        expect(existsSync(rootDir)).toBe(true)
+        harness.cleanup()
+        expect(existsSync(rootDir)).toBe(false)
       })
     })
   })
