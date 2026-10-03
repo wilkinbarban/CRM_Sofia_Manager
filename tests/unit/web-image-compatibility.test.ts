@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { existsSync, readFileSync, writeFileSync, mkdtempSync, rmSync, statSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdtempSync, rmSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { spawnSync } from 'node:child_process'
@@ -7,7 +7,30 @@ import { spawnSync } from 'node:child_process'
 const root = process.cwd()
 const read = (...parts: string[]) => readFileSync(join(root, ...parts), 'utf8')
 
-function setupMockDeployEnvironment(options?: { initialContainerImage?: string }) {
+const DEFAULT_OPERATIONAL_GATES: Record<string, string> = {
+  PAYMENT_PROOF_CANONICAL_INGEST_ENABLED: 'false',
+  WHATSAPP_PAYMENT_PROOF_INGEST_ENABLED: 'false',
+  TELEGRAM_PAYMENT_PROOF_INGEST_ENABLED: 'false',
+  PAYMENT_PROOF_PROCESSING_ENABLED: 'false',
+  PAYMENT_PROOF_SELLER_RECONCILIATION_ENABLED: 'false',
+  PAYMENT_PROOF_PRIVILEGED_REPLAY_ENABLED: 'false',
+  PAYMENT_PROOF_CLEANUP_ENABLED: 'false',
+  PAYMENT_PROOF_RESTORE_ENABLED: 'false',
+  NOTIFICATION_OUTBOX_DISPATCH_ENABLED: 'false',
+  WEB_NOTIFICATION_OUTBOX_DISPATCH_ENABLED: 'false',
+  WHATSAPP_NOTIFICATION_OUTBOX_DISPATCH_ENABLED: 'false',
+  TELEGRAM_NOTIFICATION_OUTBOX_DISPATCH_ENABLED: 'false',
+  SOFIA_INBOUND_BATCH_PROCESSING_ENABLED: 'false',
+  SOFIA_INBOUND_BATCH_RUNTIME_ENABLED: 'false',
+  SOFIA_INBOUND_BATCH_TELEGRAM_ENQUEUE_ENABLED: 'false',
+  SOFIA_INBOUND_BATCH_EVOLUTION_ENQUEUE_ENABLED: 'false',
+  SOFIA_CUSTOMER_MEMORY_ENABLED: 'false',
+}
+
+function setupMockDeployEnvironment(options?: {
+  initialContainerImage?: string
+  containerEnv?: Record<string, string> | null
+}) {
   const sandboxRoot = mkdtempSync(join(tmpdir(), 'mock-deploy-web-repo-'))
   const sandboxScripts = join(sandboxRoot, 'scripts')
   const sandboxBin = join(sandboxRoot, 'bin')
@@ -17,14 +40,21 @@ function setupMockDeployEnvironment(options?: { initialContainerImage?: string }
   const commandsLog = join(sandboxRoot, 'commands.log')
   const scriptsLog = join(sandboxRoot, 'scripts.log')
   const containerImageFile = join(sandboxState, 'container_web_image')
+  const containerEnvFile = join(sandboxState, 'container_web_env')
   const tagsFile = join(sandboxState, 'tags.tsv')
 
-  const candidateId = 'sha256:candidate11111111111111111111111111111111111111111111111111111111111111'
-  const currentId = 'sha256:current22222222222222222222222222222222222222222222222222222222222222'
+  const candidateId = 'sha256:1111111111111111111111111111111111111111111111111111111111111111'
+  const currentId = 'sha256:2222222222222222222222222222222222222222222222222222222222222222'
   const candidateRef = 'crm-sofia-web:20261002'
 
   const initialImage = options?.initialContainerImage !== undefined ? options.initialContainerImage : currentId
   writeFileSync(containerImageFile, initialImage ? `${initialImage}\n` : '')
+
+  if (options?.containerEnv !== null) {
+    const envEntries = options?.containerEnv ?? DEFAULT_OPERATIONAL_GATES
+    const lines = Object.entries(envEntries).map(([k, v]) => `${k}=${v}`).join('\n') + '\n'
+    writeFileSync(containerEnvFile, lines)
+  }
 
   // Initial tag mappings in TSV: <tag_or_ref>\t<image_id>
   const initialTags = [
@@ -60,6 +90,15 @@ function setupMockDeployEnvironment(options?: { initialContainerImage?: string }
 
   makeScriptStub(
     'smoke-production-readonly.sh',
+    `if [[ -f "${sandboxState}/fail_smoke_once" ]]; then\n` +
+    `  rm -f "${sandboxState}/fail_smoke_once"\n` +
+    `  echo "smoke forced single failure" >> "${scriptsLog}"\n` +
+    `  exit 1\n` +
+    `fi\n` +
+    `if [[ -f "${sandboxState}/fail_smoke" ]]; then\n` +
+    `  echo "smoke forced failure" >> "${scriptsLog}"\n` +
+    `  exit 1\n` +
+    `fi\n` +
     `container_image="$(cat "${containerImageFile}" | tr -d '\\r\\n')"\n` +
     `expected="\${ASADOS_EXPECTED_IMAGE_ID:-}"\n` +
     `echo "smoke expected=\${expected} actual=\${container_image}" >> "${scriptsLog}"\n` +
@@ -87,6 +126,7 @@ echo "docker $*" >> "${commandsLog}"
 STATE_DIR="${sandboxState}"
 TAGS_FILE="${tagsFile}"
 CONTAINER_FILE="${containerImageFile}"
+ENV_FILE="${containerEnvFile}"
 
 cmd="\${1:-}"
 shift || true
@@ -135,7 +175,7 @@ case "\$cmd" in
     target="\${1:-}"
     shift || true
     case "\$target" in
-      crm-sofia-web)
+      crm-sofia-web|asados-web)
         if [[ ! -f "\$CONTAINER_FILE" ]]; then
           exit 1
         fi
@@ -146,6 +186,12 @@ case "\$cmd" in
           cat "\$CONTAINER_FILE" | tr -d '\\r\\n'
           echo
           exit 0
+        elif [[ "\$*" == *"Config.Env"* ]]; then
+          if [[ -f "\$ENV_FILE" ]]; then
+            cat "\$ENV_FILE"
+            exit 0
+          fi
+          exit 1
         elif [[ "\$*" == *"Health"* || "\$*" == *"Status"* ]]; then
           echo "healthy"
           exit 0
@@ -167,6 +213,7 @@ case "\$cmd" in
     ;;
   compose)
     echo "compose-invocation: CRM_SOFIA_WEB_IMAGE=\${CRM_SOFIA_WEB_IMAGE:-unset} ASADOS_WEB_IMAGE=\${ASADOS_WEB_IMAGE:-unset} args: \$*" >> "${commandsLog}"
+    env | grep '_ENABLED=' | sort >> "${commandsLog}" || true
     if [[ "\$*" == *"web"* ]]; then
       requested="\${CRM_SOFIA_WEB_IMAGE:-}"
       if [[ -n "\$requested" ]]; then
@@ -181,6 +228,7 @@ case "\$cmd" in
     exit 0
     ;;
   stop)
+    echo "stop args: $*" >> "${commandsLog}"
     exit 0
     ;;
   *)
@@ -479,6 +527,852 @@ describe('Web Image Compatibility & Dual Tagging', () => {
       if (sharpIndex > -1) {
         expect(exitIndex).toBeLessThan(sharpIndex)
       }
+    })
+  })
+
+  describe('Web-only deployment and rollback preservation', () => {
+    const heterogeneousGates: Record<string, string> = {
+      PAYMENT_PROOF_CANONICAL_INGEST_ENABLED: 'true',
+      WHATSAPP_PAYMENT_PROOF_INGEST_ENABLED: 'false',
+      TELEGRAM_PAYMENT_PROOF_INGEST_ENABLED: 'true',
+      PAYMENT_PROOF_PROCESSING_ENABLED: 'false',
+      PAYMENT_PROOF_SELLER_RECONCILIATION_ENABLED: 'true',
+      PAYMENT_PROOF_PRIVILEGED_REPLAY_ENABLED: 'false',
+      PAYMENT_PROOF_CLEANUP_ENABLED: 'true',
+      PAYMENT_PROOF_RESTORE_ENABLED: 'false',
+      NOTIFICATION_OUTBOX_DISPATCH_ENABLED: 'true',
+      WEB_NOTIFICATION_OUTBOX_DISPATCH_ENABLED: 'false',
+      WHATSAPP_NOTIFICATION_OUTBOX_DISPATCH_ENABLED: 'true',
+      TELEGRAM_NOTIFICATION_OUTBOX_DISPATCH_ENABLED: 'false',
+      SOFIA_INBOUND_BATCH_PROCESSING_ENABLED: 'true',
+      SOFIA_INBOUND_BATCH_RUNTIME_ENABLED: 'false',
+      SOFIA_INBOUND_BATCH_TELEGRAM_ENQUEUE_ENABLED: 'true',
+      SOFIA_INBOUND_BATCH_EVOLUTION_ENQUEUE_ENABLED: 'false',
+      SOFIA_CUSTOMER_MEMORY_ENABLED: 'true',
+    }
+
+    it('promotes candidate web container while preserving heterogeneous current operational gates and never touching scheduler', () => {
+      const harness = setupMockDeployEnvironment({ containerEnv: heterogeneousGates })
+      try {
+        const {
+          sandboxRoot,
+          sandboxDeployScript,
+          sandboxState,
+          commandsLog,
+          containerImageFile,
+          candidateId,
+          candidateRef,
+          env,
+        } = harness
+
+        const opposingAmbientEnv = {
+          ...env,
+          PAYMENT_PROOF_CANONICAL_INGEST_ENABLED: 'false',
+          WHATSAPP_PAYMENT_PROOF_INGEST_ENABLED: 'true',
+          TELEGRAM_PAYMENT_PROOF_INGEST_ENABLED: 'false',
+          PAYMENT_PROOF_PROCESSING_ENABLED: 'true',
+          PAYMENT_PROOF_SELLER_RECONCILIATION_ENABLED: 'false',
+          PAYMENT_PROOF_PRIVILEGED_REPLAY_ENABLED: 'true',
+          PAYMENT_PROOF_CLEANUP_ENABLED: 'false',
+          PAYMENT_PROOF_RESTORE_ENABLED: 'true',
+          NOTIFICATION_OUTBOX_DISPATCH_ENABLED: 'false',
+          WEB_NOTIFICATION_OUTBOX_DISPATCH_ENABLED: 'true',
+          WHATSAPP_NOTIFICATION_OUTBOX_DISPATCH_ENABLED: 'false',
+          TELEGRAM_NOTIFICATION_OUTBOX_DISPATCH_ENABLED: 'true',
+          SOFIA_INBOUND_BATCH_PROCESSING_ENABLED: 'false',
+          SOFIA_INBOUND_BATCH_RUNTIME_ENABLED: 'true',
+          SOFIA_INBOUND_BATCH_TELEGRAM_ENQUEUE_ENABLED: 'false',
+          SOFIA_INBOUND_BATCH_EVOLUTION_ENQUEUE_ENABLED: 'true',
+          SOFIA_CUSTOMER_MEMORY_ENABLED: 'false',
+        }
+
+        const resDeploy = spawnSync('bash', [sandboxDeployScript, 'deploy', '--web-only', candidateRef], {
+          env: opposingAmbientEnv,
+          cwd: sandboxRoot,
+          encoding: 'utf8',
+        })
+
+        expect(resDeploy.status).toBe(0)
+
+        const commandsContent = readFileSync(commandsLog, 'utf8')
+        expect(commandsContent).toContain('--no-deps --force-recreate web')
+        expect(commandsContent).not.toContain('sofia-inbound-batch-maintenance')
+        expect(commandsContent).not.toContain('stop args:')
+
+        for (const [gate, expectedVal] of Object.entries(heterogeneousGates)) {
+          expect(commandsContent).toContain(`${gate}=${expectedVal}`)
+        }
+
+        expect(readFileSync(containerImageFile, 'utf8').trim()).toBe(candidateId)
+
+        const stateFile = join(sandboxState, 'release.env')
+        const stateContent = readFileSync(stateFile, 'utf8')
+        expect(stateContent).toMatch(/DEPLOY_MODE=['"]?web-only['"]?/)
+        for (const [gate, expectedVal] of Object.entries(heterogeneousGates)) {
+          expect(stateContent).toMatch(new RegExp(`PRESERVED_GATE_${gate}=['"]?${expectedVal}['"]?`))
+        }
+      } finally {
+        harness.cleanup()
+      }
+    })
+
+    it('restores recorded previous gates and touches no scheduler on explicit rollback --web-only', () => {
+      const harness = setupMockDeployEnvironment({ containerEnv: heterogeneousGates })
+      try {
+        const {
+          sandboxRoot,
+          sandboxDeployScript,
+          commandsLog,
+          containerImageFile,
+          currentId,
+          candidateRef,
+          env,
+        } = harness
+
+        const resDeploy = spawnSync('bash', [sandboxDeployScript, 'deploy', '--web-only', candidateRef], {
+          env,
+          cwd: sandboxRoot,
+          encoding: 'utf8',
+        })
+        expect(resDeploy.status).toBe(0)
+
+        writeFileSync(commandsLog, '')
+
+        const opposingAmbientEnv = {
+          ...env,
+          PAYMENT_PROOF_CANONICAL_INGEST_ENABLED: 'false',
+          WHATSAPP_PAYMENT_PROOF_INGEST_ENABLED: 'true',
+          NOTIFICATION_OUTBOX_DISPATCH_ENABLED: 'false',
+          WEB_NOTIFICATION_OUTBOX_DISPATCH_ENABLED: 'true',
+        }
+
+        const resRollback = spawnSync('bash', [sandboxDeployScript, 'rollback', '--web-only'], {
+          env: opposingAmbientEnv,
+          cwd: sandboxRoot,
+          encoding: 'utf8',
+        })
+        expect(resRollback.status).toBe(0)
+
+        const commandsContent = readFileSync(commandsLog, 'utf8')
+        expect(commandsContent).toContain('--no-deps --force-recreate web')
+        expect(commandsContent).not.toContain('sofia-inbound-batch-maintenance')
+        expect(commandsContent).not.toContain('stop args:')
+
+        for (const [gate, expectedVal] of Object.entries(heterogeneousGates)) {
+          expect(commandsContent).toContain(`${gate}=${expectedVal}`)
+        }
+
+        expect(readFileSync(containerImageFile, 'utf8').trim()).toBe(currentId)
+      } finally {
+        harness.cleanup()
+      }
+    })
+
+    it('governs plain rollback when DEPLOY_MODE is web-only to prevent legacy scheduler stop and restore gates', () => {
+      const harness = setupMockDeployEnvironment({ containerEnv: heterogeneousGates })
+      try {
+        const {
+          sandboxRoot,
+          sandboxDeployScript,
+          commandsLog,
+          containerImageFile,
+          currentId,
+          candidateRef,
+          env,
+        } = harness
+
+        // First deploy in web-only mode so release.env records DEPLOY_MODE='web-only'
+        const resDeploy = spawnSync('bash', [sandboxDeployScript, 'deploy', '--web-only', candidateRef], {
+          env,
+          cwd: sandboxRoot,
+          encoding: 'utf8',
+        })
+        expect(resDeploy.status).toBe(0)
+
+        writeFileSync(commandsLog, '')
+
+        // Run PLAIN rollback (no --web-only flag passed!)
+        const resPlainRollback = spawnSync('bash', [sandboxDeployScript, 'rollback'], {
+          env,
+          cwd: sandboxRoot,
+          encoding: 'utf8',
+        })
+        expect(resPlainRollback.status).toBe(0)
+
+        const commandsContent = readFileSync(commandsLog, 'utf8')
+        // Stored DEPLOY_MODE must govern: target ONLY web and NEVER stop or recreate scheduler
+        expect(commandsContent).toContain('--no-deps --force-recreate web')
+        expect(commandsContent).not.toContain('sofia-inbound-batch-maintenance')
+        expect(commandsContent).not.toContain('stop args:')
+
+        // Preserved gates must be restored
+        for (const [gate, expectedVal] of Object.entries(heterogeneousGates)) {
+          expect(commandsContent).toContain(`${gate}=${expectedVal}`)
+        }
+
+        expect(readFileSync(containerImageFile, 'utf8').trim()).toBe(currentId)
+      } finally {
+        harness.cleanup()
+      }
+    })
+
+    it('automatically recovers previous image with preserved gates and successful smoke recovery on single promotion failure', () => {
+      const harness = setupMockDeployEnvironment({ containerEnv: heterogeneousGates })
+      try {
+        const {
+          sandboxRoot,
+          sandboxDeployScript,
+          sandboxState,
+          scriptsLog,
+          commandsLog,
+          containerImageFile,
+          currentId,
+          candidateRef,
+          env,
+        } = harness
+
+        const priorStateContent = [
+          'PREVIOUS_REF="asados-web:rollback-3333333333333333333333333333333333333333333333333333333333333333"',
+          'PREVIOUS_ID="sha256:3333333333333333333333333333333333333333333333333333333333333333"',
+          'DEPLOYED_REF="asados-web:prior"',
+          'DEPLOYED_ID="sha256:4444444444444444444444444444444444444444444444444444444444444444"',
+          'RECORDED_AT="2026-10-02T12:00:00Z"',
+        ].join('\n') + '\n'
+        writeFileSync(join(sandboxState, 'release.env'), priorStateContent)
+        // Set fail_smoke_once so promotion fails on candidate, but subsequent recovery smoke passes
+        writeFileSync(join(sandboxState, 'fail_smoke_once'), '1')
+
+        const resDeploy = spawnSync('bash', [sandboxDeployScript, 'deploy', '--web-only', candidateRef], {
+          env,
+          cwd: sandboxRoot,
+          encoding: 'utf8',
+        })
+
+        // Deploy exits non-zero because promotion failed
+        expect(resDeploy.status).not.toBe(0)
+        expect(resDeploy.stderr).toContain('Promotion failed; restoring the retained previous image')
+
+        const scriptsContent = readFileSync(scriptsLog, 'utf8')
+        // Prove single promotion failure and subsequent successful smoke recovery
+        expect(scriptsContent).toContain('smoke forced single failure')
+        expect(scriptsContent).toContain(`smoke expected=${currentId} actual=${currentId}`)
+
+        const commandsContent = readFileSync(commandsLog, 'utf8')
+        expect(commandsContent).not.toContain('sofia-inbound-batch-maintenance')
+        expect(commandsContent).not.toContain('stop args:')
+
+        for (const [gate, expectedVal] of Object.entries(heterogeneousGates)) {
+          expect(commandsContent).toContain(`${gate}=${expectedVal}`)
+        }
+
+        // Image successfully rolled back
+        expect(readFileSync(containerImageFile, 'utf8').trim()).toBe(currentId)
+
+        // Prior release.env preserved, candidate not committed
+        const stateContentAfter = readFileSync(join(sandboxState, 'release.env'), 'utf8')
+        expect(stateContentAfter).toBe(priorStateContent)
+      } finally {
+        harness.cleanup()
+      }
+    })
+
+    it('retains persistent failure when recovery smoke also fails', () => {
+      const harness = setupMockDeployEnvironment({ containerEnv: heterogeneousGates })
+      try {
+        const {
+          sandboxRoot,
+          sandboxDeployScript,
+          sandboxState,
+          commandsLog,
+          containerImageFile,
+          currentId,
+          candidateRef,
+          env,
+        } = harness
+
+        const priorStateContent = [
+          'PREVIOUS_REF="asados-web:rollback-3333333333333333333333333333333333333333333333333333333333333333"',
+          'PREVIOUS_ID="sha256:3333333333333333333333333333333333333333333333333333333333333333"',
+          'DEPLOYED_REF="asados-web:prior"',
+          'DEPLOYED_ID="sha256:4444444444444444444444444444444444444444444444444444444444444444"',
+          'RECORDED_AT="2026-10-02T12:00:00Z"',
+        ].join('\n') + '\n'
+        writeFileSync(join(sandboxState, 'release.env'), priorStateContent)
+        // Persistent smoke failure
+        writeFileSync(join(sandboxState, 'fail_smoke'), '1')
+
+        const resDeploy = spawnSync('bash', [sandboxDeployScript, 'deploy', '--web-only', candidateRef], {
+          env,
+          cwd: sandboxRoot,
+          encoding: 'utf8',
+        })
+
+        expect(resDeploy.status).not.toBe(0)
+        expect(resDeploy.stderr).toContain('Promotion failed; restoring the retained previous image')
+
+        const commandsContent = readFileSync(commandsLog, 'utf8')
+        expect(commandsContent).not.toContain('sofia-inbound-batch-maintenance')
+        expect(commandsContent).not.toContain('stop args:')
+
+        // Image was reverted to currentId despite recovery smoke failure
+        expect(readFileSync(containerImageFile, 'utf8').trim()).toBe(currentId)
+
+        const stateContentAfter = readFileSync(join(sandboxState, 'release.env'), 'utf8')
+        expect(stateContentAfter).toBe(priorStateContent)
+      } finally {
+        harness.cleanup()
+      }
+    })
+
+    it('routes plain rollback to legacy mode when DEPLOY_MODE is standard or unset, stopping scheduler', () => {
+      const harness = setupMockDeployEnvironment()
+      try {
+        const {
+          sandboxRoot,
+          sandboxDeployScript,
+          sandboxState,
+          tagsFile,
+          commandsLog,
+          candidateId,
+          currentId,
+          env,
+        } = harness
+
+        const rollbackTag = `asados-web:rollback-${currentId.replace(/^sha256:/, '')}`
+        appendFileSync(tagsFile, `${rollbackTag}\t${currentId}\n`)
+
+        // Legacy release.env without DEPLOY_MODE (or standard)
+        const legacyState = [
+          `PREVIOUS_REF="${rollbackTag}"`,
+          `PREVIOUS_ID="${currentId}"`,
+          `DEPLOYED_REF="crm-sofia-web:20261002"`,
+          `DEPLOYED_ID="${candidateId}"`,
+          `RECORDED_AT="2026-10-02T12:00:00Z"`,
+          `DEPLOY_MODE='standard'`,
+        ].join('\n') + '\n'
+        writeFileSync(join(sandboxState, 'release.env'), legacyState)
+
+        const resRollback = spawnSync('bash', [sandboxDeployScript, 'rollback'], {
+          env,
+          cwd: sandboxRoot,
+          encoding: 'utf8',
+        })
+
+        expect(resRollback.status).toBe(0)
+        const commandsContent = readFileSync(commandsLog, 'utf8')
+        // Legacy rollback stops the scheduler
+        expect(commandsContent).toContain('stop args: asados-sofia-inbound-batch-maintenance')
+      } finally {
+        harness.cleanup()
+      }
+    })
+
+    it('rejects rollback --web-only when DEPLOY_MODE is standard or unset', () => {
+      const harness = setupMockDeployEnvironment()
+      try {
+        const {
+          sandboxRoot,
+          sandboxDeployScript,
+          sandboxState,
+          tagsFile,
+          commandsLog,
+          candidateId,
+          currentId,
+          env,
+        } = harness
+
+        const rollbackTag = `asados-web:rollback-${currentId.replace(/^sha256:/, '')}`
+        appendFileSync(tagsFile, `${rollbackTag}\t${currentId}\n`)
+
+        const legacyState = [
+          `PREVIOUS_REF="${rollbackTag}"`,
+          `PREVIOUS_ID="${currentId}"`,
+          `DEPLOYED_REF="crm-sofia-web:20261002"`,
+          `DEPLOYED_ID="${candidateId}"`,
+          `RECORDED_AT="2026-10-02T12:00:00Z"`,
+          `DEPLOY_MODE='standard'`,
+        ].join('\n') + '\n'
+        writeFileSync(join(sandboxState, 'release.env'), legacyState)
+
+        const res = spawnSync('bash', [sandboxDeployScript, 'rollback', '--web-only'], {
+          env,
+          cwd: sandboxRoot,
+          encoding: 'utf8',
+        })
+
+        expect(res.status).not.toBe(0)
+        expect(res.stderr).toContain('recorded state is not web-only')
+        expect(readFileSync(commandsLog, 'utf8')).not.toContain('docker compose')
+      } finally {
+        harness.cleanup()
+      }
+    })
+
+    it('rejects rollback when DEPLOY_MODE is unknown or corrupted', () => {
+      const harness = setupMockDeployEnvironment()
+      try {
+        const {
+          sandboxRoot,
+          sandboxDeployScript,
+          sandboxState,
+          tagsFile,
+          commandsLog,
+          candidateId,
+          currentId,
+          env,
+        } = harness
+
+        const rollbackTag = `asados-web:rollback-${currentId.replace(/^sha256:/, '')}`
+        appendFileSync(tagsFile, `${rollbackTag}\t${currentId}\n`)
+
+        const corruptState = [
+          `PREVIOUS_REF="${rollbackTag}"`,
+          `PREVIOUS_ID="${currentId}"`,
+          `DEPLOYED_REF="crm-sofia-web:20261002"`,
+          `DEPLOYED_ID="${candidateId}"`,
+          `RECORDED_AT="2026-10-02T12:00:00Z"`,
+          `DEPLOY_MODE='corrupt_mode'`,
+        ].join('\n') + '\n'
+        writeFileSync(join(sandboxState, 'release.env'), corruptState)
+
+        const res = spawnSync('bash', [sandboxDeployScript, 'rollback'], {
+          env,
+          cwd: sandboxRoot,
+          encoding: 'utf8',
+        })
+
+        expect(res.status).not.toBe(0)
+        expect(res.stderr).toContain('Unknown deploy mode in release state: corrupt_mode')
+        expect(readFileSync(commandsLog, 'utf8')).not.toContain('docker compose')
+      } finally {
+        harness.cleanup()
+      }
+    })
+
+    it('rejects incompatible CLI flags before any docker effects', () => {
+      const harness = setupMockDeployEnvironment()
+      try {
+        const {
+          sandboxRoot,
+          sandboxDeployScript,
+          commandsLog,
+          candidateRef,
+          env,
+        } = harness
+
+        const runCmd = (...args: string[]) => {
+          writeFileSync(commandsLog, '')
+          return spawnSync('bash', [sandboxDeployScript, ...args], {
+            env,
+            cwd: sandboxRoot,
+            encoding: 'utf8',
+          })
+        }
+
+        const resIncompatible1 = runCmd('deploy', '--closed-gates', '--web-only', candidateRef)
+        expect(resIncompatible1.status).toBe(2)
+        expect(resIncompatible1.stderr).toContain('Usage:')
+        expect(readFileSync(commandsLog, 'utf8')).toBe('')
+
+        const resIncompatible2 = runCmd('deploy', '--web-only', '--closed-gates', candidateRef)
+        expect(resIncompatible2.status).toBe(2)
+        expect(resIncompatible2.stderr).toContain('Usage:')
+        expect(readFileSync(commandsLog, 'utf8')).toBe('')
+
+        const resIncompatibleRollback = runCmd('rollback', '--closed-gates')
+        expect(resIncompatibleRollback.status).toBe(2)
+        expect(resIncompatibleRollback.stderr).toContain('Usage:')
+        expect(readFileSync(commandsLog, 'utf8')).toBe('')
+
+        const resExtraRollback = runCmd('rollback', '--web-only', 'extra')
+        expect(resExtraRollback.status).toBe(2)
+        expect(resExtraRollback.stderr).toContain('Usage:')
+        expect(readFileSync(commandsLog, 'utf8')).toBe('')
+      } finally {
+        harness.cleanup()
+      }
+    })
+
+    it('fails closed before web recreation when running container operational gates are malformed, missing, or inspect fails', () => {
+      const malformedGates = {
+        ...DEFAULT_OPERATIONAL_GATES,
+        PAYMENT_PROOF_CANONICAL_INGEST_ENABLED: 'invalid_boolean',
+      }
+      const harnessMalformed = setupMockDeployEnvironment({ containerEnv: malformedGates })
+      try {
+        const res = spawnSync('bash', [harnessMalformed.sandboxDeployScript, 'deploy', '--web-only', harnessMalformed.candidateRef], {
+          env: harnessMalformed.env,
+          cwd: harnessMalformed.sandboxRoot,
+          encoding: 'utf8',
+        })
+        expect(res.status).not.toBe(0)
+        expect(res.stderr).toContain('malformed')
+        const commands = readFileSync(harnessMalformed.commandsLog, 'utf8')
+        expect(commands).not.toContain('docker compose')
+      } finally {
+        harnessMalformed.cleanup()
+      }
+
+      const missingGates = { ...DEFAULT_OPERATIONAL_GATES }
+      delete missingGates.SOFIA_CUSTOMER_MEMORY_ENABLED
+      const harnessMissing = setupMockDeployEnvironment({ containerEnv: missingGates })
+      try {
+        const res = spawnSync('bash', [harnessMissing.sandboxDeployScript, 'deploy', '--web-only', harnessMissing.candidateRef], {
+          env: harnessMissing.env,
+          cwd: harnessMissing.sandboxRoot,
+          encoding: 'utf8',
+        })
+        expect(res.status).not.toBe(0)
+        expect(res.stderr).toContain('absent or unavailable')
+        const commands = readFileSync(harnessMissing.commandsLog, 'utf8')
+        expect(commands).not.toContain('docker compose')
+      } finally {
+        harnessMissing.cleanup()
+      }
+
+      const harnessInspectFail = setupMockDeployEnvironment({ containerEnv: null })
+      try {
+        const res = spawnSync('bash', [harnessInspectFail.sandboxDeployScript, 'deploy', '--web-only', harnessInspectFail.candidateRef], {
+          env: harnessInspectFail.env,
+          cwd: harnessInspectFail.sandboxRoot,
+          encoding: 'utf8',
+        })
+        expect(res.status).not.toBe(0)
+        expect(res.stderr).toContain('Failed to inspect configuration')
+        const commands = readFileSync(harnessInspectFail.commandsLog, 'utf8')
+        expect(commands).not.toContain('docker compose')
+      } finally {
+        harnessInspectFail.cleanup()
+      }
+    })
+
+    it('fails closed on rollback --web-only when release state gates are absent or malformed', () => {
+      const harness = setupMockDeployEnvironment()
+      try {
+        const {
+          sandboxRoot,
+          sandboxDeployScript,
+          sandboxState,
+          tagsFile,
+          commandsLog,
+          candidateId,
+          currentId,
+          env,
+        } = harness
+
+        const rollbackTag = `asados-web:rollback-${currentId.replace(/^sha256:/, '')}`
+        appendFileSync(tagsFile, `${rollbackTag}\t${currentId}\n`)
+
+        const corruptState = [
+          `PREVIOUS_REF="${rollbackTag}"`,
+          `PREVIOUS_ID="${currentId}"`,
+          `DEPLOYED_REF="crm-sofia-web:20261002"`,
+          `DEPLOYED_ID="${candidateId}"`,
+          `RECORDED_AT="2026-10-02T12:00:00Z"`,
+          `DEPLOY_MODE='web-only'`,
+        ].join('\n') + '\n'
+        writeFileSync(join(sandboxState, 'release.env'), corruptState)
+
+        const res = spawnSync('bash', [sandboxDeployScript, 'rollback', '--web-only'], {
+          env,
+          cwd: sandboxRoot,
+          encoding: 'utf8',
+        })
+
+        expect(res.status).not.toBe(0)
+        expect(res.stderr).toMatch(/requires all 17 preserved gates|absent or malformed in release state/)
+        const commands = readFileSync(commandsLog, 'utf8')
+        expect(commands).not.toContain('docker compose')
+      } finally {
+        harness.cleanup()
+      }
+    })
+
+    it('rejects executable tamper in release.env without executing payload, preserving state bytes and zero docker mutations', () => {
+      const harness = setupMockDeployEnvironment()
+      try {
+        const {
+          sandboxRoot,
+          sandboxDeployScript,
+          sandboxState,
+          tagsFile,
+          commandsLog,
+          candidateId,
+          currentId,
+          env,
+        } = harness
+
+        const rollbackTag = `asados-web:rollback-${currentId.replace(/^sha256:/, '')}`
+        appendFileSync(tagsFile, `${rollbackTag}\t${currentId}\n`)
+
+        const marker = join(sandboxState, 'pwned_marker')
+        const maliciousState = [
+          `PREVIOUS_REF="${rollbackTag}"`,
+          `touch "${marker}"`,
+          `PREVIOUS_ID="${currentId}"`,
+          `DEPLOYED_REF="crm-sofia-web:20261002"`,
+          `DEPLOYED_ID="${candidateId}"`,
+          `RECORDED_AT="2026-10-02T12:00:00Z"`,
+        ].join('\n') + '\n'
+
+        const stateFile = join(sandboxState, 'release.env')
+        writeFileSync(stateFile, maliciousState)
+
+        const res = spawnSync('bash', [sandboxDeployScript, 'rollback'], {
+          env,
+          cwd: sandboxRoot,
+          encoding: 'utf8',
+        })
+
+        expect(res.status).not.toBe(0)
+        expect(existsSync(marker)).toBe(false)
+        expect(readFileSync(stateFile, 'utf8')).toBe(maliciousState)
+        expect(readFileSync(commandsLog, 'utf8')).not.toContain('docker compose')
+      } finally {
+        harness.cleanup()
+      }
+    })
+
+    it('rejects duplicate keys in release.env fail-closed before docker mutations', () => {
+      const harness = setupMockDeployEnvironment()
+      try {
+        const {
+          sandboxRoot,
+          sandboxDeployScript,
+          sandboxState,
+          tagsFile,
+          commandsLog,
+          candidateId,
+          currentId,
+          env,
+        } = harness
+
+        const rollbackTag = `asados-web:rollback-${currentId.replace(/^sha256:/, '')}`
+        appendFileSync(tagsFile, `${rollbackTag}\t${currentId}\n`)
+
+        const dupState = [
+          `PREVIOUS_REF="${rollbackTag}"`,
+          `PREVIOUS_REF="${rollbackTag}"`,
+          `PREVIOUS_ID="${currentId}"`,
+          `DEPLOYED_REF="crm-sofia-web:20261002"`,
+          `DEPLOYED_ID="${candidateId}"`,
+          `RECORDED_AT="2026-10-02T12:00:00Z"`,
+        ].join('\n') + '\n'
+
+        const stateFile = join(sandboxState, 'release.env')
+        writeFileSync(stateFile, dupState)
+
+        const res = spawnSync('bash', [sandboxDeployScript, 'rollback'], {
+          env,
+          cwd: sandboxRoot,
+          encoding: 'utf8',
+        })
+
+        expect(res.status).not.toBe(0)
+        expect(res.stderr).toContain('Duplicate key')
+        expect(readFileSync(commandsLog, 'utf8')).not.toContain('docker compose')
+      } finally {
+        harness.cleanup()
+      }
+    })
+
+    it('rejects duplicate allowlisted gates in container inspect even with same value fail-closed before docker mutations', () => {
+      const harness = setupMockDeployEnvironment()
+      try {
+        const {
+          sandboxRoot,
+          sandboxDeployScript,
+          sandboxState,
+          commandsLog,
+          candidateRef,
+          env,
+        } = harness
+
+        // Append duplicate allowlisted gate to container env
+        const envFile = join(sandboxState, 'container_web_env')
+        appendFileSync(envFile, 'PAYMENT_PROOF_CANONICAL_INGEST_ENABLED=false\n')
+
+        const res = spawnSync('bash', [sandboxDeployScript, 'deploy', '--web-only', candidateRef], {
+          env,
+          cwd: sandboxRoot,
+          encoding: 'utf8',
+        })
+
+        expect(res.status).not.toBe(0)
+        expect(res.stderr).toContain('multiple times')
+        expect(readFileSync(commandsLog, 'utf8')).not.toContain('docker compose')
+      } finally {
+        harness.cleanup()
+      }
+    })
+
+    it('proves historical release state without DEPLOY_MODE does not inherit ambient host DEPLOY_MODE or injected gates', () => {
+      const harness = setupMockDeployEnvironment()
+      try {
+        const {
+          sandboxRoot,
+          sandboxDeployScript,
+          sandboxState,
+          tagsFile,
+          commandsLog,
+          candidateId,
+          currentId,
+          env,
+        } = harness
+
+        const rollbackTag = `asados-web:rollback-${currentId.replace(/^sha256:/, '')}`
+        appendFileSync(tagsFile, `${rollbackTag}\t${currentId}\n`)
+
+        // Historical release.env without DEPLOY_MODE
+        const legacyState = [
+          `PREVIOUS_REF="${rollbackTag}"`,
+          `PREVIOUS_ID="${currentId}"`,
+          `DEPLOYED_REF="crm-sofia-web:20261002"`,
+          `DEPLOYED_ID="${candidateId}"`,
+          `RECORDED_AT="2026-10-02T12:00:00Z"`,
+        ].join('\n') + '\n'
+        writeFileSync(join(sandboxState, 'release.env'), legacyState)
+
+        // Run plain rollback with host attempting to inject DEPLOY_MODE and gate variables
+        const ambientHostEnv = {
+          ...env,
+          DEPLOY_MODE: 'web-only',
+          PRESERVED_GATE_PAYMENT_PROOF_CANONICAL_INGEST_ENABLED: 'true',
+        }
+
+        const res = spawnSync('bash', [sandboxDeployScript, 'rollback'], {
+          env: ambientHostEnv,
+          cwd: sandboxRoot,
+          encoding: 'utf8',
+        })
+
+        expect(res.status).toBe(0)
+        const commands = readFileSync(commandsLog, 'utf8')
+        // Legacy rollback must stop the scheduler; ambient DEPLOY_MODE must NOT be inherited
+        expect(commands).toContain('stop args: asados-sofia-inbound-batch-maintenance')
+      } finally {
+        harness.cleanup()
+      }
+    })
+
+    it('preserves release.env byte-identical and mutates no scheduler on explicit rollback smoke failure', () => {
+      const harness = setupMockDeployEnvironment({ containerEnv: heterogeneousGates })
+      try {
+        const {
+          sandboxRoot,
+          sandboxDeployScript,
+          sandboxState,
+          commandsLog,
+          candidateRef,
+          env,
+        } = harness
+
+        // First deploy to create a valid web-only release.env
+        const resDeploy = spawnSync('bash', [sandboxDeployScript, 'deploy', '--web-only', candidateRef], {
+          env,
+          cwd: sandboxRoot,
+          encoding: 'utf8',
+        })
+        expect(resDeploy.status).toBe(0)
+
+        const stateFile = join(sandboxState, 'release.env')
+        const beforeBytes = readFileSync(stateFile, 'utf8')
+
+        writeFileSync(commandsLog, '')
+        // Inject persistent smoke failure for rollback
+        writeFileSync(join(sandboxState, 'fail_smoke'), '1')
+
+        const resRollback = spawnSync('bash', [sandboxDeployScript, 'rollback', '--web-only'], {
+          env,
+          cwd: sandboxRoot,
+          encoding: 'utf8',
+        })
+
+        expect(resRollback.status).not.toBe(0)
+        expect(readFileSync(stateFile, 'utf8')).toBe(beforeBytes)
+
+        const commands = readFileSync(commandsLog, 'utf8')
+        expect(commands).not.toContain('sofia-inbound-batch-maintenance')
+        expect(commands).not.toContain('stop args:')
+      } finally {
+        harness.cleanup()
+      }
+    })
+
+    describe('Schema and format boundary validation', () => {
+      const validBaseLines = [
+        'PREVIOUS_REF="asados-web:rollback-2222222222222222222222222222222222222222222222222222222222222222"',
+        'PREVIOUS_ID="sha256:2222222222222222222222222222222222222222222222222222222222222222"',
+        'DEPLOYED_REF="crm-sofia-web:20261002"',
+        'DEPLOYED_ID="sha256:1111111111111111111111111111111111111111111111111111111111111111"',
+        'RECORDED_AT="2026-10-02T12:00:00Z"',
+      ]
+
+      it.each([
+        ['gates without DEPLOY_MODE', [...validBaseLines, 'PRESERVED_GATE_SOFIA_CUSTOMER_MEMORY_ENABLED="true"'], /preserved gates present without DEPLOY_MODE/],
+        ['standard mode with preserved gate', [...validBaseLines, 'DEPLOY_MODE="standard"', 'PRESERVED_GATE_SOFIA_CUSTOMER_MEMORY_ENABLED="true"'], /preserved gates present in standard deploy mode/],
+        ['web-only mode with partial gates', [...validBaseLines, 'DEPLOY_MODE="web-only"', 'PRESERVED_GATE_SOFIA_CUSTOMER_MEMORY_ENABLED="true"'], /requires all 17 preserved gates/],
+        ['missing PREVIOUS_REF', validBaseLines.filter((l) => !l.startsWith('PREVIOUS_REF=')), /Missing required state field PREVIOUS_REF/],
+        ['missing PREVIOUS_ID', validBaseLines.filter((l) => !l.startsWith('PREVIOUS_ID=')), /Missing required state field PREVIOUS_ID/],
+        ['missing DEPLOYED_REF', validBaseLines.filter((l) => !l.startsWith('DEPLOYED_REF=')), /Missing required state field DEPLOYED_REF/],
+        ['missing DEPLOYED_ID', validBaseLines.filter((l) => !l.startsWith('DEPLOYED_ID=')), /Missing required state field DEPLOYED_ID/],
+        ['missing RECORDED_AT', validBaseLines.filter((l) => !l.startsWith('RECORDED_AT=')), /Missing required state field RECORDED_AT/],
+        ['unknown key', [...validBaseLines, 'UNKNOWN_KEY="tamper"'], /Unknown key UNKNOWN_KEY/],
+        ['malformed option-like ref', ['PREVIOUS_REF="--malicious-flag"', ...validBaseLines.slice(1)], /Invalid image reference/],
+        ['malformed image ID length', [...validBaseLines.slice(0, 3), 'DEPLOYED_ID="sha256:1234"', ...validBaseLines.slice(4)], /Invalid image ID/],
+        ['malformed UTC timestamp', [...validBaseLines.slice(0, 4), 'RECORDED_AT="2026-10-02 12:00:00"'], /Invalid UTC timestamp/],
+        ['malformed gate boolean', [...validBaseLines, 'DEPLOY_MODE="web-only"', 'PRESERVED_GATE_SOFIA_CUSTOMER_MEMORY_ENABLED="maybe"'], /Invalid boolean value/],
+      ])('rejects invalid state schema or format: %s', (_, lines, expectedErr) => {
+        const harness = setupMockDeployEnvironment()
+        try {
+          const { sandboxRoot, sandboxDeployScript, sandboxState, commandsLog, env } = harness
+          writeFileSync(join(sandboxState, 'release.env'), lines.join('\n') + '\n')
+          const res = spawnSync('bash', [sandboxDeployScript, 'rollback'], { env, cwd: sandboxRoot, encoding: 'utf8' })
+          expect(res.status).not.toBe(0)
+          expect(res.stderr).toMatch(expectedErr)
+          expect(readFileSync(commandsLog, 'utf8')).not.toContain('docker compose')
+        } finally {
+          harness.cleanup()
+        }
+      })
+
+      it('rejects command substitution payload in quoted field without executing marker', () => {
+        const harness = setupMockDeployEnvironment()
+        try {
+          const { sandboxRoot, sandboxDeployScript, sandboxState, commandsLog, env } = harness
+          const marker = join(sandboxState, 'exec_marker')
+          const lines = [
+            `PREVIOUS_REF="$(touch ${marker})"`,
+            ...validBaseLines.slice(1),
+          ]
+          writeFileSync(join(sandboxState, 'release.env'), lines.join('\n') + '\n')
+          const res = spawnSync('bash', [sandboxDeployScript, 'rollback'], { env, cwd: sandboxRoot, encoding: 'utf8' })
+          expect(res.status).not.toBe(0)
+          expect(existsSync(marker)).toBe(false)
+          expect(readFileSync(commandsLog, 'utf8')).not.toContain('docker compose')
+        } finally {
+          harness.cleanup()
+        }
+      })
+
+      it('executes plain rollback with modern standard schema using historical writer quotes', () => {
+        const harness = setupMockDeployEnvironment()
+        try {
+          const { sandboxRoot, sandboxDeployScript, sandboxState, tagsFile, commandsLog, currentId, env } = harness
+          const rollbackTag = `asados-web:rollback-${currentId.replace(/^sha256:/, '')}`
+          appendFileSync(tagsFile, `${rollbackTag}\t${currentId}\n`)
+          const lines = [
+            ...validBaseLines,
+            "DEPLOY_MODE='standard'",
+          ]
+          writeFileSync(join(sandboxState, 'release.env'), lines.join('\n') + '\n')
+          const res = spawnSync('bash', [sandboxDeployScript, 'rollback'], { env, cwd: sandboxRoot, encoding: 'utf8' })
+          expect(res.status).toBe(0)
+          expect(readFileSync(commandsLog, 'utf8')).toContain('stop args: asados-sofia-inbound-batch-maintenance')
+        } finally {
+          harness.cleanup()
+        }
+      })
     })
   })
 })
