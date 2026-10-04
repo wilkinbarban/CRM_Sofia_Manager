@@ -1,6 +1,6 @@
 import { describe, expect, it, afterEach } from 'vitest'
 import {
-  mkdtempSync, rmSync, mkdirSync, writeFileSync,
+  mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync,
   symlinkSync, chmodSync, existsSync,
 } from 'node:fs'
 import { join } from 'node:path'
@@ -304,5 +304,271 @@ except ${errClass} as e:
     const ret = runPython(code)
     expect(ret.status).toBe(0)
     expect(ret.stdout.trim()).toBe('FAULT_HANDLED_ZERO_LEAK')
+  })
+})
+
+describe('web-only-bundle-writer Unit 1b-i inert primitives and publication', () => {
+  it.each([
+    ['partial writes', 'mv = memoryview(data); return orig_write(fd, mv[:min(len(mv), 64)])', false],
+    ['zero progress fail-closed', 'calls[0] += 1; return 0 if calls[0] > 1 else orig_write(fd, memoryview(data)[:10])', true],
+  ])('handles %s in write_all fail-closed', (_, writeImpl, expectError) => {
+    const sb = getSandbox()
+    const filePath = join(sb.root, 'write-test.txt')
+    const payload = 'A'.repeat(512)
+    const code = `
+import os, scripts.web_only_bundle_writer as bw
+orig_write = os.write
+calls = [0]
+def injected_write(fd, data):
+    ${writeImpl}
+os.write = injected_write
+fd = os.open("${filePath}", os.O_WRONLY | os.O_CREAT, 0o600)
+try:
+    bw.write_all(fd, "${payload}".encode())
+    print("SUCCESS")
+except OSError as e:
+    assert "zero progress or failed" in str(e)
+    print("ZERO_PROGRESS_ERROR")
+finally:
+    os.close(fd)
+`
+    const ret = runPython(code)
+    expect(ret.status).toBe(0)
+    if (expectError) {
+      expect(ret.stdout.trim()).toBe('ZERO_PROGRESS_ERROR')
+    } else {
+      expect(ret.stdout.trim()).toBe('SUCCESS')
+      expect(readFileSync(filePath, 'utf8')).toBe(payload)
+    }
+  })
+
+  it('pops FD before close attempt and survives sentinel reuse without double close', () => {
+    const sb = getSandbox()
+    const dirPath = join(sb.root, 'reg-dir')
+    mkdirSync(dirPath)
+    const filePath = join(sb.root, 'reg-file.txt')
+    writeFileSync(filePath, 'data')
+    const code = `
+import os, scripts.web_only_bundle_writer as bw
+reg = bw.FDOwnershipRegistry()
+dir_fd = os.open("${dirPath}", os.O_RDONLY | os.O_DIRECTORY)
+file_fd = os.open("${filePath}", os.O_RDONLY)
+reg.register(dir_fd)
+reg.register(file_fd)
+
+orig_close = os.close
+closed_history = []
+def fault_close(fd):
+    closed_history.append(fd)
+    orig_close(fd)
+    if fd == file_fd:
+        raise OSError(5, "simulated file close failure")
+os.close = fault_close
+
+try:
+    reg.close(file_fd)
+except OSError:
+    pass
+
+reused_fd = os.open("${filePath}", os.O_RDONLY)
+assert reused_fd == file_fd, f"expected sentinel reuse {file_fd}, got {reused_fd}"
+reg.safe_close_all()
+assert os.fstat(reused_fd).st_size == 4
+os.close = orig_close
+os.close(reused_fd)
+assert closed_history.count(file_fd) == 1, "double close attempt detected"
+print("SENTINEL_REUSE_OK")
+`
+    const ret = runPython(code)
+    expect(ret.status).toBe(0)
+    expect(ret.stdout.trim()).toBe('SENTINEL_REUSE_OK')
+  })
+
+  it.each([
+    ['KeyboardInterrupt', 'KeyboardInterrupt("ctrl-c")', true],
+    ['SystemExit', 'SystemExit(42)', true],
+    ['OSError', 'OSError(6, "later error")', false],
+  ])('normal close_all drains all FDs with single attempt and prioritizes control-flow: %s', (name, secondErrExpr, isControl) => {
+    const sb = getSandbox()
+    const dirPath = join(sb.root, 'reg-dir')
+    mkdirSync(dirPath)
+    const filePath = join(sb.root, 'reg-file.txt')
+    writeFileSync(filePath, 'data')
+    const code = `
+import os, scripts.web_only_bundle_writer as bw
+reg = bw.FDOwnershipRegistry()
+f1 = os.open("${dirPath}", os.O_RDONLY | os.O_DIRECTORY)
+f2 = os.open("${filePath}", os.O_RDONLY)
+reg.register(f1)
+reg.register(f2)
+
+orig_close = os.close
+hist = []
+err1 = OSError(5, "first error")
+err2 = ${secondErrExpr}
+def multi_close(fd):
+    hist.append(fd)
+    orig_close(fd)
+    if fd == f2:
+        raise err1
+    if fd == f1:
+        raise err2
+os.close = multi_close
+
+try:
+    reg.close_all()
+    print("UNEXPECTED_SUCCESS")
+except BaseException as caught:
+    expected = err2 if ${isControl ? 'True' : 'False'} else err1
+    assert caught is expected, f"expected {expected!r}, got {caught!r}"
+    assert len(reg) == 0, "all FDs must be drained"
+    assert hist.count(f1) == 1 and hist.count(f2) == 1, "single attempt per FD"
+    print("NORMAL_CLOSE_PRIORITY_OK")
+finally:
+    os.close = orig_close
+`
+    const ret = runPython(code)
+    expect(ret.status).toBe(0)
+    expect(ret.stdout.trim()).toBe('NORMAL_CLOSE_PRIORITY_OK')
+  })
+
+  it.each([
+    ['OSError', 'OSError(5, "primary")', 'OSError', 'OSError(6, "secondary")'],
+    ['OSError', 'OSError(5, "primary")', 'KeyboardInterrupt', 'KeyboardInterrupt("secondary")'],
+    ['OSError', 'OSError(5, "primary")', 'SystemExit', 'SystemExit(1)'],
+    ['KeyboardInterrupt', 'KeyboardInterrupt("primary")', 'OSError', 'OSError(6, "secondary")'],
+    ['KeyboardInterrupt', 'KeyboardInterrupt("primary")', 'KeyboardInterrupt', 'KeyboardInterrupt("secondary")'],
+    ['KeyboardInterrupt', 'KeyboardInterrupt("primary")', 'SystemExit', 'SystemExit(1)'],
+    ['SystemExit', 'SystemExit(2)', 'OSError', 'OSError(6, "secondary")'],
+    ['SystemExit', 'SystemExit(2)', 'KeyboardInterrupt', 'KeyboardInterrupt("secondary")'],
+    ['SystemExit', 'SystemExit(2)', 'SystemExit', 'SystemExit(1)'],
+  ])('explicit cleanup preserves primary %s over secondary %s and drains all FDs', (_pName, pExpr, _sName, sExpr) => {
+    const sb = getSandbox()
+    const dirPath = join(sb.root, 'reg-dir')
+    mkdirSync(dirPath)
+    const filePath = join(sb.root, 'reg-file.txt')
+    writeFileSync(filePath, 'data')
+    const code = `
+import os, scripts.web_only_bundle_writer as bw
+reg = bw.FDOwnershipRegistry()
+f1 = os.open("${dirPath}", os.O_RDONLY | os.O_DIRECTORY)
+f2 = os.open("${filePath}", os.O_RDONLY)
+reg.register(f1)
+reg.register(f2)
+
+orig_close = os.close
+hist = []
+primary = ${pExpr}
+secondary = ${sExpr}
+def fault_close(fd):
+    hist.append(fd)
+    orig_close(fd)
+    raise secondary
+os.close = fault_close
+
+try:
+    try:
+        raise primary
+    except BaseException as active_err:
+        reg.safe_close_all(primary_err=active_err)
+        raise active_err
+except BaseException as caught:
+    assert caught is primary, f"expected {primary!r}, got {caught!r}"
+    assert len(reg) == 0, "all FDs must be drained"
+    assert hist.count(f1) == 1 and hist.count(f2) == 1, "single attempt per FD"
+    print("EXPLICIT_CLEANUP_OK")
+finally:
+    os.close = orig_close
+`
+    const ret = runPython(code)
+    expect(ret.status).toBe(0)
+    expect(ret.stdout.trim()).toBe('EXPLICIT_CLEANUP_OK')
+  })
+
+  it.each([
+    ['KeyboardInterrupt', 'KeyboardInterrupt("interrupt")', true],
+    ['SystemExit', 'SystemExit(3)', true],
+    ['OSError', 'OSError(5, "io error")', false],
+  ])('standalone cleanup propagates control-flow and suppresses ordinary: %s', (_, errExpr, isControl) => {
+    const sb = getSandbox()
+    const filePath = join(sb.root, 'reg-file.txt')
+    writeFileSync(filePath, 'data')
+    const code = `
+import os, scripts.web_only_bundle_writer as bw
+orig_close = os.close
+err = ${errExpr}
+def fault_close(fd):
+    orig_close(fd)
+    raise err
+os.close = fault_close
+
+f1 = os.open("${filePath}", os.O_RDONLY)
+f1_propagated = False
+try:
+    bw.safe_close_cleanup(f1)
+except BaseException as caught:
+    assert caught is err
+    f1_propagated = True
+
+reg = bw.FDOwnershipRegistry()
+f2 = os.open("${filePath}", os.O_RDONLY)
+reg.register(f2)
+reg_propagated = False
+try:
+    reg.safe_close_all()
+except BaseException as caught:
+    assert caught is err
+    reg_propagated = True
+
+os.close = orig_close
+assert f1_propagated == ${isControl ? 'True' : 'False'}, f"safe_close_cleanup propagation mismatch: {f1_propagated}"
+assert reg_propagated is True, f"safe_close_all ordinary semantics mismatch: {reg_propagated}"
+print("STANDALONE_CLEANUP_OK")
+`
+    const ret = runPython(code)
+    expect(ret.status).toBe(0)
+    expect(ret.stdout.trim()).toBe('STANDALONE_CLEANUP_OK')
+  })
+
+  it('unlinks only verified matching devino and preserves foreign files and symlinks', () => {
+    const sb = getSandbox()
+    const targetFile = join(sb.root, 'target.txt')
+    writeFileSync(targetFile, 'target')
+    const foreignFile = join(sb.root, 'foreign.txt')
+    writeFileSync(foreignFile, 'foreign')
+    const symlinkFile = join(sb.root, 'sym.txt')
+    symlinkSync(targetFile, symlinkFile)
+    const code = `
+import os, scripts.web_only_bundle_writer as bw
+dir_fd = os.open("${sb.root}", os.O_RDONLY | os.O_DIRECTORY)
+st_t = os.stat("target.txt", dir_fd=dir_fd, follow_symlinks=False)
+st_f = os.stat("foreign.txt", dir_fd=dir_fd, follow_symlinks=False)
+
+# None dev/ino identity preserves target
+assert bw.safe_unlink_devino(dir_fd, "target.txt", None, None) is False
+
+# Nonexistent file returns False
+assert bw.safe_unlink_devino(dir_fd, "nonexistent.txt", st_t.st_dev, st_t.st_ino) is False
+
+# Mismatch preserves foreign file
+res_foreign = bw.safe_unlink_devino(dir_fd, "foreign.txt", st_t.st_dev, st_t.st_ino)
+assert res_foreign is False
+assert os.path.exists("${foreignFile}")
+
+# Symlink is never unlinked even if devino matched target
+res_sym = bw.safe_unlink_devino(dir_fd, "sym.txt", st_t.st_dev, st_t.st_ino)
+assert res_sym is False
+assert os.path.islink("${symlinkFile}")
+
+# Matching identity unlinks own file
+res_own = bw.safe_unlink_devino(dir_fd, "target.txt", st_t.st_dev, st_t.st_ino)
+assert res_own is True
+assert not os.path.exists("${targetFile}")
+os.close(dir_fd)
+print("SAFE_UNLINK_PRESERVES_FOREIGN")
+`
+    const ret = runPython(code)
+    expect(ret.status).toBe(0)
+    expect(ret.stdout.trim()).toBe('SAFE_UNLINK_PRESERVES_FOREIGN')
   })
 })
