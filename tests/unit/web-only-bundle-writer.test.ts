@@ -119,25 +119,38 @@ print("STICKY_ANCESTOR_PERMITTED")
     expect(ret.stdout.trim()).toBe('STICKY_ANCESTOR_PERMITTED')
   })
 
-  it('fails closed and propagates OSError when close fails during walk component transition', () => {
+  it.each([
+    ['OSError', 'OSError(5, "simulated transition close failure")', 'OSError', 'simulated transition close failure'],
+    ['KeyboardInterrupt', 'KeyboardInterrupt("simulated transition interrupt")', 'KeyboardInterrupt', 'simulated transition interrupt'],
+    ['SystemExit', 'SystemExit(1)', 'SystemExit', '1'],
+  ])('fails closed and propagates %s when close fails during walk component transition', (_, errExpr, errClass, errSubstr) => {
     const sb = getSandbox()
     const target = join(sb.root, 'trans-fail-bundle')
     const code = `
 import os
 from scripts.web_only_bundle_writer import validate_bundle_target
+def count_fds():
+    return len(os.listdir("/proc/self/fd"))
 orig_close = os.close
 calls = [0]
+closed_fds = []
 def failing_close(fd):
     calls[0] += 1
     orig_close(fd)
+    closed_fds.append(fd)
     if calls[0] == 1:
-        raise OSError(5, "simulated transition close failure")
+        raise ${errExpr}
 os.close = failing_close
+before = count_fds()
 try:
     validate_bundle_target("${target}")
     print("FAILED_RETURNED_SUCCESS")
-except OSError as e:
-    assert "simulated transition close failure" in str(e)
+except ${errClass} as e:
+    assert type(e).__name__ == "${errClass}"
+    assert "${errSubstr}" in str(e)
+    after = count_fds()
+    assert before == after, f"FD leak detected: before={before}, after={after}"
+    assert len(closed_fds) == len(set(closed_fds)), "duplicate close fd attempts"
     print("TRANSITION_CLOSE_ERROR_PROPAGATED")
 `
     const ret = runPython(code)
@@ -228,6 +241,20 @@ os.fstat = fault_fstat
 `,
       'OSError',
       'simulated fstat EIO',
+    ],
+    [
+      'fstat KeyboardInterrupt during component walk',
+      `
+orig_fstat = os.fstat
+def fault_fstat(fd):
+    st = orig_fstat(fd)
+    if fd > 2:
+        raise KeyboardInterrupt("simulated fstat interrupt")
+    return st
+os.fstat = fault_fstat
+`,
+      'KeyboardInterrupt',
+      'simulated fstat interrupt',
     ],
     [
       'final stat PermissionError',

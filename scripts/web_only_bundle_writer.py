@@ -54,7 +54,7 @@ def validate_bundle_target(bundle_dir: str) -> tuple[int, str]:
             # Mandatory transition: close cur_fd safely; if close fails, fail-closed and close next_fd
             try:
                 os.close(cur_fd)
-            except Exception as close_err:
+            except BaseException as close_err:
                 safe_close_cleanup(next_fd)
                 cur_fd = -1
                 raise close_err
@@ -85,6 +85,6 @@ def validate_bundle_target(bundle_dir: str) -> tuple[int, str]:
         parent_fd = cur_fd
         cur_fd = -1
         return parent_fd, base_name
-    except Exception:
+    except BaseException:
         safe_close_cleanup(cur_fd)
         raise
