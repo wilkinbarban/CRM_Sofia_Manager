@@ -1,11 +1,17 @@
 #!/usr/bin/env python3
 """Web-only operational target preflight helper. Inert daemon/binding validation."""
 import argparse
+import copy
 import json
 import os
 import re
 import subprocess
 import sys
+
+_scripts_dir = os.path.dirname(os.path.realpath(__file__))
+if _scripts_dir not in sys.path:
+    sys.path.insert(0, _scripts_dir)
+import web_only_bundle_writer as bw
 
 DEFAULT_DOCKER_HOST = "unix:///var/run/docker.sock"
 HEX_64_PATTERN = re.compile(r"^[0-9a-fA-F]{64}$")
@@ -34,6 +40,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--generate", action="store_true")
     parser.add_argument("--activate", action="store_true")
     parser.add_argument("--action", default="validate")
+    parser.add_argument("--bundle-dir", default=None)
     args = parser.parse_args()
     if getattr(args, "help", False):
         emit_error("invalid command arguments", code=2)
@@ -229,9 +236,11 @@ def validate_ports_and_mounts(c: dict, web_cfg: dict) -> None:
     vols = web_cfg.get("volumes")
     if "volumes" in web_cfg and (not isinstance(vols, list) or len(vols) != 0):
         emit_error("unexpected compose volumes")
+    if web_cfg.get("depends_on"):
+        emit_error("unexpected compose web service dependencies")
 
 
-def validate_networks(endpoint: str, c: dict, compose_doc: dict, project: str) -> list[str]:
+def validate_networks(endpoint: str, c: dict, compose_doc: dict, project: str) -> tuple[list[str], dict[str, dict]]:
     web_cfg = compose_doc["services"]["web"]
     if "networks" in compose_doc:
         top_nets = compose_doc["networks"]
@@ -298,16 +307,31 @@ def validate_networks(endpoint: str, c: dict, compose_doc: dict, project: str) -
             emit_error("network inspect metadata mismatch")
         if not exp["external"] and (not isinstance(n_info.get("Labels"), dict) or n_info["Labels"].get("com.docker.compose.project") != project):
             emit_error("network project ownership mismatch")
-    return list(expected_nets.keys())
+    return list(expected_nets.keys()), expected_nets
+
+
+def build_effective_compose(web_base: dict, image_id: str, net_info: dict[str, dict]) -> dict:
+    web_svc = copy.deepcopy(web_base)
+    web_svc.pop("build", None)
+    web_svc.pop("depends_on", None)
+    web_svc["image"] = image_id
+    web_svc["networks"] = {
+        r_name: ({"aliases": list(info["aliases"])} if info.get("aliases") else {})
+        for r_name, info in net_info.items()
+    }
+    return {
+        "services": {"web": web_svc},
+        "networks": {r_name: {"name": r_name, "external": True} for r_name in net_info},
+    }
 
 
 def inspect_and_validate_resources(
     endpoint: str, c: dict, cand_img: str, project: str, canonical_root: str, canonical_config: str,
-) -> dict:
+) -> tuple[dict, dict, dict]:
     cand_image_id = inspect_candidate_image(endpoint, cand_img)
     compose_doc = render_compose_config(endpoint, canonical_root, canonical_config, project)
     validate_ports_and_mounts(c, compose_doc["services"]["web"])
-    nets = validate_networks(endpoint, c, compose_doc, project)
+    nets, net_info = validate_networks(endpoint, c, compose_doc, project)
     return {
         "status": "ok",
         "action": "inspect-resources",
@@ -321,28 +345,67 @@ def inspect_and_validate_resources(
         "networks": nets,
         "mounts": [],
         "endpoint": endpoint,
-    }
+    }, compose_doc, net_info
 
 
 def main() -> None:
     """Entry point for web-only operational target preflight validation."""
     try:
         args = parse_args()
-        if args.generate or args.activate or args.action not in ("validate", "inspect-resources"):
+        if args.generate or args.activate or args.action not in ("validate", "inspect-resources", "generate-effective"):
             emit_error("resource validation and generation deferred to S3; activation is unsupported", code=2)
-        if args.action == "inspect-resources" and (not args.candidate_image or not args.candidate_image.strip()):
-            emit_error("candidate image locator required for inspect-resources", code=2)
         if args.service != "web":
             emit_error("only web service preflight supported in S2", code=2)
+        if args.action in ("inspect-resources", "generate-effective") and (not args.candidate_image or not args.candidate_image.strip()):
+            emit_error(f"candidate image locator required for {args.action}", code=2)
+        if args.action == "generate-effective" and (not args.bundle_dir or not args.bundle_dir.strip()):
+            emit_error("bundle directory required for generate-effective", code=2)
+        if args.action in ("validate", "inspect-resources") and args.bundle_dir is not None:
+            emit_error("extraneous bundle-dir on readonly action", code=2)
         endpoint = validate_environment(args.docker_host)
         canonical_root, canonical_config = validate_operational_root(args.root)
         target = resolve_container_id(endpoint, args.project, args.service, args.container)
         metadata, container_data = inspect_and_validate_target(endpoint, target, args.project, args.service, canonical_root, canonical_config)
         if args.action == "inspect-resources":
-            metadata = inspect_and_validate_resources(endpoint, container_data, args.candidate_image, args.project, canonical_root, canonical_config)
+            metadata, _, _ = inspect_and_validate_resources(endpoint, container_data, args.candidate_image, args.project, canonical_root, canonical_config)
+        elif args.action == "generate-effective":
+            metadata, compose_doc, net_info = inspect_and_validate_resources(endpoint, container_data, args.candidate_image, args.project, canonical_root, canonical_config)
+            cand_doc = build_effective_compose(compose_doc["services"]["web"], metadata["candidate_image_id"], net_info)
+            roll_doc = build_effective_compose(compose_doc["services"]["web"], metadata["current_image_id"], net_info)
+            cand_bytes = (json.dumps(cand_doc, indent=2) + "\n").encode("utf-8")
+            roll_bytes = (json.dumps(roll_doc, indent=2) + "\n").encode("utf-8")
+            manifest_meta = {
+                "project": metadata["project"], "service": metadata["service"],
+                "container_id": metadata["container_id"], "container_name": metadata["container_name"],
+                "candidate_image_id": metadata["candidate_image_id"], "current_image_id": metadata["current_image_id"],
+                "ports": metadata["ports"], "networks": metadata["networks"],
+            }
+            try:
+                res = bw.write_effective_bundle(args.bundle_dir, cand_bytes, roll_bytes, manifest_metadata=manifest_meta)
+            except (KeyboardInterrupt, SystemExit):
+                raise
+            except Exception:
+                emit_error("bundle generation failed")
+            metadata = {
+                "status": "ok", "action": "generate-effective",
+                "bundle_dir": res["bundle_dir"],
+                "candidate_compose_path": res["candidate_compose_path"],
+                "rollback_compose_path": res["rollback_compose_path"],
+                "manifest_path": res["manifest_path"],
+                "candidate_compose_sha256": res["candidate_compose_sha256"],
+                "rollback_compose_sha256": res["rollback_compose_sha256"],
+                "manifest_sha256": res["manifest_sha256"],
+                "container_id": metadata["container_id"], "container_name": metadata["container_name"],
+                "candidate_image_id": metadata["candidate_image_id"], "current_image_id": metadata["current_image_id"],
+                "project": metadata["project"], "service": metadata["service"],
+                "ports": metadata["ports"], "networks": metadata["networks"],
+                "mounts": metadata["mounts"], "endpoint": metadata["endpoint"],
+            }
         print(json.dumps(metadata, indent=2))
         sys.exit(0)
     except SystemExit:
+        raise
+    except (KeyboardInterrupt, SystemExit):
         raise
     except Exception:
         emit_error("operational preflight failed")
