@@ -1,5 +1,6 @@
 """Generic secure private bundle validator and writer module."""
 import hashlib
+import json
 import os
 import stat
 
@@ -317,3 +318,128 @@ def validate_bundle_target(bundle_dir: str) -> tuple[int, str]:
     except BaseException as err:
         safe_close_cleanup(cur_fd, primary_err=err)
         raise
+
+
+def write_effective_bundle(
+    bundle_dir: str, candidate_content: bytes, rollback_content: bytes, manifest_metadata: dict | None = None,
+) -> dict[str, str]:
+    """Create private 0700 bundle directory with 0600 payloads and atomic manifest.
+
+    Honest limits:
+    - readonly manifest presence check and stat+unlink are not atomic against same-UID concurrency.
+    - crash durability mid-run has no fsync guarantee across filesystem boundaries.
+    - private owner trust boundary; no readiness proof by unchecked path.
+    - foreign replacement directory and unknown files are preserved fail-closed without blind sweep.
+    """
+    registry = FDOwnershipRegistry()
+    parent_fd, bundle_fd = -1, -1
+    dir_created = False
+    dir_identity: tuple[int, int] | None = None
+    candidate_id: tuple[int, int] | None = None
+    rollback_id: tuple[int, int] | None = None
+    manifest_tmp_id: tuple[int, int] | None = None
+
+    try:
+        parent_fd, base_name = validate_bundle_target(bundle_dir)
+        registry.register(parent_fd)
+
+        os.mkdir(base_name, 0o700, dir_fd=parent_fd)
+        dir_created = True
+
+        st_created = os.stat(base_name, dir_fd=parent_fd, follow_symlinks=False)
+        if (
+            not stat.S_ISDIR(st_created.st_mode) or stat.S_ISLNK(st_created.st_mode)
+            or st_created.st_uid != os.geteuid() or (st_created.st_mode & 0o777) != 0o700
+        ):
+            raise PermissionError("created bundle directory mode, owner, or type mismatch")
+        dir_identity = (st_created.st_dev, st_created.st_ino)
+
+        bundle_fd = os.open(base_name, os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0), dir_fd=parent_fd)
+        registry.register(bundle_fd)
+
+        st_b = os.fstat(bundle_fd)
+        st_check = os.stat(base_name, dir_fd=parent_fd, follow_symlinks=False)
+        if (
+            (st_b.st_dev, st_b.st_ino) != dir_identity or (st_check.st_dev, st_check.st_ino) != dir_identity
+            or st_b.st_uid != os.geteuid() or not stat.S_ISDIR(st_b.st_mode) or (st_b.st_mode & 0o777) != 0o700
+        ):
+            raise PermissionError("bundle directory identity or mode mismatch")
+
+        c_dev, c_ino, cand_sha = write_private_entry(bundle_fd, "candidate-compose.json", candidate_content, registry=registry)
+        candidate_id = (c_dev, c_ino)
+
+        r_dev, r_ino, roll_sha = write_private_entry(bundle_fd, "rollback-compose.json", rollback_content, registry=registry)
+        rollback_id = (r_dev, r_ino)
+
+        reserved = {
+            "schema_version", "candidate_compose_file", "candidate_compose_sha256",
+            "rollback_compose_file", "rollback_compose_sha256",
+        }
+        filtered_metadata = {k: v for k, v in (manifest_metadata or {}).items() if k not in reserved}
+        manifest_doc = {
+            "schema_version": "1.0",
+            **filtered_metadata,
+            "candidate_compose_file": "candidate-compose.json",
+            "candidate_compose_sha256": cand_sha,
+            "rollback_compose_file": "rollback-compose.json",
+            "rollback_compose_sha256": roll_sha,
+        }
+        manifest_bytes = (json.dumps(manifest_doc, indent=2) + "\n").encode("utf-8")
+        manifest_sha = hashlib.sha256(manifest_bytes).hexdigest()
+
+        tmp_dev, tmp_ino, _ = write_private_entry(bundle_fd, ".manifest.json.tmp", manifest_bytes, registry=registry)
+        manifest_tmp_id = (tmp_dev, tmp_ino)
+
+        strict_link_manifest(bundle_fd, ".manifest.json.tmp", "manifest.json", manifest_tmp_id)
+        manifest_tmp_id = None
+
+        registry.close_all()
+    except BaseException as primary_err:
+        if manifest_tmp_id is not None and bundle_fd >= 0:
+            try:
+                safe_unlink_devino(bundle_fd, ".manifest.json.tmp", manifest_tmp_id[0], manifest_tmp_id[1])
+            except BaseException:
+                pass
+
+        manifest_proven_absent = False
+        if bundle_fd >= 0:
+            try:
+                os.stat("manifest.json", dir_fd=bundle_fd, follow_symlinks=False)
+            except FileNotFoundError:
+                manifest_proven_absent = True
+            except OSError:
+                pass
+
+        if manifest_proven_absent:
+            for fname, fident in (("candidate-compose.json", candidate_id), ("rollback-compose.json", rollback_id)):
+                if fident is not None:
+                    try:
+                        safe_unlink_devino(bundle_fd, fname, fident[0], fident[1])
+                    except BaseException:
+                        pass
+
+        if dir_created and dir_identity is not None and (manifest_proven_absent or bundle_fd < 0):
+            try:
+                cur_b = os.stat(base_name, dir_fd=parent_fd, follow_symlinks=False)
+                if (
+                    stat.S_ISDIR(cur_b.st_mode) and not stat.S_ISLNK(cur_b.st_mode)
+                    and (cur_b.st_dev, cur_b.st_ino) == dir_identity
+                    and cur_b.st_uid == os.geteuid() and (cur_b.st_mode & 0o777) == 0o700
+                ):
+                    os.rmdir(base_name, dir_fd=parent_fd)
+            except BaseException:
+                pass
+
+        registry.safe_close_all(primary_err=primary_err)
+        raise
+
+    return {
+        "status": "ok",
+        "bundle_dir": os.path.realpath(bundle_dir),
+        "candidate_compose_path": os.path.join(bundle_dir, "candidate-compose.json"),
+        "rollback_compose_path": os.path.join(bundle_dir, "rollback-compose.json"),
+        "manifest_path": os.path.join(bundle_dir, "manifest.json"),
+        "candidate_compose_sha256": cand_sha,
+        "rollback_compose_sha256": roll_sha,
+        "manifest_sha256": manifest_sha,
+    }

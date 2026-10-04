@@ -1168,3 +1168,249 @@ bw.strict_link_manifest(${dfdExpr}, ${JSON.stringify(tmpN)}, ${JSON.stringify(fi
   })
 })
 
+describe('web-only-bundle-writer Unit 1b-iii write_effective_bundle', () => {
+  it('creates 0700 bundle with 0600 entries, filtered metadata, and returns SHA map', () => {
+    const sb = getSandbox(), target = join(sb.root, 'success-bundle')
+    const ret = runPython(`import json, os, scripts.web_only_bundle_writer as bw
+meta = {"app": "sofia", "schema_version": "OVERWRITE", "candidate_compose_file": "OVERWRITE"}
+res = bw.write_effective_bundle("${target}", b'{"cand": 1}', b'{"roll": 2}', manifest_metadata=meta)
+assert res["status"] == "ok"
+assert os.path.exists(res["candidate_compose_path"])
+assert (os.stat("${target}").st_mode & 0o777) == 0o700
+assert (os.stat(res["candidate_compose_path"]).st_mode & 0o777) == 0o600
+with open(res["manifest_path"]) as f: m = json.load(f)
+assert m["schema_version"] == "1.0" and m["candidate_compose_file"] == "candidate-compose.json" and m["app"] == "sofia"
+print("SUCCESS_VERIFIED")`)
+    expect(ret.status).toBe(0)
+    expect(ret.stdout.trim()).toBe('SUCCESS_VERIFIED')
+  })
+
+  it('preserves foreign target on collision without leaking file descriptors', () => {
+    const sb = getSandbox(), target = join(sb.root, 'existing-dir')
+    mkdirSync(target, 0o700); writeFileSync(join(target, 'foreign.txt'), 'preserve me')
+    const ret = runPython(`import scripts.web_only_bundle_writer as bw
+try:
+    bw.write_effective_bundle("${target}", b'c', b'r')
+    print("UNEXPECTED")
+except FileExistsError:
+    print("COLLISION_PRESERVED")`)
+    expect(ret.status).toBe(0)
+    expect(ret.stdout.trim()).toBe('COLLISION_PRESERVED')
+    expect(existsSync(join(target, 'foreign.txt'))).toBe(true)
+  })
+
+  it('removes owned empty directory when bundle open fails post-mkdir', () => {
+    const sb = getSandbox(), target = join(sb.root, 'open-fail')
+    const ret = runPython(`import os, scripts.web_only_bundle_writer as bw
+orig_open = os.open
+def fault_open(path, *args, **kwargs):
+    if path == "open-fail": raise PermissionError("bundle open denied")
+    return orig_open(path, *args, **kwargs)
+os.open = fault_open
+try:
+    bw.write_effective_bundle("${target}", b'c', b'r')
+    print("UNEXPECTED")
+except PermissionError as e:
+    assert "bundle open denied" in str(e)
+    print("POST_MKDIR_REMOVED")
+finally:
+    os.open = orig_open`)
+    expect(ret.status).toBe(0)
+    expect(ret.stdout.trim()).toBe('POST_MKDIR_REMOVED')
+    expect(existsSync(target)).toBe(false)
+  })
+
+  it.each([
+    ['OSError payload write failure', 'raise OSError(28, "disk full")', 'OSError', 'disk full'],
+    ['KeyboardInterrupt interruption', 'raise KeyboardInterrupt("aborted")', 'KeyboardInterrupt', 'aborted'],
+  ])('preserves primary error on %s and cleans up payloads when manifest absent', (_, faultCode, errType, errSub) => {
+    const sb = getSandbox(), target = join(sb.root, 'fail-payload')
+    const ret = runPython(`import scripts.web_only_bundle_writer as bw
+orig_write = bw.write_all
+def fault_write(fd, data):
+    if b'roll-data' in data: ${faultCode}
+    return orig_write(fd, data)
+bw.write_all = fault_write
+try:
+    bw.write_effective_bundle("${target}", b'cand-data', b'roll-data')
+    print("UNEXPECTED")
+except ${errType} as e:
+    assert "${errSub}" in str(e)
+    print("PRIMARY_PRESERVED")
+finally:
+    bw.write_all = orig_write`)
+    expect(ret.status).toBe(0)
+    expect(ret.stdout.trim()).toBe('PRIMARY_PRESERVED')
+    expect(existsSync(target)).toBe(false)
+  })
+
+  it('preserves foreign manifest and payloads on collision during publication', () => {
+    const sb = getSandbox(), target = join(sb.root, 'foreign-col')
+    const ret = runPython(`import os, scripts.web_only_bundle_writer as bw
+orig_write = bw.write_private_entry
+def inject_foreign(dir_fd, name, data, registry=None):
+    if name == ".manifest.json.tmp":
+        with open(os.path.join("${target}", "manifest.json"), "w") as f: f.write("foreign manifest")
+    return orig_write(dir_fd, name, data, registry=registry)
+bw.write_private_entry = inject_foreign
+try:
+    bw.write_effective_bundle("${target}", b'c-data', b'r-data')
+    print("UNEXPECTED")
+except FileExistsError:
+    print("FOREIGN_MANIFEST_COLLISION")
+finally:
+    bw.write_private_entry = orig_write`)
+    expect(ret.status).toBe(0)
+    expect(ret.stdout.trim()).toBe('FOREIGN_MANIFEST_COLLISION')
+    expect(existsSync(join(target, 'manifest.json'))).toBe(true)
+    expect(readFileSync(join(target, 'manifest.json'), 'utf8')).toBe('foreign manifest')
+    expect(existsSync(join(target, 'candidate-compose.json'))).toBe(true)
+    expect(existsSync(join(target, 'rollback-compose.json'))).toBe(true)
+  })
+
+  it('retains payloads as not-ready orphan on persistent unknown stat error', () => {
+    const sb = getSandbox(), target = join(sb.root, 'poststat-err')
+    const ret = runPython(`import os, scripts.web_only_bundle_writer as bw
+orig_stat = os.stat
+def fault_stat(path, *args, **kwargs):
+    if path == "manifest.json": raise OSError(5, "persistent poststat error")
+    return orig_stat(path, *args, **kwargs)
+orig_write = bw.write_all
+def fault_write(fd, data):
+    if b'roll-data' in data: raise OSError(28, "write fail")
+    return orig_write(fd, data)
+bw.write_all = fault_write
+os.stat = fault_stat
+try:
+    bw.write_effective_bundle("${target}", b'cand-data', b'roll-data')
+    print("UNEXPECTED")
+except OSError as e:
+    assert "write fail" in str(e)
+    print("PAYLOADS_RETAINED_ON_UNKNOWN_STAT")
+finally:
+    os.stat = orig_stat
+    bw.write_all = orig_write`)
+    expect(ret.status).toBe(0)
+    expect(ret.stdout.trim()).toBe('PAYLOADS_RETAINED_ON_UNKNOWN_STAT')
+    expect(existsSync(join(target, 'candidate-compose.json'))).toBe(true)
+  })
+
+  it('permits payload cleanup when link compensation proves manifest absence', () => {
+    const sb = getSandbox(), target = join(sb.root, 'link-comp-clean')
+    const ret = runPython(`import os, scripts.web_only_bundle_writer as bw
+orig_link = bw.strict_link_manifest
+def fault_link(dir_fd, tmp_name, final_name, expected_identity):
+    orig_link(dir_fd, tmp_name, final_name, expected_identity)
+    os.unlink(os.path.join("${target}", final_name))
+    raise PermissionError("compensated link failure")
+bw.strict_link_manifest = fault_link
+try:
+    bw.write_effective_bundle("${target}", b'c', b'r')
+    print("UNEXPECTED")
+except PermissionError as e:
+    assert "compensated link failure" in str(e)
+    print("COMPENSATION_CLEANUP_SUCCESS")
+finally:
+    bw.strict_link_manifest = orig_link`)
+    expect(ret.status).toBe(0)
+    expect(ret.stdout.trim()).toBe('COMPENSATION_CLEANUP_SUCCESS')
+    expect(existsSync(target)).toBe(false)
+  })
+
+  it('propagates close failure post-publication while preserving valid payloads and manifest', () => {
+    const sb = getSandbox(), target = join(sb.root, 'close-fail')
+    const ret = runPython(`import os, scripts.web_only_bundle_writer as bw
+orig_close_all = bw.FDOwnershipRegistry.close_all
+def fault_close_all(self):
+    raise OSError(5, "post-pub close error")
+bw.FDOwnershipRegistry.close_all = fault_close_all
+try:
+    bw.write_effective_bundle("${target}", b'c-ok', b'r-ok')
+    print("UNEXPECTED")
+except OSError as e:
+    assert "post-pub close error" in str(e)
+    print("POST_PUB_CLOSE_ERR_PAYLOADS_PRESERVED")
+finally:
+    bw.FDOwnershipRegistry.close_all = orig_close_all`)
+    expect(ret.status).toBe(0)
+    expect(ret.stdout.trim()).toBe('POST_PUB_CLOSE_ERR_PAYLOADS_PRESERVED')
+    expect(existsSync(join(target, 'manifest.json'))).toBe(true)
+    expect(existsSync(join(target, 'candidate-compose.json'))).toBe(true)
+    expect(existsSync(join(target, 'rollback-compose.json'))).toBe(true)
+  })
+
+  it('preserves primary error when secondary close fails during error cleanup with sentinel reuse', () => {
+    const sb = getSandbox(), target = join(sb.root, 'sec-close-fail')
+    const ret = runPython(`import os, scripts.web_only_bundle_writer as bw
+cleanup_triggered = [False]
+orig_write = bw.write_all
+def fault_write(fd, data):
+    cleanup_triggered[0] = True
+    raise ValueError("primary write error")
+bw.write_all = fault_write
+
+orig_close = os.close
+def fault_close(fd):
+    orig_close(fd)
+    if cleanup_triggered[0]: raise OSError(5, "secondary close error")
+os.close = fault_close
+try:
+    bw.write_effective_bundle("${target}", b'c', b'r')
+    print("UNEXPECTED")
+except ValueError as e:
+    assert "primary write error" in str(e)
+    print("PRIMARY_PRESERVED_OVER_SECONDARY_CLOSE")
+finally:
+    os.close = orig_close
+    bw.write_all = orig_write`)
+    expect(ret.status).toBe(0)
+    expect(ret.stdout.trim()).toBe('PRIMARY_PRESERVED_OVER_SECONDARY_CLOSE')
+  })
+
+  it('preserves bundle directory when unknown file is present on failure without blind sweep', () => {
+    const sb = getSandbox(), target = join(sb.root, 'unknown-file-dir')
+    const ret = runPython(`import os, scripts.web_only_bundle_writer as bw
+orig_write = bw.write_private_entry
+def inject_unknown(dir_fd, name, data, registry=None):
+    if name == "candidate-compose.json":
+        with open(os.path.join("${target}", "unknown.txt"), "w") as f: f.write("preserve unknown")
+        raise RuntimeError("fail after unknown")
+    return orig_write(dir_fd, name, data, registry=registry)
+bw.write_private_entry = inject_unknown
+try:
+    bw.write_effective_bundle("${target}", b'c', b'r')
+    print("UNEXPECTED")
+except RuntimeError:
+    print("UNKNOWN_FILE_PRESERVED")
+finally:
+    bw.write_private_entry = orig_write`)
+    expect(ret.status).toBe(0)
+    expect(ret.stdout.trim()).toBe('UNKNOWN_FILE_PRESERVED')
+    expect(existsSync(join(target, 'unknown.txt'))).toBe(true)
+    expect(existsSync(target)).toBe(true)
+  })
+
+  it('preserves foreign replacement directory when devino differs on cleanup', () => {
+    const sb = getSandbox(), target = join(sb.root, 'foreign-replace'), foreignDir = join(sb.root, 'foreign-donor')
+    mkdirSync(foreignDir, 0o700)
+    const ret = runPython(`import os, scripts.web_only_bundle_writer as bw
+orig_write = bw.write_private_entry
+def replace_dir_on_write(dir_fd, name, data, registry=None):
+    os.rmdir("${target}")
+    os.rename("${foreignDir}", "${target}")
+    raise RuntimeError("abort with replaced dir")
+bw.write_private_entry = replace_dir_on_write
+try:
+    bw.write_effective_bundle("${target}", b'c', b'r')
+    print("UNEXPECTED")
+except RuntimeError:
+    print("FOREIGN_DIR_PRESERVED")
+finally:
+    bw.write_private_entry = orig_write`)
+    expect(ret.status).toBe(0)
+    expect(ret.stdout.trim()).toBe('FOREIGN_DIR_PRESERVED')
+    expect(existsSync(target)).toBe(true)
+  })
+})
+
+
