@@ -1,4 +1,5 @@
 """Generic secure private bundle validator and writer module."""
+import hashlib
 import os
 import stat
 
@@ -114,6 +115,59 @@ def safe_unlink_devino(dir_fd: int, name: str, expected_dev: int, expected_ino: 
         return True
     except OSError:
         return False
+
+
+def write_private_entry(
+    dir_fd: int,
+    name: str,
+    data: bytes,
+    registry: FDOwnershipRegistry | None = None,
+) -> tuple[int, int, str]:
+    """Exclusively create 0600 file, fstat identity before write with single close attempt.
+
+    Returns (st_dev, st_ino, sha256_hex). Unknown file preserved on validation failure.
+    Honest limits: stat+unlink is not atomic against same-UID concurrency; crash durability not guaranteed.
+    """
+    if not name or not isinstance(name, str) or os.path.basename(name) != name or name in (".", "..") or "/" in name:
+        raise ValueError(f"invalid entry name: {name!r}")
+
+    fd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600, dir_fd=dir_fd)
+    if registry is not None:
+        try:
+            registry.register(fd)
+        except BaseException as reg_err:
+            safe_close_cleanup(fd, primary_err=reg_err)
+            raise
+
+    known_identity: tuple[int, int] | None = None
+    try:
+        st = os.fstat(fd)
+        if st.st_uid != os.geteuid() or not stat.S_ISREG(st.st_mode) or (st.st_mode & 0o777) != 0o600:
+            raise PermissionError(f"file permission or type mismatch: {name}")
+        known_identity = (st.st_dev, st.st_ino)
+        write_all(fd, data)
+        digest = hashlib.sha256(data).hexdigest()
+
+        target_fd = fd
+        fd = -1
+        if registry is not None:
+            registry.close(target_fd)
+        else:
+            os.close(target_fd)
+        return (known_identity[0], known_identity[1], digest)
+    except BaseException as err:
+        if fd >= 0:
+            target_fd = fd
+            if registry is not None:
+                registry.unregister(target_fd)
+            fd = -1
+            safe_close_cleanup(target_fd, primary_err=err)
+        if known_identity is not None:
+            try:
+                safe_unlink_devino(dir_fd, name, known_identity[0], known_identity[1])
+            except BaseException:
+                pass
+        raise
 
 
 def validate_bundle_target(bundle_dir: str) -> tuple[int, str]:

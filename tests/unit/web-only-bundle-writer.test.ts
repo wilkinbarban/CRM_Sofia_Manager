@@ -572,3 +572,328 @@ print("SAFE_UNLINK_PRESERVES_FOREIGN")
     expect(ret.stdout.trim()).toBe('SAFE_UNLINK_PRESERVES_FOREIGN')
   })
 })
+
+describe('web-only-bundle-writer Unit 1b-ii write_private_entry', () => {
+  it.each([
+    ['with registry', true],
+    ['without registry', false],
+  ])('Area 1: creates 0600 file, writes data, computes sha256 and devino, and rejects path escape: %s', (_, useReg) => {
+    const sb = getSandbox()
+    const bdir = join(sb.root, 'bdir-success')
+    mkdirSync(bdir, 0o700)
+    const code = `
+import os, hashlib, scripts.web_only_bundle_writer as bw
+reg = bw.FDOwnershipRegistry() if ${useReg ? 'True' : 'False'} else None
+bfd = os.open("${bdir}", os.O_RDONLY | os.O_DIRECTORY)
+data = b"secure payload content"
+dev, ino, sha = bw.write_private_entry(bfd, "secret.dat", data, registry=reg)
+st = os.stat("secret.dat", dir_fd=bfd, follow_symlinks=False)
+assert (st.st_dev, st.st_ino) == (dev, ino)
+assert (st.st_mode & 0o777) == 0o600
+assert st.st_uid == os.geteuid()
+assert sha == hashlib.sha256(data).hexdigest()
+assert open(os.path.join("${bdir}", "secret.dat"), "rb").read() == data
+if reg is not None:
+    assert len(reg) == 0
+for bad in ["../escape", "/abs/path", "dir/sub", ".", "..", ""]:
+    try:
+        bw.write_private_entry(bfd, bad, data, registry=reg)
+        assert False, f"should reject {bad}"
+    except ValueError:
+        pass
+os.close(bfd)
+print("SUCCESS_0600")
+`
+    const ret = runPython(code)
+    expect(ret.status).toBe(0)
+    expect(ret.stdout.trim()).toBe('SUCCESS_0600')
+  })
+
+  it.each([
+    ['with registry', true],
+    ['without registry', false],
+  ])('Area 2: collision preserves foreign file and leaks zero descriptors: %s', (_, useReg) => {
+    const sb = getSandbox()
+    const bdir = join(sb.root, 'bdir-col')
+    mkdirSync(bdir, 0o700)
+    const existingFile = join(bdir, 'existing.dat')
+    writeFileSync(existingFile, 'foreign content')
+    const code = `
+import os, scripts.web_only_bundle_writer as bw
+def count_fds(): return len(os.listdir("/proc/self/fd"))
+reg = bw.FDOwnershipRegistry() if ${useReg ? 'True' : 'False'} else None
+bfd = os.open("${bdir}", os.O_RDONLY | os.O_DIRECTORY)
+orig_st = os.stat("existing.dat", dir_fd=bfd, follow_symlinks=False)
+before = count_fds()
+try:
+    bw.write_private_entry(bfd, "existing.dat", b"overwrite attempt", registry=reg)
+    print("UNEXPECTED")
+except FileExistsError:
+    assert before == count_fds()
+    after_st = os.stat("existing.dat", dir_fd=bfd, follow_symlinks=False)
+    assert (orig_st.st_dev, orig_st.st_ino) == (after_st.st_dev, after_st.st_ino)
+    assert open(os.path.join("${bdir}", "existing.dat"), "rb").read() == b"foreign content"
+    if reg is not None:
+        assert len(reg) == 0
+    print("COLLISION_PRESERVED")
+finally:
+    os.close(bfd)
+`
+    const ret = runPython(code)
+    expect(ret.status).toBe(0)
+    expect(ret.stdout.trim()).toBe('COLLISION_PRESERVED')
+  })
+
+  it.each([
+    ['with registry', true],
+    ['without registry', false],
+  ])('Area 3: fstat failure preserves unknown file without blind unlink and zero leaks: %s', (_, useReg) => {
+    const sb = getSandbox()
+    const bdir = join(sb.root, 'bdir-fstat')
+    mkdirSync(bdir, 0o700)
+    const code = `
+import os, scripts.web_only_bundle_writer as bw
+def count_fds(): return len(os.listdir("/proc/self/fd"))
+reg = bw.FDOwnershipRegistry() if ${useReg ? 'True' : 'False'} else None
+bfd = os.open("${bdir}", os.O_RDONLY | os.O_DIRECTORY)
+orig_fstat = os.fstat
+def fault_fstat(fd):
+    st = orig_fstat(fd)
+    if fd != bfd and orig_fstat(bfd).st_dev == st.st_dev:
+        raise OSError(5, "simulated fstat failure")
+    return st
+os.fstat = fault_fstat
+before = count_fds()
+try:
+    bw.write_private_entry(bfd, "unknown.dat", b"payload", registry=reg)
+    print("UNEXPECTED")
+except OSError as e:
+    assert "simulated fstat failure" in str(e)
+    assert before == count_fds()
+    assert os.path.exists(os.path.join("${bdir}", "unknown.dat")), "unknown file was blindly deleted"
+    if reg is not None:
+        assert len(reg) == 0
+    print("FSTAT_FAULT_PRESERVED")
+finally:
+    os.fstat = orig_fstat
+    os.close(bfd)
+`
+    const ret = runPython(code)
+    expect(ret.status).toBe(0)
+    expect(ret.stdout.trim()).toBe('FSTAT_FAULT_PRESERVED')
+  })
+
+  it.each([
+    ['with registry', true],
+    ['without registry', false],
+  ])('Area 4: mode or UID mismatch preserves unknown file and zero leaks: %s', (_, useReg) => {
+    const sb = getSandbox()
+    const bdir = join(sb.root, 'bdir-perm')
+    mkdirSync(bdir, 0o700)
+    const code = `
+import os, stat, scripts.web_only_bundle_writer as bw
+def count_fds(): return len(os.listdir("/proc/self/fd"))
+reg = bw.FDOwnershipRegistry() if ${useReg ? 'True' : 'False'} else None
+bfd = os.open("${bdir}", os.O_RDONLY | os.O_DIRECTORY)
+orig_fstat = os.fstat
+def mock_fstat(fd):
+    st = orig_fstat(fd)
+    if fd != bfd and orig_fstat(bfd).st_dev == st.st_dev:
+        class FakeStat:
+            st_uid = st.st_uid + 1
+            st_mode = stat.S_IFREG | 0o644
+            st_dev = st.st_dev
+            st_ino = st.st_ino
+        return FakeStat()
+    return st
+os.fstat = mock_fstat
+before = count_fds()
+try:
+    bw.write_private_entry(bfd, "mismatch.dat", b"payload", registry=reg)
+    print("UNEXPECTED")
+except PermissionError as e:
+    assert "file permission or type mismatch" in str(e)
+    assert before == count_fds()
+    assert os.path.exists(os.path.join("${bdir}", "mismatch.dat")), "unknown file was blindly deleted"
+    if reg is not None:
+        assert len(reg) == 0
+    print("MISMATCH_PRESERVED")
+finally:
+    os.fstat = orig_fstat
+    os.close(bfd)
+`
+    const ret = runPython(code)
+    expect(ret.status).toBe(0)
+    expect(ret.stdout.trim()).toBe('MISMATCH_PRESERVED')
+  })
+
+  it.each([
+    ['with registry', true],
+    ['without registry', false],
+  ])('Area 5: normal close failure raises close error, avoids double close on reused FD, and cleans verified file: %s', (_, useReg) => {
+    const sb = getSandbox()
+    const bdir = join(sb.root, 'bdir-nc')
+    mkdirSync(bdir, 0o700)
+    const sentinelPath = join(bdir, 'sentinel.txt')
+    writeFileSync(sentinelPath, 'sentinel')
+    const code = `
+import os, scripts.web_only_bundle_writer as bw
+def count_fds(): return len(os.listdir("/proc/self/fd"))
+reg = bw.FDOwnershipRegistry() if ${useReg ? 'True' : 'False'} else None
+bfd = os.open("${bdir}", os.O_RDONLY | os.O_DIRECTORY)
+orig_close = os.close
+close_history = []
+entry_fd = [-1]
+def fault_close(fd):
+    close_history.append(fd)
+    orig_close(fd)
+    if fd != bfd:
+        entry_fd[0] = fd
+        raise OSError(5, "simulated normal close failure")
+os.close = fault_close
+before = count_fds()
+try:
+    bw.write_private_entry(bfd, "entry.dat", b"valid data", registry=reg)
+    print("UNEXPECTED")
+except OSError as e:
+    assert "simulated normal close failure" in str(e)
+    reused_fd = os.open("${sentinelPath}", os.O_RDONLY)
+    assert reused_fd == entry_fd[0], f"expected reused FD {entry_fd[0]}, got {reused_fd}"
+    assert os.fstat(reused_fd).st_size == 8
+    assert close_history.count(entry_fd[0]) == 1, "double close attempt detected"
+    assert not os.path.exists(os.path.join("${bdir}", "entry.dat")), "verified file was not cleaned up"
+    if reg is not None:
+        reg.safe_close_all()
+        assert os.fstat(reused_fd).st_size == 8
+        assert len(reg) == 0
+    os.close = orig_close
+    os.close(reused_fd)
+    assert before == count_fds()
+    print("NORMAL_CLOSE_REUSE_OK")
+finally:
+    os.close = orig_close
+    os.close(bfd)
+`
+    const ret = runPython(code)
+    expect(ret.status).toBe(0)
+    expect(ret.stdout.trim()).toBe('NORMAL_CLOSE_REUSE_OK')
+  })
+
+  it.each([
+    ['with registry', true],
+    ['without registry', false],
+  ])('Area 6: exception cleanup preserves primary error, single close attempt on sentinel reuse: %s', (_, useReg) => {
+    const sb = getSandbox()
+    const bdir = join(sb.root, 'bdir-exc')
+    mkdirSync(bdir, 0o700)
+    const sentinelPath = join(bdir, 'sentinel.txt')
+    writeFileSync(sentinelPath, 'sentinel')
+    const code = `
+import os, scripts.web_only_bundle_writer as bw
+def count_fds(): return len(os.listdir("/proc/self/fd"))
+reg = bw.FDOwnershipRegistry() if ${useReg ? 'True' : 'False'} else None
+bfd = os.open("${bdir}", os.O_RDONLY | os.O_DIRECTORY)
+orig_write = os.write
+def fault_write(fd, data):
+    raise OSError(28, "primary no space left on device")
+os.write = fault_write
+
+orig_close = os.close
+close_history = []
+entry_fd = [-1]
+def fault_close(fd):
+    close_history.append(fd)
+    orig_close(fd)
+    if fd != bfd:
+        entry_fd[0] = fd
+        raise OSError(5, "secondary close error")
+os.close = fault_close
+
+before = count_fds()
+try:
+    bw.write_private_entry(bfd, "fail.dat", b"data", registry=reg)
+    print("UNEXPECTED")
+except OSError as e:
+    assert "primary no space left on device" in str(e)
+    reused_fd = os.open("${sentinelPath}", os.O_RDONLY)
+    assert reused_fd == entry_fd[0], f"expected reused FD {entry_fd[0]}, got {reused_fd}"
+    assert os.fstat(reused_fd).st_size == 8
+    assert close_history.count(entry_fd[0]) == 1, "double close attempt detected"
+    assert not os.path.exists(os.path.join("${bdir}", "fail.dat"))
+    if reg is not None:
+        reg.safe_close_all()
+        assert os.fstat(reused_fd).st_size == 8
+        assert len(reg) == 0
+    os.close = orig_close
+    os.close(reused_fd)
+    assert before == count_fds()
+    print("EXCEPTION_CLEANUP_OK")
+finally:
+    os.write = orig_write
+    os.close = orig_close
+    os.close(bfd)
+`
+    const ret = runPython(code)
+    expect(ret.status).toBe(0)
+    expect(ret.stdout.trim()).toBe('EXCEPTION_CLEANUP_OK')
+  })
+
+  it('preserves foreign replacement file on cleanup when identity differs', () => {
+    const sb = getSandbox()
+    const bdir = join(sb.root, 'bdir-rep')
+    mkdirSync(bdir, 0o700)
+    const code = `
+import os, scripts.web_only_bundle_writer as bw
+bfd = os.open("${bdir}", os.O_RDONLY | os.O_DIRECTORY)
+orig_write = os.write
+def fault_write(fd, data):
+    os.unlink(os.path.join("${bdir}", "replaced.dat"))
+    with open(os.path.join("${bdir}", "replaced.dat"), "w") as f:
+        f.write("foreign replacement")
+    raise OSError(28, "primary write error")
+os.write = fault_write
+try:
+    bw.write_private_entry(bfd, "replaced.dat", b"initial data")
+    print("UNEXPECTED")
+except OSError as e:
+    assert "primary write error" in str(e)
+    assert open(os.path.join("${bdir}", "replaced.dat"), "r").read() == "foreign replacement"
+    print("FOREIGN_REPLACEMENT_PRESERVED")
+finally:
+    os.write = orig_write
+    os.close(bfd)
+`
+    const ret = runPython(code)
+    expect(ret.status).toBe(0)
+    expect(ret.stdout.trim()).toBe('FOREIGN_REPLACEMENT_PRESERVED')
+  })
+
+  it('closes descriptor and leaks zero descriptors when registry.register fails', () => {
+    const sb = getSandbox()
+    const bdir = join(sb.root, 'bdir-regfail')
+    mkdirSync(bdir, 0o700)
+    const code = `
+import os, scripts.web_only_bundle_writer as bw
+def count_fds(): return len(os.listdir("/proc/self/fd"))
+reg = bw.FDOwnershipRegistry()
+def fault_register(fd):
+    raise RuntimeError("simulated register failure")
+reg.register = fault_register
+bfd = os.open("${bdir}", os.O_RDONLY | os.O_DIRECTORY)
+before = count_fds()
+try:
+    bw.write_private_entry(bfd, "regfail.dat", b"data", registry=reg)
+    print("UNEXPECTED")
+except RuntimeError as e:
+    assert "simulated register failure" in str(e)
+    assert before == count_fds(), "FD leak on register failure"
+    assert os.path.exists(os.path.join("${bdir}", "regfail.dat")), "unknown file preserved"
+    print("REGISTER_FAILURE_NO_LEAK")
+finally:
+    os.close(bfd)
+`
+    const ret = runPython(code)
+    expect(ret.status).toBe(0)
+    expect(ret.stdout.trim()).toBe('REGISTER_FAILURE_NO_LEAK')
+  })
+})
