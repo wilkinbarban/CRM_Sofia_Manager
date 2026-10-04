@@ -170,6 +170,77 @@ def write_private_entry(
         raise
 
 
+def strict_link_manifest(
+    dir_fd: int,
+    tmp_name: str,
+    final_name: str,
+    expected_identity: tuple[int, int],
+) -> tuple[int, int]:
+    """Strictly link temporary manifest entry to final manifest location via atomic os.link.
+
+    Guarantees atomic visibility at final_name via os.link without replace fallback.
+    Honest limits:
+    - os.link provides atomic directory entry visibility, not whole-workflow crash durability.
+    - Not an atomic transaction across the workflow; rollback cleanup is best-effort.
+    - Subject to same-UID TOCTOU concurrency between stat, link, and unlink.
+    - Persistent stat failure preserves unknown entries rather than blind deletion.
+    """
+    if not isinstance(dir_fd, int) or isinstance(dir_fd, bool) or dir_fd < 0:
+        raise ValueError(f"invalid dir_fd: {dir_fd!r}")
+    if not tmp_name or not isinstance(tmp_name, str) or os.path.basename(tmp_name) != tmp_name or tmp_name in (".", "..") or "/" in tmp_name:
+        raise ValueError(f"invalid tmp_name: {tmp_name!r}")
+    if not final_name or not isinstance(final_name, str) or os.path.basename(final_name) != final_name or final_name in (".", "..") or "/" in final_name:
+        raise ValueError(f"invalid final_name: {final_name!r}")
+    if tmp_name == final_name:
+        raise ValueError(f"tmp_name and final_name must be distinct: {tmp_name!r}")
+    if (
+        not isinstance(expected_identity, tuple)
+        or len(expected_identity) != 2
+        or not all(isinstance(x, int) and not isinstance(x, bool) for x in expected_identity)
+    ):
+        raise ValueError(f"invalid expected_identity: {expected_identity!r}")
+
+    st_src = os.stat(tmp_name, dir_fd=dir_fd, follow_symlinks=False)
+    if stat.S_ISLNK(st_src.st_mode):
+        raise PermissionError(f"source entry is a symlink: {tmp_name}")
+    if not stat.S_ISREG(st_src.st_mode) or (st_src.st_dev, st_src.st_ino) != expected_identity or st_src.st_uid != os.geteuid():
+        raise PermissionError(f"source identity mismatch: {tmp_name}")
+
+    link_created = False
+    try:
+        os.link(tmp_name, final_name, src_dir_fd=dir_fd, dst_dir_fd=dir_fd, follow_symlinks=False)
+        link_created = True
+
+        st_dst = os.stat(final_name, dir_fd=dir_fd, follow_symlinks=False)
+        if stat.S_ISLNK(st_dst.st_mode):
+            raise PermissionError(f"destination entry is a symlink: {final_name}")
+        if not stat.S_ISREG(st_dst.st_mode) or (st_dst.st_dev, st_dst.st_ino) != expected_identity or st_dst.st_uid != os.geteuid():
+            raise PermissionError(f"destination identity mismatch: {final_name}")
+
+        st_alias = os.stat(tmp_name, dir_fd=dir_fd, follow_symlinks=False)
+        if (
+            stat.S_ISLNK(st_alias.st_mode)
+            or not stat.S_ISREG(st_alias.st_mode)
+            or (st_alias.st_dev, st_alias.st_ino) != expected_identity
+            or st_alias.st_uid != os.geteuid()
+        ):
+            raise PermissionError(f"temp alias identity mismatch: {tmp_name}")
+        os.unlink(tmp_name, dir_fd=dir_fd)
+
+        return expected_identity
+    except BaseException:
+        if link_created:
+            try:
+                safe_unlink_devino(dir_fd, final_name, expected_identity[0], expected_identity[1])
+            except BaseException:
+                pass
+            try:
+                safe_unlink_devino(dir_fd, tmp_name, expected_identity[0], expected_identity[1])
+            except BaseException:
+                pass
+        raise
+
+
 def validate_bundle_target(bundle_dir: str) -> tuple[int, str]:
     """Validate target path, ancestors, and parent permissions via dirfd component walk.
 

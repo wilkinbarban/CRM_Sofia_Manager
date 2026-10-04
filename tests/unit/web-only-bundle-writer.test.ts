@@ -897,3 +897,274 @@ finally:
     expect(ret.stdout.trim()).toBe('REGISTER_FAILURE_NO_LEAK')
   })
 })
+
+describe('web-only-bundle-writer Unit 1c strict_link_manifest', () => {
+  it('successfully links manifest atomically, cleans temp alias, and returns expected identity', () => {
+    const sb = getSandbox(), bundleDir = join(sb.root, 'link-success')
+    mkdirSync(bundleDir, 0o700)
+    const ret = runPython(`import os, scripts.web_only_bundle_writer as bw
+bfd = os.open("${bundleDir}", os.O_RDONLY | os.O_DIRECTORY)
+dev, ino, _ = bw.write_private_entry(bfd, ".manifest.tmp", b'manifest content')
+res = bw.strict_link_manifest(bfd, ".manifest.tmp", "manifest.json", (dev, ino))
+assert res == (dev, ino), f"expected {(dev, ino)}, got {res}"
+st = os.stat("manifest.json", dir_fd=bfd, follow_symlinks=False)
+assert (st.st_dev, st.st_ino) == (dev, ino)
+assert not os.path.exists(os.path.join("${bundleDir}", ".manifest.tmp"))
+os.close(bfd)
+print("LINK_SUCCESS")`)
+    expect(ret.status).toBe(0)
+    expect(ret.stdout.trim()).toBe('LINK_SUCCESS')
+    expect(readFileSync(join(bundleDir, 'manifest.json'), 'utf8')).toBe('manifest content')
+    expect(existsSync(join(bundleDir, '.manifest.tmp'))).toBe(false)
+  })
+
+  it('strictly links manifest without replace fallback, rejecting collision EEXIST and preserving foreign files', () => {
+    const sb = getSandbox(), bundleDir = join(sb.root, 'link-col'), finalFile = join(bundleDir, 'manifest.json')
+    mkdirSync(bundleDir, 0o700); writeFileSync(finalFile, 'foreign manifest content')
+    const ret = runPython(`import os, scripts.web_only_bundle_writer as bw
+bfd = os.open("${bundleDir}", os.O_RDONLY | os.O_DIRECTORY)
+dev, ino, _ = bw.write_private_entry(bfd, ".manifest.tmp", b'new manifest')
+try:
+    bw.strict_link_manifest(bfd, ".manifest.tmp", "manifest.json", (dev, ino))
+    print("UNEXPECTED_LINK_SUCCESS")
+except FileExistsError:
+    print("COLLISION_EEXIST_HANDLED")
+finally: os.close(bfd)`)
+    expect(ret.status).toBe(0)
+    expect(ret.stdout.trim()).toBe('COLLISION_EEXIST_HANDLED')
+    expect(readFileSync(finalFile, 'utf8')).toBe('foreign manifest content')
+  })
+
+  it('fails closed on poststat failure, cleaning up own final and temp file', () => {
+    const sb = getSandbox(), bundleDir = join(sb.root, 'link-poststat'); mkdirSync(bundleDir, 0o700)
+    const ret = runPython(`import os, scripts.web_only_bundle_writer as bw
+bfd = os.open("${bundleDir}", os.O_RDONLY | os.O_DIRECTORY)
+dev, ino, _ = bw.write_private_entry(bfd, ".manifest.tmp", b'manifest data')
+orig_stat, calls = os.stat, [0]
+def fault_stat(path, *args, **kwargs):
+    if path == "manifest.json":
+        calls[0] += 1
+        if calls[0] == 1: raise OSError(5, "simulated poststat error")
+    return orig_stat(path, *args, **kwargs)
+os.stat = fault_stat
+try:
+    bw.strict_link_manifest(bfd, ".manifest.tmp", "manifest.json", (dev, ino))
+except OSError as e:
+    assert "simulated poststat error" in str(e); print("POSTSTAT_ERROR_CAUGHT")
+finally: os.stat = orig_stat; os.close(bfd)`)
+    expect(ret.status).toBe(0)
+    expect(ret.stdout.trim()).toBe('POSTSTAT_ERROR_CAUGHT')
+    expect(existsSync(join(bundleDir, 'manifest.json'))).toBe(false)
+    expect(existsSync(join(bundleDir, '.manifest.tmp'))).toBe(false)
+  })
+
+  it('fails closed and preserves foreign replacement when postlink identity does not match', () => {
+    const sb = getSandbox(), bundleDir = join(sb.root, 'link-replace'), foreignFile = join(sb.root, 'foreign.json')
+    mkdirSync(bundleDir, 0o700); writeFileSync(foreignFile, 'foreign data')
+    const ret = runPython(`import os, scripts.web_only_bundle_writer as bw
+bfd = os.open("${bundleDir}", os.O_RDONLY | os.O_DIRECTORY)
+dev, ino, _ = bw.write_private_entry(bfd, ".manifest.tmp", b'manifest data')
+orig_link = os.link
+def replace_on_link(src, dst, *args, **kwargs):
+    orig_link(src, dst, *args, **kwargs)
+    os.unlink(os.path.join("${bundleDir}", "manifest.json"))
+    orig_link("${foreignFile}", os.path.join("${bundleDir}", "manifest.json"))
+os.link = replace_on_link
+try:
+    bw.strict_link_manifest(bfd, ".manifest.tmp", "manifest.json", (dev, ino))
+except PermissionError as e:
+    assert "identity mismatch" in str(e); print("FOREIGN_REPLACEMENT_REJECTED")
+finally: os.close(bfd)`)
+    expect(ret.status).toBe(0)
+    expect(ret.stdout.trim()).toBe('FOREIGN_REPLACEMENT_REJECTED')
+    expect(existsSync(join(bundleDir, 'manifest.json'))).toBe(true)
+    expect(readFileSync(join(bundleDir, 'manifest.json'), 'utf8')).toBe('foreign data')
+  })
+
+  it('cleans up own final and propagates error when temp alias unlink fails, leaving no orphan final', () => {
+    const sb = getSandbox(), bundleDir = join(sb.root, 'link-alias-fail'); mkdirSync(bundleDir, 0o700)
+    const ret = runPython(`import os, scripts.web_only_bundle_writer as bw
+bfd = os.open("${bundleDir}", os.O_RDONLY | os.O_DIRECTORY)
+dev, ino, _ = bw.write_private_entry(bfd, ".manifest.tmp", b'manifest data')
+orig_unlink = os.unlink
+def fault_unlink(path, *args, **kwargs):
+    if path == ".manifest.tmp": raise OSError(5, "simulated alias unlink error")
+    return orig_unlink(path, *args, **kwargs)
+os.unlink = fault_unlink
+try:
+    bw.strict_link_manifest(bfd, ".manifest.tmp", "manifest.json", (dev, ino))
+except OSError as e:
+    assert "simulated alias unlink error" in str(e); print("ALIAS_UNLINK_ERROR_CAUGHT")
+finally: os.unlink = orig_unlink; os.close(bfd)`)
+    expect(ret.status).toBe(0)
+    expect(ret.stdout.trim()).toBe('ALIAS_UNLINK_ERROR_CAUGHT')
+    expect(existsSync(join(bundleDir, 'manifest.json'))).toBe(false)
+  })
+
+  it.each([
+    [
+      'source devino mismatch',
+      (bdir: string) => `
+dev, ino, _ = bw.write_private_entry(bfd, ".manifest.tmp", b'data')
+try:
+    bw.strict_link_manifest(bfd, ".manifest.tmp", "manifest.json", (dev, ino + 1))
+    print("UNEXPECTED")
+except PermissionError as e:
+    assert "source identity mismatch" in str(e)
+    print("SOURCE_MISMATCH_CAUGHT")
+`,
+      'SOURCE_MISMATCH_CAUGHT',
+    ],
+    [
+      'symlink source entry',
+      (bdir: string) => `
+os.symlink("/dev/null", os.path.join("${bdir}", ".manifest.tmp"))
+try:
+    bw.strict_link_manifest(bfd, ".manifest.tmp", "manifest.json", (0, 0))
+    print("UNEXPECTED")
+except PermissionError as e:
+    assert "source entry is a symlink" in str(e)
+    print("SOURCE_SYMLINK_CAUGHT")
+`,
+      'SOURCE_SYMLINK_CAUGHT',
+    ],
+  ])('rejects %s before link', (_, makePyBody, expectedOutput) => {
+    const sb = getSandbox(), bundleDir = join(sb.root, 'link-src-bad')
+    mkdirSync(bundleDir, 0o700)
+    const pyBody = makePyBody(bundleDir)
+    const ret = runPython(`import os, scripts.web_only_bundle_writer as bw
+bfd = os.open("${bundleDir}", os.O_RDONLY | os.O_DIRECTORY)
+try:
+${pyBody.trim().split('\n').map(l => '    ' + l).join('\n')}
+finally:
+    os.close(bfd)`)
+    expect(ret.status).toBe(0)
+    expect(ret.stdout.trim()).toBe(expectedOutput)
+    expect(existsSync(join(bundleDir, 'manifest.json'))).toBe(false)
+  })
+
+  it('preserves unknown final on persistent poststat failure without blind deletion', () => {
+    const sb = getSandbox(), bundleDir = join(sb.root, 'link-persist-stat')
+    mkdirSync(bundleDir, 0o700)
+    const ret = runPython(`import os, scripts.web_only_bundle_writer as bw
+bfd = os.open("${bundleDir}", os.O_RDONLY | os.O_DIRECTORY)
+dev, ino, _ = bw.write_private_entry(bfd, ".manifest.tmp", b'manifest data')
+orig_stat = os.stat
+def persistent_fault_stat(path, *args, **kwargs):
+    if path == "manifest.json":
+        raise OSError(5, "persistent poststat error")
+    return orig_stat(path, *args, **kwargs)
+os.stat = persistent_fault_stat
+try:
+    bw.strict_link_manifest(bfd, ".manifest.tmp", "manifest.json", (dev, ino))
+    print("UNEXPECTED")
+except OSError as e:
+    assert "persistent poststat error" in str(e)
+    print("PERSISTENT_POSTSTAT_CAUGHT")
+finally:
+    os.stat = orig_stat
+    os.close(bfd)`)
+    expect(ret.status).toBe(0)
+    expect(ret.stdout.trim()).toBe('PERSISTENT_POSTSTAT_CAUGHT')
+    expect(existsSync(join(bundleDir, 'manifest.json'))).toBe(true)
+    expect(existsSync(join(bundleDir, '.manifest.tmp'))).toBe(false)
+  })
+
+  it('fails closed and preserves foreign temp replacement when alias identity is modified before unlink', () => {
+    const sb = getSandbox(), bundleDir = join(sb.root, 'link-alias-rep'), foreignFile = join(sb.root, 'foreign-alias.txt')
+    mkdirSync(bundleDir, 0o700); writeFileSync(foreignFile, 'foreign alias data')
+    const ret = runPython(`import os, scripts.web_only_bundle_writer as bw
+bfd = os.open("${bundleDir}", os.O_RDONLY | os.O_DIRECTORY)
+dev, ino, _ = bw.write_private_entry(bfd, ".manifest.tmp", b'manifest data')
+orig_link = os.link
+def replace_alias_on_link(src, dst, *args, **kwargs):
+    orig_link(src, dst, *args, **kwargs)
+    os.unlink(os.path.join("${bundleDir}", ".manifest.tmp"))
+    orig_link("${foreignFile}", os.path.join("${bundleDir}", ".manifest.tmp"))
+os.link = replace_alias_on_link
+try:
+    bw.strict_link_manifest(bfd, ".manifest.tmp", "manifest.json", (dev, ino))
+    print("UNEXPECTED")
+except PermissionError as e:
+    assert "temp alias identity mismatch" in str(e)
+    print("ALIAS_REPLACEMENT_REJECTED")
+finally:
+    os.close(bfd)`)
+    expect(ret.status).toBe(0)
+    expect(ret.stdout.trim()).toBe('ALIAS_REPLACEMENT_REJECTED')
+    expect(existsSync(join(bundleDir, 'manifest.json'))).toBe(false)
+    expect(existsSync(join(bundleDir, '.manifest.tmp'))).toBe(true)
+    expect(readFileSync(join(bundleDir, '.manifest.tmp'), 'utf8')).toBe('foreign alias data')
+  })
+
+  it('guards link_created and preserves preexisting final even if sharing inode on collision EEXIST', () => {
+    const sb = getSandbox(), bundleDir = join(sb.root, 'link-same-ino')
+    mkdirSync(bundleDir, 0o700)
+    const ret = runPython(`import os, scripts.web_only_bundle_writer as bw
+bfd = os.open("${bundleDir}", os.O_RDONLY | os.O_DIRECTORY)
+dev, ino, _ = bw.write_private_entry(bfd, ".manifest.tmp", b'shared content')
+os.link(".manifest.tmp", "manifest.json", src_dir_fd=bfd, dst_dir_fd=bfd)
+try:
+    bw.strict_link_manifest(bfd, ".manifest.tmp", "manifest.json", (dev, ino))
+    print("UNEXPECTED")
+except FileExistsError:
+    print("PREEXISTING_SAME_INODE_EEXIST")
+finally:
+    os.close(bfd)`)
+    expect(ret.status).toBe(0)
+    expect(ret.stdout.trim()).toBe('PREEXISTING_SAME_INODE_EEXIST')
+    expect(existsSync(join(bundleDir, 'manifest.json'))).toBe(true)
+    expect(existsSync(join(bundleDir, '.manifest.tmp'))).toBe(true)
+  })
+
+  it('fails closed on generic link OSError without attempting replace fallback', () => {
+    const sb = getSandbox(), bundleDir = join(sb.root, 'link-generic-err')
+    mkdirSync(bundleDir, 0o700)
+    const ret = runPython(`import os, scripts.web_only_bundle_writer as bw
+bfd = os.open("${bundleDir}", os.O_RDONLY | os.O_DIRECTORY)
+dev, ino, _ = bw.write_private_entry(bfd, ".manifest.tmp", b'manifest data')
+orig_link = os.link
+def fault_link(src, dst, *args, **kwargs):
+    raise OSError(31, "simulated link EMLINK error")
+os.link = fault_link
+replace_called = [False]
+orig_replace = getattr(os, "replace", None)
+def tracking_replace(*args, **kwargs):
+    replace_called[0] = True
+    if orig_replace: return orig_replace(*args, **kwargs)
+os.replace = tracking_replace
+try:
+    bw.strict_link_manifest(bfd, ".manifest.tmp", "manifest.json", (dev, ino))
+    print("UNEXPECTED")
+except OSError as e:
+    assert "simulated link EMLINK error" in str(e)
+    assert not replace_called[0], "os.replace was called as fallback!"
+    print("GENERIC_LINK_ERROR_NO_FALLBACK")
+finally:
+    os.link = orig_link
+    if orig_replace: os.replace = orig_replace
+    os.close(bfd)`)
+    expect(ret.status).toBe(0)
+    expect(ret.stdout.trim()).toBe('GENERIC_LINK_ERROR_NO_FALLBACK')
+    expect(existsSync(join(bundleDir, 'manifest.json'))).toBe(false)
+    expect(existsSync(join(bundleDir, '.manifest.tmp'))).toBe(true)
+  })
+
+  it.each([
+    ['invalid dir_fd negative', '-1', '.manifest.tmp', 'manifest.json', [1, 2], /invalid dir_fd/],
+    ['invalid dir_fd bool', 'True', '.manifest.tmp', 'manifest.json', [1, 2], /invalid dir_fd/],
+    ['invalid tmp_name empty', '0', '', 'manifest.json', [1, 2], /invalid tmp_name/],
+    ['invalid final_name slash', '0', '.manifest.tmp', 'sub/manifest.json', [1, 2], /invalid final_name/],
+    ['identical names', '0', 'manifest.json', 'manifest.json', [1, 2], /distinct/],
+    ['invalid expected_identity length', '0', '.manifest.tmp', 'manifest.json', [1], /invalid expected_identity/],
+  ])('validates arguments fail-closed: %s', (_, dfdExpr, tmpN, finN, ident, errRegex) => {
+    const code = `
+import scripts.web_only_bundle_writer as bw
+bw.strict_link_manifest(${dfdExpr}, ${JSON.stringify(tmpN)}, ${JSON.stringify(finN)}, tuple(${JSON.stringify(ident)}))
+`
+    const ret = runPython(code)
+    expect(ret.status).not.toBe(0)
+    expect(ret.stderr).toMatch(errRegex)
+  })
+})
+
