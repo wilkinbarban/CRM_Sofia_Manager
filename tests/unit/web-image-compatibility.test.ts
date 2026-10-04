@@ -18,12 +18,18 @@ function populateSafeBin(binDir: string) {
     if (!existsSync(t)) {
       throw new Error(`Required host binary missing for safe PATH stubbing: ${t}`)
     }
-    try { symlinkSync(t, join(binDir, b)) } catch {}
+    symlinkSync(t, join(binDir, b))
+    if (!existsSync(join(binDir, b))) {
+      throw new Error(`Symlink creation failed for safe binary: ${b}`)
+    }
   }
   if (!existsSync(NODE_BIN)) {
     throw new Error(`Required node binary missing for safe PATH stubbing: ${NODE_BIN}`)
   }
-  try { symlinkSync(NODE_BIN, join(binDir, 'node')) } catch {}
+  symlinkSync(NODE_BIN, join(binDir, 'node'))
+  if (!existsSync(join(binDir, 'node'))) {
+    throw new Error(`Symlink creation failed for: node`)
+  }
   writeFileSync(join(binDir, 'curl'), '#!/bin/sh\necho "deny-by-default: curl disabled in test harness" >&2\nexit 1\n', { mode: 0o755 })
 }
 
@@ -70,6 +76,8 @@ function setupMockDeployEnvironment(options?: {
 
   const commandsLog = join(sandboxRoot, 'commands.log')
   const scriptsLog = join(sandboxRoot, 'scripts.log')
+  writeFileSync(commandsLog, '')
+  writeFileSync(scriptsLog, '')
   const containerImageFile = join(sandboxState, 'container_web_image')
   const containerEnvFile = join(sandboxState, 'container_web_env')
   const tagsFile = join(sandboxState, 'tags.tsv')
@@ -96,11 +104,12 @@ function setupMockDeployEnvironment(options?: {
   ].join('\n') + '\n'
   writeFileSync(tagsFile, initialTags)
 
-  // Minimal fixture docker-compose.yml
+  // Minimal fixture docker-compose.yml and .env
   writeFileSync(
     join(sandboxRoot, 'docker-compose.yml'),
     'services:\n  web:\n    image: ${CRM_SOFIA_WEB_IMAGE:-${ASADOS_WEB_IMAGE:-asados-web:latest}}\n'
   )
+  writeFileSync(join(sandboxRoot, '.env'), 'PORT=3000\n')
 
   // Copy EXACT deploy-web.sh bytes to sandbox scripts dir
   const deployBytes = readFileSync(join(root, 'scripts', 'deploy-web.sh'))
@@ -148,7 +157,7 @@ function setupMockDeployEnvironment(options?: {
   // Stateful hermetic mock Docker CLI:
   // - stateful image ID resolution and tagging
   // - stateful container.Image transitions on compose up web
-  // - fail closed on unknown commands
+  // - strict semantic validation with fail-closed rejection of unknown commands and flags
   const dockerScript = `#!/usr/bin/env bash
 set -euo pipefail
 
@@ -158,6 +167,14 @@ STATE_DIR="${sandboxState}"
 TAGS_FILE="${tagsFile}"
 CONTAINER_FILE="${containerImageFile}"
 ENV_FILE="${containerEnvFile}"
+
+if [[ "\${1:-}" == "--host" ]]; then
+  if [[ "\${2:-}" != "unix:///var/run/docker.sock" ]]; then
+    echo "Error: non-unix docker host: \${2:-}" >&2
+    exit 1
+  fi
+  shift 2
+fi
 
 cmd="\${1:-}"
 shift || true
@@ -175,19 +192,21 @@ case "\$cmd" in
           echo "Error: No such image: \$ref" >&2
           exit 1
         fi
-        if [[ "\$*" == *"{{.Id}}"* ]]; then
+        if [[ \$# -eq 0 ]]; then exit 0; fi
+        if [[ \$# -eq 2 && "\$1" == "--format" && "\$2" == "{{.Id}}" ]]; then
           echo "\$id"
           exit 0
         fi
-        exit 0
+        echo "Error: unknown image inspect format: \$*" >&2
+        exit 1
         ;;
       tag)
-        src="\${1:-}"
-        target="\${2:-}"
-        if [[ -z "\$src" || -z "\$target" ]]; then
-          echo "Error: invalid tag arguments" >&2
+        if [[ \$# -ne 2 ]]; then
+          echo "Error: invalid tag arguments count: \$#" >&2
           exit 1
         fi
+        src="\$1"
+        target="\$2"
         src_id="\$(awk -v s="\$src" '\$1 == s { print \$2; exit } \$2 == s { print \$2; exit }' "\$TAGS_FILE")"
         if [[ -z "\$src_id" ]]; then
           echo "Error: source image not found: \$src" >&2
@@ -210,31 +229,42 @@ case "\$cmd" in
         if [[ ! -f "\$CONTAINER_FILE" ]]; then
           exit 1
         fi
-        if [[ "\$*" == *"com.docker.compose.project"* ]]; then
-          echo "asados"
+        if [[ \$# -eq 0 ]]; then
           exit 0
-        elif [[ "\$*" == *"{{.Image}}"* ]]; then
-          cat "\$CONTAINER_FILE" | tr -d '\\r\\n'
-          echo
-          exit 0
-        elif [[ "\$*" == *"Config.Env"* ]]; then
-          if [[ -f "\$ENV_FILE" ]]; then
-            cat "\$ENV_FILE"
-            exit 0
-          fi
+        elif [[ \$# -eq 2 && "\$1" == "--format" ]]; then
+          case "\$2" in
+            '{{index .Config.Labels "com.docker.compose.project"}}')
+              echo "asados"
+              exit 0 ;;
+            '{{.Image}}')
+              cat "\$CONTAINER_FILE" | tr -d '\\r\\n'
+              echo
+              exit 0 ;;
+            '{{range .Config.Env}}{{println .}}{{end}}')
+              if [[ -f "\$ENV_FILE" ]]; then
+                cat "\$ENV_FILE"
+                exit 0
+              fi
+              exit 1 ;;
+            '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}')
+              echo "healthy"
+              exit 0 ;;
+            *)
+              echo "Error: unknown inspect format: \$2" >&2
+              exit 1 ;;
+          esac
+        else
+          echo "Error: invalid inspect arg count or flag: \$*" >&2
           exit 1
-        elif [[ "\$*" == *"Health"* || "\$*" == *"Status"* ]]; then
-          echo "healthy"
-          exit 0
         fi
-        exit 0
         ;;
       asados-sofia-inbound-batch-maintenance)
-        if [[ "\$*" == *"Health"* || "\$*" == *"Status"* ]]; then
+        if [[ \$# -eq 2 && "\$1" == "--format" && "\$2" == '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' ]]; then
           echo "healthy"
           exit 0
         fi
-        exit 0
+        echo "Error: invalid inspect args for scheduler: \$*" >&2
+        exit 1
         ;;
       *)
         echo "Error: unknown inspect target: \$target" >&2
@@ -245,29 +275,28 @@ case "\$cmd" in
   compose)
     echo "compose-invocation: CRM_SOFIA_WEB_IMAGE=\${CRM_SOFIA_WEB_IMAGE:-unset} ASADOS_WEB_IMAGE=\${ASADOS_WEB_IMAGE:-unset} args: \$*" >> "${commandsLog}"
     env | grep '_ENABLED=' | sort >> "${commandsLog}" || true
-    subcmd=""
-    skip_next=false
-    for a in "\$@"; do
-      if [[ "\$skip_next" == true ]]; then
-        skip_next=false
-        continue
-      fi
-      case "\$a" in
-        -f|--file|--project-directory|--project-name|-p|--env-file)
-          skip_next=true
-          ;;
-        -*)
-          ;;
-        *)
-          subcmd="\$a"
-          break
-          ;;
+    if [[ \$# -eq 1 ]]; then
+      case "\$1" in
+        ps) exit 0 ;;
+        config) exit 0 ;;
+        *) echo "Error: unknown docker compose command: \$1" >&2; exit 1 ;;
       esac
-    done
-    case "\$subcmd" in
-      config|ps) exit 0 ;;
-      up)
-        if [[ "\$*" == *"web"* ]]; then
+    elif [[ \$# -ge 2 && ( "\$1" == "ps" || "\$1" == "config" ) ]]; then
+      echo "Error: invalid compose \$1 arguments" >&2
+      exit 1
+    fi
+    if [[ \$# -eq 11 && "\$1" == "-f" && "\$3" == "--project-directory" && "\$5" == "--project-name" && "\$6" == "asados" && "\$7" == "up" && "\$8" == "-d" && "\$9" == "--no-deps" && "\${10}" == "--force-recreate" ]]; then
+      if [[ "\$2" != "${sandboxRoot}/docker-compose.yml" ]]; then
+        echo "Error: invalid compose file path" >&2
+        exit 1
+      fi
+      if [[ "\$4" != "${sandboxRoot}" ]]; then
+        echo "Error: invalid compose project directory" >&2
+        exit 1
+      fi
+      target_svc="\${11}"
+      case "\$target_svc" in
+        web)
           requested="\${CRM_SOFIA_WEB_IMAGE:-}"
           if [[ -n "\$requested" ]]; then
             resolved_id="\$(awk -v r="\$requested" '\$1 == r { print \$2; exit } \$2 == r { print \$2; exit }' "\$TAGS_FILE")"
@@ -277,18 +306,27 @@ case "\$cmd" in
             fi
             echo "\$resolved_id" > "\$CONTAINER_FILE"
           fi
-        fi
-        exit 0
-        ;;
-      *)
-        echo "Error: unknown docker compose command: \$subcmd" >&2
-        exit 1
-        ;;
-    esac
+          exit 0
+          ;;
+        sofia-inbound-batch-maintenance)
+          exit 0
+          ;;
+        *)
+          echo "Error: unknown compose up target" >&2
+          exit 1
+          ;;
+      esac
+    fi
+    echo "Error: unknown docker compose arguments or flags" >&2
+    exit 1
     ;;
   stop)
-    echo "stop args: $*" >> "${commandsLog}"
-    exit 0
+    if [[ \$# -eq 1 && "\$1" == "asados-sofia-inbound-batch-maintenance" ]]; then
+      echo "stop args: \$*" >> "${commandsLog}"
+      exit 0
+    fi
+    echo "Error: unknown stop target: \$*" >&2
+    exit 1
     ;;
   *)
     echo "Error: unknown docker command: \$cmd" >&2
@@ -307,6 +345,8 @@ esac
     CRM_SOFIA_WEB_IMAGE: 'ambient-crm-wrong:latest',
     ASADOS_WEB_IMAGE: 'ambient-asados-wrong:latest',
     ASADOS_DEPLOY_STATE_ROOT: sandboxState,
+    ASADOS_OPERATIONAL_ROOT: sandboxRoot,
+    ASADOS_PREFLIGHT_SCRIPT: join(sandboxScripts, 'workspace-preflight.sh'),
     ASADOS_WEB_HEALTH_TIMEOUT_SECONDS: '5',
     ASADOS_SOFIA_SCHEDULER_HEALTH_TIMEOUT_SECONDS: '5',
   }
@@ -1464,8 +1504,68 @@ describe('Web Image Compatibility & Dual Tagging', () => {
           const resComposePs = spawnSync('docker', ['compose', 'ps'], { env: harness.env, encoding: 'utf8' })
           expect(resComposePs.status).toBe(0)
 
+          const resComposePsExtra = spawnSync('docker', ['compose', 'ps', 'extra-arg'], { env: harness.env, encoding: 'utf8' })
+          expect(resComposePsExtra.status).not.toBe(0)
+          expect(resComposePsExtra.stderr).toContain('Error: invalid compose ps arguments')
+
           const resComposeConfig = spawnSync('docker', ['compose', 'config'], { env: harness.env, encoding: 'utf8' })
           expect(resComposeConfig.status).toBe(0)
+
+          const resComposeConfigExtra = spawnSync('docker', ['compose', 'config', 'extra-arg'], { env: harness.env, encoding: 'utf8' })
+          expect(resComposeConfigExtra.status).not.toBe(0)
+          expect(resComposeConfigExtra.stderr).toContain('Error: invalid compose config arguments')
+
+          const resNonUnixHost = spawnSync('docker', ['--host', 'tcp://127.0.0.1:2375', 'ps'], { env: harness.env, encoding: 'utf8' })
+          expect(resNonUnixHost.status).not.toBe(0)
+          expect(resNonUnixHost.stderr).toContain('Error: non-unix docker host: tcp://127.0.0.1:2375')
+
+          const resUnknownUp = spawnSync('docker', [
+            'compose', '-f', join(harness.sandboxRoot, 'docker-compose.yml'),
+            '--project-directory', harness.sandboxRoot, '--project-name', 'asados',
+            'up', '-d', '--no-deps', '--force-recreate', 'unknown-service',
+          ], { env: harness.env, encoding: 'utf8' })
+          expect(resUnknownUp.status).not.toBe(0)
+          expect(resUnknownUp.stderr).toContain('Error: unknown compose up target')
+
+          const resWrongFile = spawnSync('docker', [
+            'compose', '-f', '/tmp/wrong/docker-compose.yml',
+            '--project-directory', harness.sandboxRoot, '--project-name', 'asados',
+            'up', '-d', '--no-deps', '--force-recreate', 'web',
+          ], { env: harness.env, encoding: 'utf8' })
+          expect(resWrongFile.status).not.toBe(0)
+          expect(resWrongFile.stderr).toContain('Error: invalid compose file path')
+
+          const resWrongDir = spawnSync('docker', [
+            'compose', '-f', join(harness.sandboxRoot, 'docker-compose.yml'),
+            '--project-directory', '/tmp/wrong', '--project-name', 'asados',
+            'up', '-d', '--no-deps', '--force-recreate', 'web',
+          ], { env: harness.env, encoding: 'utf8' })
+          expect(resWrongDir.status).not.toBe(0)
+          expect(resWrongDir.stderr).toContain('Error: invalid compose project directory')
+
+          const resPermutedFlags = spawnSync('docker', [
+            'compose', '-f', join(harness.sandboxRoot, 'docker-compose.yml'),
+            '--project-directory', harness.sandboxRoot, '--project-name', 'asados',
+            'up', '-d', '--force-recreate', '--no-deps', 'web',
+          ], { env: harness.env, encoding: 'utf8' })
+          expect(resPermutedFlags.status).not.toBe(0)
+          expect(resPermutedFlags.stderr).toContain('Error: unknown docker compose arguments or flags')
+
+          const resExtraService = spawnSync('docker', [
+            'compose', '-f', join(harness.sandboxRoot, 'docker-compose.yml'),
+            '--project-directory', harness.sandboxRoot, '--project-name', 'asados',
+            'up', '-d', '--no-deps', '--force-recreate', 'web', 'extra-service',
+          ], { env: harness.env, encoding: 'utf8' })
+          expect(resExtraService.status).not.toBe(0)
+          expect(resExtraService.stderr).toContain('Error: unknown docker compose arguments or flags')
+
+          const resUnknownScheduler = spawnSync('docker', [
+            'compose', '-f', join(harness.sandboxRoot, 'docker-compose.yml'),
+            '--project-directory', harness.sandboxRoot, '--project-name', 'asados',
+            'up', '-d', '--no-deps', '--force-recreate', 'unknown-scheduler',
+          ], { env: harness.env, encoding: 'utf8' })
+          expect(resUnknownScheduler.status).not.toBe(0)
+          expect(resUnknownScheduler.stderr).toContain('Error: unknown compose up target')
         } finally {
           harness.cleanup()
         }
