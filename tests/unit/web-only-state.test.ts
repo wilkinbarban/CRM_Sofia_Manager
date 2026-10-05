@@ -1,5 +1,5 @@
 import { describe, expect, it, afterEach } from 'vitest'
-import { mkdtempSync, rmSync, chmodSync, existsSync, mkdirSync, symlinkSync } from 'node:fs'
+import { mkdtempSync, rmSync, chmodSync, existsSync, mkdirSync, symlinkSync, renameSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { spawnSync } from 'node:child_process'
@@ -27,6 +27,39 @@ function expectPython(code: string, expectedStdout: string) {
   })
   expect(ret.status).toBe(0)
   expect(ret.stdout.trim()).toBe(expectedStdout)
+}
+
+function runCli(args: string[], env: Record<string, string> = {}) {
+  return spawnSync(PYTHON_BIN, ['-B', 'scripts/web_only_state.py', ...args], {
+    env: { PATH: '/usr/bin:/bin', PYTHONDONTWRITEBYTECODE: '1', PYTHONPATH: '.', ...env },
+    encoding: 'utf8',
+  })
+}
+
+function setupStateFixture(sb: string, transformLines?: (lines: string[]) => string[]) {
+  const rootDir = join(sb, 'root')
+  mkdirSync(rootDir, 0o700)
+  const pyCode = `${FIXTURE}
+bdir, res = make_bundle("${sb}")
+state = make_state("${rootDir}", bdir, res)
+print(f"{bdir}\\t{res['manifest_sha256']}\\t{state['PREVIOUS_ID']}\\t{state['DEPLOYED_ID']}")
+`
+  const ret = spawnSync(PYTHON_BIN, ['-B', '-c', pyCode], {
+    env: { PATH: '/usr/bin:/bin', PYTHONDONTWRITEBYTECODE: '1', PYTHONPATH: '.' },
+    encoding: 'utf8',
+  })
+  if (ret.status !== 0) throw new Error(`setup failed: ${ret.stderr}`)
+  const [bdir, msha, prevId, depId] = ret.stdout.trim().split('\t')
+  let lines = [
+    'STATE_VERSION=2', 'DEPLOY_MODE=web-only', `BUNDLE_DIR=${bdir}`, `MANIFEST_SHA256=${msha}`,
+    'COMPOSE_PROJECT=crm', `OPERATIONAL_ROOT=${rootDir}`, 'DOCKER_ENDPOINT=unix:///var/run/docker.sock',
+    'EXPECTED_NETWORKS=["net_a"]', `PREVIOUS_ID=${prevId}`, `DEPLOYED_ID=${depId}`,
+  ]
+  if (transformLines) lines = transformLines(lines)
+  const envPath = join(sb, 'release.env')
+  writeFileSync(envPath, lines.join('\n') + '\n', { mode: 0o600 })
+  chmodSync(envPath, 0o600)
+  return { root: rootDir, bdir, prevId, depId, envPath }
 }
 
 const FIXTURE = `
@@ -206,5 +239,116 @@ try:
     print("FAILED")
 except ValueError:
     print("TAMPER_REJECTED")`, 'TAMPER_REJECTED')
+  })
+
+  it('CLI outputs exact TSV record on valid release.env v2 state file', () => {
+    const sb = getSandbox()
+    const { root, bdir, prevId, depId, envPath } = setupStateFixture(sb)
+    const ret = runCli([
+      '--state-file', envPath,
+      '--expected-root', root,
+      '--expected-endpoint', 'unix:///var/run/docker.sock',
+      '--expected-project', 'crm',
+      '--expected-networks', '["net_a"]',
+    ])
+    expect(ret.status).toBe(0)
+    const expectedTsv = `ok\t${bdir}\t${join(bdir, 'rollback-compose.json')}\t${prevId}\t${depId}`
+    expect(ret.stdout.trim()).toBe(expectedTsv)
+  })
+
+  it('demonstrates serialization roundtrip with optional keys, outer quotes, and paths with spaces', () => {
+    const sb = getSandbox()
+    const spaceRoot = join(sb, 'space root')
+    mkdirSync(spaceRoot, 0o700)
+    const { bdir, prevId, depId, envPath } = setupStateFixture(sb, (ls) => [
+      ...ls.map((l) => {
+        if (l.startsWith('OPERATIONAL_ROOT=')) return `OPERATIONAL_ROOT='${spaceRoot}'`
+        if (l.startsWith('EXPECTED_NETWORKS=')) return "EXPECTED_NETWORKS='[\"net_a\"]'"
+        return l
+      }),
+      'PREVIOUS_REF="asados-web:rollback-1111111111111111111111111111111111111111111111111111111111111111"',
+      'DEPLOYED_REF="crm-sofia-web:20261002"',
+      'RECORDED_AT="2026-10-02T12:00:00Z"',
+    ])
+    const ret = runCli([
+      '--state-file', envPath,
+      '--expected-root', spaceRoot,
+      '--expected-endpoint', 'unix:///var/run/docker.sock',
+      '--expected-project', 'crm',
+      '--expected-networks', '["net_a"]',
+    ])
+    expect(ret.status).toBe(0)
+    expect(ret.stdout.trim()).toBe(`ok\t${bdir}\t${join(bdir, 'rollback-compose.json')}\t${prevId}\t${depId}`)
+  })
+
+  it.each([
+    ['missing expected-root', ['--state-file', 'f', '--expected-endpoint', 'unix:///var/run/docker.sock', '--expected-project', 'crm', '--expected-networks', '["n"]']],
+    ['unrecognized flag', ['--state-file', 'f', '--expected-root', 'r', '--expected-endpoint', 'unix:///var/run/docker.sock', '--expected-project', 'crm', '--expected-networks', '["n"]', '--bad', 'secret']],
+    ['malformed networks JSON', ['--state-file', 'f', '--expected-root', 'r', '--expected-endpoint', 'unix:///var/run/docker.sock', '--expected-project', 'crm', '--expected-networks', '["n"']],
+  ])('CLI rejects invalid command arguments: %s', (_, args) => {
+    const ret = runCli(args)
+    expect(ret.status).toBe(2)
+    expect(ret.stderr.trim()).toBe('ERR_INVALID_ARGS')
+    expect(ret.stdout).toBe('')
+    expect(ret.stderr).not.toMatch(/secret|Traceback/)
+  })
+
+  it.each([
+    ['backslash escape in path', (ls: string[]) => ls.map((l) => l.startsWith('BUNDLE_DIR=') ? 'BUNDLE_DIR=/path/with\\ space' : l)],
+    ['ANSI-C quotes', (ls: string[]) => ls.map((l) => l.startsWith('DEPLOY_MODE=') ? "DEPLOY_MODE=$'web-only'" : l)],
+    ['command substitution expansion', (ls: string[]) => [...ls, 'PREVIOUS_REF="$(touch /tmp/bad)"']],
+    ['backtick substitution expansion', (ls: string[]) => [...ls, 'PREVIOUS_REF="`touch /tmp/bad`"']],
+    ['unclosed quote', (ls: string[]) => ls.map((l) => l.startsWith('DEPLOY_MODE=') ? 'DEPLOY_MODE="web-only' : l)],
+    ['duplicate key', (ls: string[]) => [...ls, ls[0]]],
+    ['unknown key', (ls: string[]) => [...ls, 'UNKNOWN_KEY="bad"']],
+    ['missing required key', (ls: string[]) => ls.filter((l) => !l.startsWith('MANIFEST_SHA256='))],
+    ['tab control character', (ls: string[]) => ls.map((l) => l.startsWith('DEPLOY_MODE=') ? 'DEPLOY_MODE=web\tonly' : l)],
+    ['carriage return control char', (ls: string[]) => ls.map((l) => l.startsWith('DEPLOY_MODE=') ? 'DEPLOY_MODE=web-only\r' : l)],
+    ['empty line in file', (ls: string[]) => [ls[0], '', ...ls.slice(1)]],
+    ['invalid optional PREVIOUS_REF latest', (ls: string[]) => [...ls, 'PREVIOUS_REF="asados-web:latest"']],
+    ['invalid optional RECORDED_AT format', (ls: string[]) => [...ls, 'RECORDED_AT="2026-10-02 12:00:00"']],
+  ])('CLI rejects unsupported %%q forms and invalid state payloads: %s', (_, transform) => {
+    const sb = getSandbox()
+    const { root, envPath } = setupStateFixture(sb, transform)
+    const ret = runCli(['--state-file', envPath, '--expected-root', root, '--expected-endpoint', 'unix:///var/run/docker.sock', '--expected-project', 'crm', '--expected-networks', '["net_a"]'])
+    expect(ret.status).toBe(1)
+    expect(ret.stderr.trim()).toBe('ERR_VALIDATION_FAILED')
+    expect(ret.stdout).toBe('')
+    expect(ret.stderr).not.toContain('Traceback')
+  })
+
+  it.each([
+    ['symlink state file', (sb: string, envPath: string) => {
+      const real = join(sb, 'real.env'); renameSync(envPath, real); symlinkSync(real, envPath)
+    }],
+    ['wrong state file mode 0644', (_: string, envPath: string) => chmodSync(envPath, 0o644)],
+    ['FIFO state file no-hang', (_: string, envPath: string) => {
+      rmSync(envPath); spawnSync('mkfifo', ['-m', '0600', envPath])
+    }],
+  ])('CLI rejects unsafe state file: %s', (_, mutate) => {
+    const sb = getSandbox()
+    const { root, envPath } = setupStateFixture(sb)
+    mutate(sb, envPath)
+    const ret = runCli(['--state-file', envPath, '--expected-root', root, '--expected-endpoint', 'unix:///var/run/docker.sock', '--expected-project', 'crm', '--expected-networks', '["net_a"]'])
+    expect(ret.status).toBe(1)
+    expect(ret.stderr.trim()).toBe('ERR_VALIDATION_FAILED')
+    expect(ret.stdout).toBe('')
+  })
+
+  it('rejects UTF-8 BOM and oversized payload in state file', () => {
+    const sb = getSandbox()
+    const { root, envPath } = setupStateFixture(sb)
+    const content = readFileSync(envPath)
+    writeFileSync(envPath, Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), content]))
+    chmodSync(envPath, 0o600)
+    let ret = runCli(['--state-file', envPath, '--expected-root', root, '--expected-endpoint', 'unix:///var/run/docker.sock', '--expected-project', 'crm', '--expected-networks', '["net_a"]'])
+    expect(ret.status).toBe(1)
+    expect(ret.stderr.trim()).toBe('ERR_VALIDATION_FAILED')
+
+    writeFileSync(envPath, Buffer.alloc(70000, 65))
+    chmodSync(envPath, 0o600)
+    ret = runCli(['--state-file', envPath, '--expected-root', root, '--expected-endpoint', 'unix:///var/run/docker.sock', '--expected-project', 'crm', '--expected-networks', '["net_a"]'])
+    expect(ret.status).toBe(1)
+    expect(ret.stderr.trim()).toBe('ERR_VALIDATION_FAILED')
   })
 })
