@@ -512,3 +512,238 @@ assert parsed["tags"] == ["prod"]
 print("SUCCESS_PARSE_JSON")`, 'SUCCESS_PARSE_JSON')
   })
 })
+
+const FIXTURE_SETUP = `
+import json, os, hashlib, scripts.web_only_bundle_writer as bw
+CAND_IMG, CURR_IMG = "sha256:" + "1" * 64, "sha256:" + "2" * 64
+def make_bundle(base, cand_env=None):
+    web_cand = {"image": CAND_IMG, "ports": [{"target": 3000, "published": "3020", "host_ip": "127.0.0.1", "protocol": "tcp"}], "networks": {"asados_default": {"aliases": ["web"]}}}
+    if cand_env: web_cand["environment"] = cand_env
+    cand = {"services": {"web": web_cand}, "networks": {"asados_default": {"name": "asados_default", "external": True}}}
+    roll = {"services": {"web": {"image": CURR_IMG, "ports": [{"target": 3000, "published": 3020, "host_ip": "127.0.0.1", "protocol": "tcp"}], "networks": {"asados_default": {}}}}, "networks": {"asados_default": {"name": "asados_default", "external": True}}}
+    bdir = os.path.join(base, "bundle")
+    meta = {"project": "asados", "service": "web", "candidate_image_id": CAND_IMG, "current_image_id": CURR_IMG, "ports": {"target": 3000, "published": 3020, "host_ip": "127.0.0.1", "protocol": "tcp"}, "networks": ["asados_default"], "container_id": "a"*64, "container_name": "crm-sofia-web"}
+    res = bw.write_effective_bundle(bdir, (json.dumps(cand) + "\\n").encode(), (json.dumps(roll) + "\\n").encode(), meta)
+    return bdir, res
+def tamper_compose(bdir, cand_doc_json):
+    raw = (json.dumps(json.loads(cand_doc_json.replace("IMG", CAND_IMG))) + "\\n").encode()
+    with open(os.path.join(bdir, "candidate-compose.json"), "wb") as f: f.write(raw)
+    mpath = os.path.join(bdir, "manifest.json")
+    with open(mpath, "r") as f: mdoc = json.load(f)
+    mdoc["candidate_compose_sha256"] = hashlib.sha256(raw).hexdigest()
+    mraw = (json.dumps(mdoc) + "\\n").encode()
+    with open(mpath, "wb") as f: f.write(mraw)
+    return hashlib.sha256(mraw).hexdigest()
+`
+
+describe('web-only-bundle-consumer U2.1c validate_effective_bundle', () => {
+  it('validates 0700/0600 writer bundle with anchored SHA and redacts private env', () => {
+    const sb = getSandbox()
+    expectPython(`${FIXTURE_SETUP}
+from scripts.web_only_bundle_consumer import validate_effective_bundle
+bdir, res = make_bundle("${sb}", cand_env={"SECRET_KEY": "supersecret123"})
+out = validate_effective_bundle(bdir, res["manifest_sha256"], "asados", CAND_IMG, CURR_IMG, ["asados_default"])
+assert out["status"] == "ok" and out["bundle_dir"] == bdir
+assert out["manifest_sha256"] == res["manifest_sha256"]
+assert out["candidate_compose_sha256"] == res["candidate_compose_sha256"]
+assert out["rollback_compose_sha256"] == res["rollback_compose_sha256"]
+assert out["project"] == "asados" and out["service"] == "web"
+assert out["candidate_image_id"] == CAND_IMG and out["current_image_id"] == CURR_IMG
+assert out["networks"] == ["asados_default"] and out["ports"]["published"] == 3020
+assert out["container_id"] == "a" * 64 and out["container_name"] == "crm-sofia-web"
+assert "SECRET_KEY" not in str(out) and "supersecret123" not in str(out)
+assert "integration_prerequisites" not in out
+print("SUCCESS_WRITER_COMPAT")`, 'SUCCESS_WRITER_COMPAT')
+  })
+
+  it('rejects tampered anchored manifest sha and tampered manifest file', () => {
+    const sb = getSandbox()
+    expectPython(`${FIXTURE_SETUP}
+from scripts.web_only_bundle_consumer import validate_effective_bundle
+bdir, res = make_bundle("${sb}")
+try: validate_effective_bundle(bdir, "0"*64, "asados", CAND_IMG, CURR_IMG, ["asados_default"]); exit(2)
+except ValueError: pass
+with open(os.path.join(bdir, "manifest.json"), "wb") as f: f.write(b"{}")
+try: validate_effective_bundle(bdir, res["manifest_sha256"], "asados", CAND_IMG, CURR_IMG, ["asados_default"]); exit(3)
+except ValueError: pass
+print("TAMPER_REJECTED")`, 'TAMPER_REJECTED')
+  })
+
+  it('rejects tampered payload content mismatching manifest sha', () => {
+    const sb = getSandbox()
+    expectPython(`${FIXTURE_SETUP}
+from scripts.web_only_bundle_consumer import validate_effective_bundle
+bdir, res = make_bundle("${sb}")
+with open(os.path.join(bdir, "candidate-compose.json"), "wb") as f: f.write(b"tampered")
+try: validate_effective_bundle(bdir, res["manifest_sha256"], "asados", CAND_IMG, CURR_IMG, ["asados_default"]); exit(2)
+except ValueError: pass
+print("PAYLOAD_TAMPER_REJECTED")`, 'PAYLOAD_TAMPER_REJECTED')
+  })
+
+  it.each([
+    ['wrong project', 'validate_effective_bundle(bdir, res["manifest_sha256"], "bad-proj", CAND_IMG, CURR_IMG, ["asados_default"])'],
+    ['wrong cand img', 'validate_effective_bundle(bdir, res["manifest_sha256"], "asados", "sha256:" + "9"*64, CURR_IMG, ["asados_default"])'],
+    ['wrong curr img', 'validate_effective_bundle(bdir, res["manifest_sha256"], "asados", CAND_IMG, "sha256:" + "9"*64, ["asados_default"])'],
+    ['network mismatch', 'validate_effective_bundle(bdir, res["manifest_sha256"], "asados", CAND_IMG, CURR_IMG, ["other_net"])'],
+  ])('rejects expected mismatch: %s', (_, expr) => {
+    const sb = getSandbox()
+    expectPython(`${FIXTURE_SETUP}
+from scripts.web_only_bundle_consumer import validate_effective_bundle
+bdir, res = make_bundle("${sb}")
+try: ${expr}; print("FAILED")
+except ValueError: print("REJECTED_MISMATCH")`, 'REJECTED_MISMATCH')
+  })
+
+  it('rejects duplicate keys in compose after reanchoring payload hash in manifest', () => {
+    const sb = getSandbox()
+    expectPython(`${FIXTURE_SETUP}
+from scripts.web_only_bundle_consumer import validate_effective_bundle
+bdir, res = make_bundle("${sb}")
+dup_raw = b'{"services": {"web": {"image": "' + CAND_IMG.encode() + b'", "ports": [{"target": 3000, "published": 3020, "host_ip": "127.0.0.1", "protocol": "tcp"}], "networks": {"asados_default": {}}}}, "services": {"web": {}}, "networks": {"asados_default": {"name": "asados_default", "external": true}}}'
+with open(os.path.join(bdir, "candidate-compose.json"), "wb") as f: f.write(dup_raw)
+mpath = os.path.join(bdir, "manifest.json")
+with open(mpath, "r") as f: mdoc = json.load(f)
+mdoc["candidate_compose_sha256"] = hashlib.sha256(dup_raw).hexdigest()
+mraw = (json.dumps(mdoc) + "\\n").encode()
+with open(mpath, "wb") as f: f.write(mraw)
+m_sha = hashlib.sha256(mraw).hexdigest()
+try:
+    validate_effective_bundle(bdir, m_sha, "asados", CAND_IMG, CURR_IMG, ["asados_default"])
+    print("FAILED")
+except ValueError as err:
+    assert "duplicate key detected" in str(err), f"unexpected error: {err}"
+    print("DUPLICATE_COMPOSE_REJECTED")`, 'DUPLICATE_COMPOSE_REJECTED')
+  })
+
+
+  it.each([
+    ['duplicate keys in manifest', 'manifest.json', '{"schema_version": "1.0", "schema_version": "1.0"}'],
+    ['invalid json syntax', 'manifest.json', '{bad json'],
+    ['wrong schema version', 'manifest.json', '{"schema_version": "2.0"}'],
+  ])('rejects malformed json, duplicates, and schema drift: %s', (_, fname, content) => {
+    const sb = getSandbox()
+    expectPython(`${FIXTURE_SETUP}
+from scripts.web_only_bundle_consumer import validate_effective_bundle
+bdir, res = make_bundle("${sb}")
+raw = ${JSON.stringify(content)}.encode()
+with open(os.path.join(bdir, "${fname}"), "wb") as f: f.write(raw)
+sha = hashlib.sha256(raw).hexdigest()
+try: validate_effective_bundle(bdir, sha, "asados", CAND_IMG, CURR_IMG, ["asados_default"]); print("FAILED")
+except ValueError: print("REJECTED_JSON")`, 'REJECTED_JSON')
+  })
+
+  it.each([
+    ['non-web service', '{"services": {"web": {"image": "IMG", "ports": [{"target": 3000, "published": "3020", "host_ip": "127.0.0.1", "protocol": "tcp"}], "networks": {"asados_default": {}}}, "redis": {}}, "networks": {"asados_default": {"name": "asados_default", "external": true}}}'],
+    ['build section present', '{"services": {"web": {"image": "IMG", "build": ".", "ports": [{"target": 3000, "published": "3020", "host_ip": "127.0.0.1", "protocol": "tcp"}], "networks": {"asados_default": {}}}}, "networks": {"asados_default": {"name": "asados_default", "external": true}}}'],
+    ['depends_on present', '{"services": {"web": {"image": "IMG", "depends_on": ["db"], "ports": [{"target": 3000, "published": "3020", "host_ip": "127.0.0.1", "protocol": "tcp"}], "networks": {"asados_default": {}}}}, "networks": {"asados_default": {"name": "asados_default", "external": true}}}'],
+    ['volumes present', '{"services": {"web": {"image": "IMG", "volumes": ["/v"], "ports": [{"target": 3000, "published": "3020", "host_ip": "127.0.0.1", "protocol": "tcp"}], "networks": {"asados_default": {}}}}, "networks": {"asados_default": {"name": "asados_default", "external": true}}}'],
+    ['non-external network', '{"services": {"web": {"image": "IMG", "ports": [{"target": 3000, "published": "3020", "host_ip": "127.0.0.1", "protocol": "tcp"}], "networks": {"asados_default": {}}}}, "networks": {"asados_default": {"name": "asados_default", "external": false}}}'],
+    ['incompatible ports', '{"services": {"web": {"image": "IMG", "ports": [{"target": 80, "published": "8080", "host_ip": "127.0.0.1", "protocol": "tcp"}], "networks": {"asados_default": {}}}}, "networks": {"asados_default": {"name": "asados_default", "external": true}}}'],
+  ])('rejects forbidden Compose structures: %s', (_, candJson) => {
+    const sb = getSandbox()
+    expectPython(`${FIXTURE_SETUP}
+from scripts.web_only_bundle_consumer import validate_effective_bundle
+bdir, _ = make_bundle("${sb}")
+m_sha = tamper_compose(bdir, ${JSON.stringify(candJson)})
+try: validate_effective_bundle(bdir, m_sha, "asados", CAND_IMG, CURR_IMG, ["asados_default"]); print("FAILED")
+except ValueError: print("REJECTED_COMPOSE")`, 'REJECTED_COMPOSE')
+  })
+
+  it.each([
+    ['empty manifest sha', '""', '"asados"', 'CAND_IMG', 'CURR_IMG', '["asados_default"]'],
+    ['non-hex64 manifest sha', '"not-hex"', '"asados"', 'CAND_IMG', 'CURR_IMG', '["asados_default"]'],
+    ['empty project', 'res["manifest_sha256"]', '""', 'CAND_IMG', 'CURR_IMG', '["asados_default"]'],
+    ['non-string project', 'res["manifest_sha256"]', '123', 'CAND_IMG', 'CURR_IMG', '["asados_default"]'],
+    ['invalid candidate image', 'res["manifest_sha256"]', '"asados"', '"bad-img"', 'CURR_IMG', '["asados_default"]'],
+    ['invalid current image', 'res["manifest_sha256"]', '"asados"', 'CAND_IMG', '"bad-img"', '["asados_default"]'],
+    ['string networks', 'res["manifest_sha256"]', '"asados"', 'CAND_IMG', 'CURR_IMG', '"asados_default"'],
+    ['dict networks', 'res["manifest_sha256"]', '"asados"', 'CAND_IMG', 'CURR_IMG', '{"asados_default": {}}'],
+    ['empty networks', 'res["manifest_sha256"]', '"asados"', 'CAND_IMG', 'CURR_IMG', '[]'],
+  ])('rejects invalid argument types and empty anchors: %s', (_, shaExpr, projExpr, candExpr, currExpr, netsExpr) => {
+    const sb = getSandbox()
+    expectPython(`${FIXTURE_SETUP}
+from scripts.web_only_bundle_consumer import validate_effective_bundle
+bdir, res = make_bundle("${sb}")
+try:
+    validate_effective_bundle(bdir, ${shaExpr}, ${projExpr}, ${candExpr}, ${currExpr}, ${netsExpr})
+    print("FAILED")
+except ValueError:
+    print("REJECTED_ARGS")`, 'REJECTED_ARGS')
+  })
+
+  it.each([
+    ['non-hex64 container_id', 'mdoc["container_id"] = "bad_id"'],
+    ['container_name with slash', 'mdoc["container_name"] = "/crm-sofia-web"'],
+    ['boolean published port', 'mdoc["ports"]["published"] = True'],
+    ['non-loopback host ip', 'mdoc["ports"]["host_ip"] = "0.0.0.0"'],
+  ])('rejects invalid manifest container types or ports: %s', (_, mutateCode) => {
+    const sb = getSandbox()
+    expectPython(`${FIXTURE_SETUP}
+from scripts.web_only_bundle_consumer import validate_effective_bundle
+bdir, res = make_bundle("${sb}")
+mpath = os.path.join(bdir, "manifest.json")
+with open(mpath, "r") as f: mdoc = json.load(f)
+${mutateCode}
+mraw = (json.dumps(mdoc) + "\\n").encode()
+with open(mpath, "wb") as f: f.write(mraw)
+m_sha = hashlib.sha256(mraw).hexdigest()
+try:
+    validate_effective_bundle(bdir, m_sha, "asados", CAND_IMG, CURR_IMG, ["asados_default"])
+    print("FAILED")
+except ValueError:
+    print("REJECTED_MANIFEST_META")`, 'REJECTED_MANIFEST_META')
+  })
+
+  it.each([
+    ['candidate missing name', 'candidate-compose.json', '{"asados_default": {"external": true}}'],
+    ['candidate driver attr', 'candidate-compose.json', '{"asados_default": {"name": "asados_default", "external": true, "driver": "bridge"}}'],
+    ['rollback missing name', 'rollback-compose.json', '{"asados_default": {"external": true}}'],
+    ['rollback driver attr', 'rollback-compose.json', '{"asados_default": {"name": "asados_default", "external": true, "driver": "bridge"}}'],
+  ])('rejects invalid external network definition in %s', (_, targetFile, netsJson) => {
+    const sb = getSandbox()
+    expectPython(`${FIXTURE_SETUP}
+from scripts.web_only_bundle_consumer import validate_effective_bundle
+bdir, res = make_bundle("${sb}")
+p = os.path.join(bdir, "${targetFile}")
+with open(p, "r") as f: doc = json.load(f)
+doc["networks"] = json.loads(${JSON.stringify(netsJson)})
+raw = (json.dumps(doc) + "\\n").encode()
+with open(p, "wb") as f: f.write(raw)
+sha_key = "candidate_compose_sha256" if "${targetFile}" == "candidate-compose.json" else "rollback_compose_sha256"
+mpath = os.path.join(bdir, "manifest.json")
+with open(mpath, "r") as f: mdoc = json.load(f)
+mdoc[sha_key] = hashlib.sha256(raw).hexdigest()
+mraw = (json.dumps(mdoc) + "\\n").encode()
+with open(mpath, "wb") as f: f.write(mraw)
+m_sha = hashlib.sha256(mraw).hexdigest()
+try:
+    validate_effective_bundle(bdir, m_sha, "asados", CAND_IMG, CURR_IMG, ["asados_default"])
+    print("FAILED")
+except ValueError as err:
+    assert "declare external: true and name" in str(err)
+    print("REJECTED_NET_SHAPE")`, 'REJECTED_NET_SHAPE')
+  })
+
+  it('preserves primary error and drains descriptors when close fails during cleanup', () => {
+    const sb = getSandbox()
+    expectPython(`${FIXTURE_SETUP}
+from scripts.web_only_bundle_consumer import validate_effective_bundle
+bdir, res = make_bundle("${sb}")
+orig_close = os.close
+calls = 0
+def mock_close(fd):
+    global calls
+    calls += 1
+    if calls == 5:
+        raise OSError("mocked close error during cleanup")
+    return orig_close(fd)
+os.close = mock_close
+try:
+    validate_effective_bundle(bdir, "0"*64, "asados", CAND_IMG, CURR_IMG, ["asados_default"])
+    print("FAILED")
+except ValueError:
+    print("PRIMARY_PRESERVED")
+finally:
+    os.close = orig_close`, 'PRIMARY_PRESERVED')
+  })
+})

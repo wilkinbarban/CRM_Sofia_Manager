@@ -4,8 +4,9 @@ import hashlib
 import json
 import math
 import os
+import re
 import stat
-from typing import Any
+from typing import Any, Mapping, Sequence, AbstractSet
 
 try:
     from scripts.web_only_bundle_writer import FDOwnershipRegistry, safe_close_cleanup
@@ -16,9 +17,15 @@ __all__ = [
     "open_validated_bundle_fd",
     "read_private_entry",
     "parse_json_safe",
+    "validate_effective_bundle",
     "FDOwnershipRegistry",
     "safe_close_cleanup",
 ]
+
+HEX_64_PATTERN = re.compile(r"^[0-9a-fA-F]{64}$")
+IMAGE_ID_PATTERN = re.compile(r"^sha256:[0-9a-fA-F]{64}$")
+CONTAINER_NAME_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.-]*$")
+
 
 ALLOWED_ENTRY_NAMES = frozenset({
     "manifest.json",
@@ -260,3 +267,150 @@ def parse_json_safe(data: bytes) -> dict:
         raise ValueError("invalid JSON payload: root must be a JSON object")
 
     return parsed
+
+
+def _normalize_port_spec(p: Any) -> dict[str, Any]:
+    if not isinstance(p, dict):
+        raise ValueError("invalid port spec")
+    pub, tgt = p.get("published"), p.get("target")
+    if isinstance(pub, bool) or isinstance(tgt, bool):
+        raise ValueError("port published and target cannot be bool")
+    if str(pub) != "3020" or str(tgt) != "3000":
+        raise ValueError("ports mapping mismatch: expected published 3020 and target 3000")
+    if p.get("host_ip") != "127.0.0.1" or p.get("protocol", "tcp") != "tcp":
+        raise ValueError("ports host_ip must be 127.0.0.1 and protocol tcp")
+    return {"host_ip": "127.0.0.1", "published": 3020, "target": 3000, "protocol": "tcp"}
+
+
+def _validate_compose_doc(doc: dict[str, Any], exp_image_id: str, exp_net_names: set[str]) -> None:
+    if set(doc.keys()) - {"services", "networks"}:
+        raise ValueError("unexpected top-level keys in compose payload")
+    services = doc.get("services")
+    if not isinstance(services, dict) or list(services.keys()) != ["web"]:
+        raise ValueError("compose payload must define only web service")
+    web = services["web"]
+    if not isinstance(web, dict) or web.get("image") != exp_image_id:
+        raise ValueError("invalid web service definition or image mismatch")
+    if any(k in web for k in ("build", "depends_on", "volumes", "binds", "mounts")):
+        raise ValueError("forbidden compose directive")
+    ports = web.get("ports")
+    if not isinstance(ports, list) or len(ports) != 1:
+        raise ValueError("web service ports configuration mismatch")
+    _normalize_port_spec(ports[0])
+    web_nets, top_nets = web.get("networks"), doc.get("networks")
+    if not isinstance(web_nets, dict) or set(web_nets.keys()) != exp_net_names or not isinstance(top_nets, dict) or set(top_nets.keys()) != exp_net_names:
+        raise ValueError("compose networks mismatch")
+    for n, cfg in web_nets.items():
+        if not isinstance(cfg, dict) or set(cfg.keys()) - {"aliases"}:
+            raise ValueError(f"invalid network config for {n}")
+        aliases = cfg.get("aliases")
+        if aliases is not None and (not isinstance(aliases, list) or not aliases or not all(isinstance(a, str) and a.strip() for a in aliases)):
+            raise ValueError("network aliases must be a list of non-empty strings")
+    for n, defn in top_nets.items():
+        if (
+            not isinstance(defn, dict)
+            or set(defn.keys()) != {"name", "external"}
+            or defn.get("external") is not True
+            or defn.get("name") != n
+        ):
+            raise ValueError(f"network {n} must declare external: true and name: {n}")
+
+
+def validate_effective_bundle(
+    bundle_dir: str,
+    expected_manifest_sha256: str,
+    expected_project: str,
+    expected_candidate_image_id: str,
+    expected_current_image_id: str,
+    expected_networks: Sequence[str] | AbstractSet[str],
+) -> dict[str, Any]:
+    """Validate inert read-only web-only deployment bundle.
+
+    Opens bundle directory safely, validates manifest and compose payloads,
+    and returns allowlisted metadata with single-attempt cleanup.
+    """
+    for val, name, pattern in [
+        (expected_manifest_sha256, "manifest_sha256", HEX_64_PATTERN),
+        (expected_candidate_image_id, "candidate_image_id", IMAGE_ID_PATTERN),
+        (expected_current_image_id, "current_image_id", IMAGE_ID_PATTERN),
+    ]:
+        if not isinstance(val, str) or not pattern.fullmatch(val):
+            raise ValueError(f"invalid {name}")
+    if not isinstance(expected_project, str) or not expected_project.strip():
+        raise ValueError("invalid expected_project")
+
+    if isinstance(expected_networks, (str, bytes, Mapping)) or not isinstance(expected_networks, (Sequence, AbstractSet)):
+        raise ValueError("expected_networks must be non-empty sequence or set of strings")
+    exp_net_names = set(expected_networks)
+    if not exp_net_names or not all(isinstance(n, str) and n.strip() for n in exp_net_names):
+        raise ValueError("expected_networks must be non-empty sequence or set of strings")
+
+    reg = FDOwnershipRegistry()
+    raw_fd = open_validated_bundle_fd(bundle_dir)
+    try:
+        bundle_fd = reg.register(raw_fd)
+    except BaseException as reg_err:
+        safe_close_cleanup(raw_fd, primary_err=reg_err)
+        raise
+
+    try:
+        m_bytes, m_sha = read_private_entry(bundle_fd, "manifest.json", registry=reg)
+        if m_sha.lower() != expected_manifest_sha256.lower():
+            raise ValueError("manifest sha mismatch")
+
+        manifest = parse_json_safe(m_bytes)
+        expected_fields = {
+            "schema_version": "1.0", "project": expected_project, "service": "web",
+            "candidate_image_id": expected_candidate_image_id, "current_image_id": expected_current_image_id,
+            "candidate_compose_file": "candidate-compose.json", "rollback_compose_file": "rollback-compose.json",
+        }
+        if any(manifest.get(k) != v for k, v in expected_fields.items()):
+            raise ValueError("manifest metadata mismatch")
+
+        cid, cname = manifest.get("container_id"), manifest.get("container_name")
+        if not isinstance(cid, str) or not HEX_64_PATTERN.fullmatch(cid):
+            raise ValueError("invalid container_id in manifest")
+        if not isinstance(cname, str) or not CONTAINER_NAME_PATTERN.fullmatch(cname):
+            raise ValueError("invalid container_name in manifest")
+
+        ports = _normalize_port_spec(manifest.get("ports"))
+
+        m_nets = manifest.get("networks")
+        if not isinstance(m_nets, list) or set(m_nets) != exp_net_names:
+            raise ValueError("manifest networks mismatch")
+
+        cand_exp_sha, roll_exp_sha = manifest.get("candidate_compose_sha256"), manifest.get("rollback_compose_sha256")
+        if not (isinstance(cand_exp_sha, str) and HEX_64_PATTERN.fullmatch(cand_exp_sha) and isinstance(roll_exp_sha, str) and HEX_64_PATTERN.fullmatch(roll_exp_sha)):
+            raise ValueError("invalid payload sha in manifest")
+
+        cand_bytes, cand_sha = read_private_entry(bundle_fd, "candidate-compose.json", registry=reg)
+        roll_bytes, roll_sha = read_private_entry(bundle_fd, "rollback-compose.json", registry=reg)
+        if cand_sha != cand_exp_sha or roll_sha != roll_exp_sha:
+            raise ValueError("payload sha mismatch")
+
+        _validate_compose_doc(parse_json_safe(cand_bytes), expected_candidate_image_id, exp_net_names)
+        _validate_compose_doc(parse_json_safe(roll_bytes), expected_current_image_id, exp_net_names)
+
+        reg.close_all()
+    except BaseException as err:
+        reg.safe_close_all(primary_err=err)
+        raise
+
+    return {
+        "status": "ok",
+        "bundle_dir": bundle_dir,
+        "manifest_path": os.path.join(bundle_dir, "manifest.json"),
+        "candidate_compose_path": os.path.join(bundle_dir, "candidate-compose.json"),
+        "rollback_compose_path": os.path.join(bundle_dir, "rollback-compose.json"),
+        "manifest_sha256": m_sha,
+        "candidate_compose_sha256": cand_sha,
+        "rollback_compose_sha256": roll_sha,
+        "project": expected_project,
+        "service": "web",
+        "candidate_image_id": expected_candidate_image_id,
+        "current_image_id": expected_current_image_id,
+        "networks": sorted(exp_net_names),
+        "ports": ports,
+        "container_id": cid,
+        "container_name": cname,
+    }
