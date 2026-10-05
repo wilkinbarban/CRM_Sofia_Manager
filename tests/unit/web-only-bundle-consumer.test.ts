@@ -277,3 +277,238 @@ finally:
     os.open, os.close = orig_open, orig_close`, 'PROTECTED')
   })
 })
+
+describe('web-only-bundle-consumer U2.1b inert read_private_entry and parse_json_safe', () => {
+  it.each([
+    ['negative bundle_fd', '-1', '"manifest.json"'],
+    ['boolean bundle_fd', 'True', '"manifest.json"'],
+    ['unauthorized name', 'bfd', '"other.json"'],
+    ['path traversal name', 'bfd', '"../manifest.json"'],
+    ['absolute path name', 'bfd', '"/manifest.json"'],
+    ['slash separator name', 'bfd', '"sub/manifest.json"'],
+  ])('rejects invalid bundle descriptor or entry name: %s', (_, bfdExpr, nameExpr) => {
+    const sb = getSandbox()
+    expectPython(`
+import os, scripts.web_only_bundle_consumer as c
+bfd = os.open("${sb}", os.O_RDONLY | os.O_DIRECTORY)
+try:
+    c.read_private_entry(${bfdExpr}, ${nameExpr})
+    print("FAILED")
+except ValueError:
+    print("REJECTED_INPUT")
+finally:
+    os.close(bfd)`, 'REJECTED_INPUT')
+  })
+
+  it.each([
+    ['symlink entry', (dir: string) => `with open("${dir}/real", "wb") as f: f.write(b"{}")\nos.chmod("${dir}/real", 0o600)\nos.symlink("${dir}/real", "${dir}/manifest.json")`],
+    ['non-regular FIFO nohang', (dir: string) => `os.mkfifo("${dir}/manifest.json", 0o600)`],
+    ['bad mode 0644', (dir: string) => `with open("${dir}/manifest.json", "wb") as f: f.write(b"{}")\nos.chmod("${dir}/manifest.json", 0o644)`],
+    ['bad mode 0700', (dir: string) => `with open("${dir}/manifest.json", "wb") as f: f.write(b"{}")\nos.chmod("${dir}/manifest.json", 0o700)`],
+  ])('rejects insecure filesystem entry invariant: %s', (_, setupFn) => {
+    const sb = getSandbox()
+    const setupPy = setupFn(sb)
+    expectPython(`
+import os, scripts.web_only_bundle_consumer as c
+${setupPy}
+bfd = os.open("${sb}", os.O_RDONLY | os.O_DIRECTORY)
+try:
+    c.read_private_entry(bfd, "manifest.json")
+    print("FAILED")
+except PermissionError:
+    print("REJECTED_ENTRY")
+finally:
+    os.close(bfd)`, 'REJECTED_ENTRY')
+  })
+
+  it('rejects entry owner mismatch', () => {
+    const sb = getSandbox()
+    expectPython(`
+import os, stat, scripts.web_only_bundle_consumer as c
+mpath = os.path.join("${sb}", "manifest.json")
+with open(mpath, "wb") as f: f.write(b"{}")
+os.chmod(mpath, 0o600)
+bfd = os.open("${sb}", os.O_RDONLY | os.O_DIRECTORY)
+orig_fstat = os.fstat
+def mock_fstat(fd):
+    st = orig_fstat(fd)
+    if stat.S_ISREG(st.st_mode):
+        class MockStat:
+            def __getattr__(self, name):
+                if name == "st_uid": return 99999
+                return getattr(st, name)
+        return MockStat()
+    return st
+os.fstat = mock_fstat
+try:
+    c.read_private_entry(bfd, "manifest.json")
+    print("FAILED")
+except PermissionError:
+    print("REJECTED_OWNER")
+finally:
+    os.fstat = orig_fstat
+    os.close(bfd)`, 'REJECTED_OWNER')
+  })
+
+  it.each([
+    ['manifest.json', '{"schema_version": "1.0"}'],
+    ['candidate-compose.json', '{"services": {"web": {"image": "c"}}}'],
+    ['rollback-compose.json', '{"services": {"web": {"image": "r"}}}'],
+  ])('reads validated private entry for fixed names: %s', (name, payload) => {
+    const sb = getSandbox()
+    expectPython(`
+import os, hashlib, scripts.web_only_bundle_consumer as c
+p = os.path.join("${sb}", "${name}")
+content = ${JSON.stringify(payload)}.encode("utf-8")
+with open(p, "wb") as f: f.write(content)
+os.chmod(p, 0o600)
+bfd = os.open("${sb}", os.O_RDONLY | os.O_DIRECTORY)
+data, digest = c.read_private_entry(bfd, "${name}")
+assert data == content, "data mismatch"
+assert digest == hashlib.sha256(content).hexdigest(), "digest mismatch"
+st = os.fstat(bfd)
+assert st is not None, "caller bundle_fd closed"
+os.close(bfd)
+print("SUCCESS_READ_ENTRY")`, 'SUCCESS_READ_ENTRY')
+  })
+
+  it('supports caller managing entry descriptor with FDOwnershipRegistry', () => {
+    const sb = getSandbox()
+    expectPython(`
+import os, scripts.web_only_bundle_consumer as c
+from scripts.web_only_bundle_consumer import FDOwnershipRegistry
+p = os.path.join("${sb}", "manifest.json")
+with open(p, "wb") as f: f.write(b"{}")
+os.chmod(p, 0o600)
+bfd = os.open("${sb}", os.O_RDONLY | os.O_DIRECTORY)
+reg = FDOwnershipRegistry()
+data, digest = c.read_private_entry(bfd, "manifest.json", registry=reg)
+assert len(reg) == 0, "registry leaked descriptors"
+os.close(bfd)
+print("SUCCESS_REGISTRY_READ")`, 'SUCCESS_REGISTRY_READ')
+  })
+
+  it.each([
+    ['registration failure', `    class FailingRegistry(c.FDOwnershipRegistry):
+        def register(self, fd): raise RuntimeError("registration failed")
+    reg = FailingRegistry()
+    try:
+        c.read_private_entry(bfd, "manifest.json", registry=reg)
+        print("FAILED")
+    except RuntimeError as err:
+        assert str(err) == "registration failed"
+        print("PRIMARY_PRESERVED")`],
+    ['read failure', `    orig_read = os.read
+    def mock_read(fd, n): raise OSError("read failed")
+    os.read = mock_read
+    try:
+        c.read_private_entry(bfd, "manifest.json")
+        print("FAILED")
+    except OSError as err:
+        assert str(err) == "read failed"
+        print("PRIMARY_PRESERVED")
+    finally:
+        os.read = orig_read`],
+    ['close failure with sentinel protection', `    orig_close = os.close
+    reused_sentinel = None
+    close_calls = 0
+    def mock_close(fd):
+        global reused_sentinel, close_calls
+        if fd != bfd:
+            close_calls += 1
+            if close_calls == 1:
+                orig_close(fd)
+                reused_sentinel = os.open("/dev/null", os.O_RDONLY)
+                raise OSError("close failed")
+        return orig_close(fd)
+    os.close = mock_close
+    try:
+        c.read_private_entry(bfd, "manifest.json")
+        print("FAILED")
+    except OSError as err:
+        assert str(err) == "close failed"
+        assert close_calls == 1, f"expected 1 close, got {close_calls}"
+        assert reused_sentinel is not None
+        os.fstat(reused_sentinel)
+        print("PRIMARY_PRESERVED")
+    finally:
+        os.close = orig_close
+        if reused_sentinel is not None:
+            try: os.close(reused_sentinel)
+            except OSError: pass`],
+  ])('handles injected failure safely preserving primary and sentinel: %s', (_, testBody) => {
+    const sb = getSandbox()
+    expectPython(`
+import os, scripts.web_only_bundle_consumer as c
+p = os.path.join("${sb}", "manifest.json")
+with open(p, "wb") as f: f.write(b"{}")
+os.chmod(p, 0o600)
+fds_before = set(os.listdir("/proc/self/fd"))
+bfd = os.open("${sb}", os.O_RDONLY | os.O_DIRECTORY)
+try:
+${testBody}
+finally:
+    os.close(bfd)
+assert set(os.listdir("/proc/self/fd")) == fds_before, "fd leaked"`, 'PRIMARY_PRESERVED')
+  })
+
+  it.each([
+    ['non-bytes string', '"string"', 'ValueError', 'payload must be bytes'],
+    ['non-bytes None', 'None', 'ValueError', 'payload must be bytes'],
+    ['malformed UTF-8', 'b"\\xff\\xfe"', 'ValueError', 'malformed UTF-8'],
+    ['empty bytes', 'b""', 'ValueError', 'syntax error'],
+    ['incomplete syntax', 'b"{"', 'ValueError', 'syntax error'],
+    ['syntax error', 'b"{bad}"', 'ValueError', 'syntax error'],
+    ['non-object root array', 'b"[1, 2]"', 'ValueError', 'root must be a JSON object'],
+    ['non-object root number', 'b"123"', 'ValueError', 'root must be a JSON object'],
+    ['non-object root string', 'b"\\"hello\\""', 'ValueError', 'root must be a JSON object'],
+    ['non-object root bool', 'b"true"', 'ValueError', 'root must be a JSON object'],
+    ['non-object root null', 'b"null"', 'ValueError', 'root must be a JSON object'],
+    ['NaN special float', 'b"{\\"val\\": NaN}"', 'ValueError', 'special numbers'],
+    ['Infinity special float', 'b"{\\"val\\": Infinity}"', 'ValueError', 'special numbers'],
+    ['-Infinity special float', 'b"{\\"val\\": -Infinity}"', 'ValueError', 'special numbers'],
+    ['nested NaN in array', 'b"{\\"items\\": [NaN]}"', 'ValueError', 'special numbers'],
+    ['positive float overflow', 'b"{\\"val\\": 1e999}"', 'ValueError', 'special numbers'],
+    ['negative float overflow', 'b"{\\"val\\": -1e999}"', 'ValueError', 'special numbers'],
+    ['nested float overflow', 'b"{\\"nested\\": {\\"val\\": 1e999}}"', 'ValueError', 'special numbers'],
+    ['array float overflow', 'b"{\\"items\\": [1e999]}"', 'ValueError', 'special numbers'],
+    ['duplicate keys root', 'b"{\\"a\\": 1, \\"a\\": 2}"', 'ValueError', 'duplicate key'],
+    ['duplicate keys nested', 'b"{\\"nested\\": {\\"k\\": 1, \\"k\\": 2}}"', 'ValueError', 'duplicate key'],
+    ['duplicate keys array', 'b"{\\"arr\\": [{\\"k\\": 1, \\"k\\": 2}]}"', 'ValueError', 'duplicate key'],
+  ])('parse_json_safe rejects invalid payload: %s', (_, inputExpr, errType, expectedSubstr) => {
+    expectPython(`
+import scripts.web_only_bundle_consumer as c
+try:
+    c.parse_json_safe(${inputExpr})
+    print("FAILED")
+except ${errType} as err:
+    assert "${expectedSubstr}" in str(err), f"unexpected error msg: {err}"
+    print("REJECTED_JSON")`, 'REJECTED_JSON')
+  })
+
+  it('parse_json_safe generic error does not leak payload secrets', () => {
+    expectPython(`
+import scripts.web_only_bundle_consumer as c
+secret = "SECRET_SUPER_TOKEN_xyz999"
+for bad in [f'{{"{secret}": 1, "{secret}": 2}}'.encode(), f'{{"{secret}": '.encode()]:
+    try:
+        c.parse_json_safe(bad)
+        print("FAILED")
+    except ValueError as err:
+        assert secret not in str(err), f"secret leaked in error: {err}"
+print("SECRETS_PROTECTED")`, 'SECRETS_PROTECTED')
+  })
+
+  it('parse_json_safe successfully parses valid JSON payload with finite floats', () => {
+    expectPython(`
+import scripts.web_only_bundle_consumer as c
+payload = b'{"schema_version": "1.0", "services": {"web": {"port": 80}}, "float_val": 1.25, "exp_val": 1e2, "tags": ["prod"]}'
+parsed = c.parse_json_safe(payload)
+assert parsed["schema_version"] == "1.0"
+assert parsed["services"]["web"]["port"] == 80
+assert parsed["float_val"] == 1.25
+assert parsed["exp_val"] == 100.0
+assert parsed["tags"] == ["prod"]
+print("SUCCESS_PARSE_JSON")`, 'SUCCESS_PARSE_JSON')
+  })
+})
