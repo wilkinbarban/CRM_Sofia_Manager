@@ -91,7 +91,7 @@ resolve_compose_project() {
   printf '%s\n' 'asados'
 }
 
-compose_project="$(resolve_compose_project)"
+compose_project="${ASADOS_COMPOSE_PROJECT:-}"
 
 require_immutable_local_image() {
   local ref=$1
@@ -294,6 +294,125 @@ load_state() {
   RECORDED_AT=""
   DEPLOY_MODE=""
   CURRENT_GATES=()
+  STATE_VERSION=""
+  V2_BUNDLE_DIR=""
+  V2_ROLLBACK_COMPOSE=""
+
+  local version_count
+  version_count="$(awk -F= '$1 ~ /^[[:space:]]*STATE_VERSION[[:space:]]*$/ { c++ } END { print c+0 }' "$state_file")"
+  if (( version_count > 1 )); then
+    printf 'Duplicate STATE_VERSION key in release state\n' >&2
+    exit 1
+  fi
+
+  if (( version_count == 1 )); then
+    local raw_version
+    raw_version="$(awk -F= '$1 ~ /^[[:space:]]*STATE_VERSION[[:space:]]*$/ { print $2; exit }' "$state_file")"
+    raw_version="${raw_version//[\'\" ]/}"
+    if [[ "$raw_version" != "2" ]]; then
+      printf 'Invalid or unsupported STATE_VERSION in release state: %s\n' "$raw_version" >&2
+      exit 1
+    fi
+
+    if [[ -n "${DOCKER_HOST:-}" && "$DOCKER_HOST" != "unix:///var/run/docker.sock" ]]; then
+      printf 'Conflicting ambient DOCKER_HOST selector detected: %s\n' "$DOCKER_HOST" >&2
+      exit 1
+    fi
+    if [[ -n "${DOCKER_CONTEXT:-}" && "$DOCKER_CONTEXT" != "default" ]]; then
+      printf 'Conflicting ambient DOCKER_CONTEXT selector detected: %s\n' "$DOCKER_CONTEXT" >&2
+      exit 1
+    fi
+    export DOCKER_HOST="unix:///var/run/docker.sock"
+    unset DOCKER_CONTEXT
+    compose_project="${compose_project:-$(resolve_compose_project)}"
+
+    local docker_endpoint="unix:///var/run/docker.sock"
+    local compose_json
+    compose_json="$(docker --host "$docker_endpoint" compose -f "$root/docker-compose.yml" \
+      --project-directory "$root" --project-name "$compose_project" config --format json 2>/dev/null)" || {
+      printf 'Failed to obtain expected Compose configuration\n' >&2
+      exit 1
+    }
+
+    local expected_networks
+    expected_networks="$(printf '%s' "$compose_json" | PYTHONDONTWRITEBYTECODE=1 python3 -B -c '
+import json, sys
+try:
+    doc = json.load(sys.stdin)
+    services = doc.get("services", {}) if isinstance(doc, dict) else {}
+    web = services.get("web", {}) if isinstance(services, dict) else {}
+    wn = web.get("networks")
+    keys = list(wn.keys()) if isinstance(wn, dict) else (wn if isinstance(wn, list) else [])
+    if not keys or not isinstance(web, dict): sys.exit(1)
+    tn = doc.get("networks", {})
+    if tn is not None and not isinstance(tn, dict): sys.exit(1)
+    tn = tn or {}
+    names, seen = [], set()
+    for k in keys:
+        if not isinstance(k, str) or not k.strip(): sys.exit(1)
+        d = tn.get(k)
+        name = d["name"] if isinstance(d, dict) and isinstance(d.get("name"), str) and d["name"].strip() else (k if isinstance(k, str) and k.strip() else None)
+        if not name or name in seen: sys.exit(1)
+        seen.add(name); names.append(name)
+    if not names: sys.exit(1)
+    print(json.dumps(sorted(names)))
+except Exception:
+    sys.exit(1)
+' 2>/dev/null)" || {
+      printf 'Failed to resolve expected Compose networks\n' >&2
+      exit 1
+    }
+
+    local state_out
+    state_out="$(PYTHONDONTWRITEBYTECODE=1 python3 -B "$root/scripts/web_only_state.py" \
+      --state-file "$state_file" \
+      --expected-root "$root" \
+      --expected-endpoint "$docker_endpoint" \
+      --expected-project "$compose_project" \
+      --expected-networks "$expected_networks" 2>/dev/null)" || {
+      printf 'Invalid or unverified v2 release state\n' >&2
+      exit 1
+    }
+
+    local tab=$'\t'
+    if [[ "$state_out" == *$'\n'* || "$state_out" == *$'\r'* ]]; then
+      printf 'Invalid v2 state output framing: newline detected\n' >&2
+      exit 1
+    fi
+    local no_tabs="${state_out//$tab/}"
+    if [[ "$no_tabs" =~ [[:cntrl:]] ]]; then
+      printf 'Invalid v2 state output framing: control characters detected\n' >&2
+      exit 1
+    fi
+    local tabs_only="${state_out//[^$tab]/}"
+    if [[ "${#tabs_only}" -ne 4 ]]; then
+      printf 'Invalid v2 state output framing: expected 5 tab-separated fields\n' >&2
+      exit 1
+    fi
+    local v2_status v2_bundle_dir v2_rollback_compose v2_previous_id v2_deployed_id
+    IFS="$tab" read -r v2_status v2_bundle_dir v2_rollback_compose v2_previous_id v2_deployed_id <<< "$state_out"
+    if [[ -z "$v2_status" || -z "$v2_bundle_dir" || -z "$v2_rollback_compose" || -z "$v2_previous_id" || -z "$v2_deployed_id" ]]; then
+      printf 'Invalid v2 state output framing: empty field detected\n' >&2
+      exit 1
+    fi
+    local roundtrip="${v2_status}${tab}${v2_bundle_dir}${tab}${v2_rollback_compose}${tab}${v2_previous_id}${tab}${v2_deployed_id}"
+    if [[ "$state_out" != "$roundtrip" ]]; then
+      printf 'Invalid v2 state output framing: roundtrip mismatch\n' >&2
+      exit 1
+    fi
+    if [[ "$v2_status" != "ok" ]]; then
+      printf 'Invalid v2 state status: %s\n' "$v2_status" >&2
+      exit 1
+    fi
+
+    STATE_VERSION="2"
+    DEPLOY_MODE="web-only"
+    V2_BUNDLE_DIR="$v2_bundle_dir"
+    V2_ROLLBACK_COMPOSE="$v2_rollback_compose"
+    PREVIOUS_ID="$v2_previous_id"
+    DEPLOYED_ID="$v2_deployed_id"
+    return 0
+  fi
 
   local line_num=0
   local line key val
@@ -414,6 +533,7 @@ load_state() {
       exit 1
     fi
   fi
+  compose_project="${compose_project:-$(resolve_compose_project)}"
 }
 
 "$preflight" check "$state_root"
@@ -422,6 +542,7 @@ flock -n 9 || { printf '%s\n' 'Another Web deployment is active' >&2; exit 1; }
 
 case "$action" in
   deploy)
+    compose_project="${compose_project:-$(resolve_compose_project)}"
     require_immutable_local_image "$candidate_ref"
     candidate_id="$(image_id "$candidate_ref")"
     if docker inspect crm-sofia-web >/dev/null 2>&1; then
@@ -468,6 +589,30 @@ case "$action" in
     ;;
   rollback)
     load_state
+    if [[ "${STATE_VERSION:-}" == "2" ]]; then
+      effective_mode="${DEPLOY_MODE:-web-only}"
+      if [[ "$effective_mode" != "web-only" ]]; then
+        printf 'Unknown deploy mode in v2 release state: %s\n' "$effective_mode" >&2
+        exit 1
+      fi
+      docker image inspect "$PREVIOUS_ID" >/dev/null || {
+        printf 'Previous image ID not found locally: %s\n' "$PREVIOUS_ID" >&2
+        exit 1
+      }
+      started=$SECONDS
+      docker compose -f "$V2_ROLLBACK_COMPOSE" --project-directory "$root" --project-name "$compose_project" \
+        up -d --no-deps --force-recreate web || exit 1
+      wait_healthy || exit 1
+      ASADOS_EXPECTED_IMAGE_ID="$PREVIOUS_ID" "$smoke" || exit 1
+      "$ingress_limit_probe" "$public_origin" || exit 1
+      elapsed=$((SECONDS - started))
+      (( elapsed < 300 )) || {
+        printf 'Rollback exceeded five minutes: %s seconds\n' "$elapsed" >&2
+        exit 1
+      }
+      printf 'Rolled back to %s in %s seconds\n' "$PREVIOUS_ID" "$elapsed"
+      exit 0
+    fi
     require_immutable_local_image "$PREVIOUS_REF"
     [[ "$(image_id "$PREVIOUS_REF")" == "$PREVIOUS_ID" ]] || {
       printf '%s\n' 'Retained rollback tag no longer matches its recorded image ID' >&2

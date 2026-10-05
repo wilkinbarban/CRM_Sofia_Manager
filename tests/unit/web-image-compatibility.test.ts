@@ -1,5 +1,5 @@
 import { describe, expect, it, afterAll } from 'vitest'
-import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdtempSync, rmSync, statSync, mkdirSync, symlinkSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdtempSync, rmSync, statSync, mkdirSync, symlinkSync, chmodSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { spawnSync } from 'node:child_process'
@@ -72,7 +72,13 @@ function setupMockDeployEnvironment(options?: {
   const sandboxState = join(sandboxRoot, 'state')
   mkdirSync(sandboxScripts, { recursive: true })
   mkdirSync(sandboxState, { recursive: true })
+  ;[sandboxRoot, sandboxScripts, sandboxState].forEach((d) => chmodSync(d, 0o700))
   populateSafeBin(sandboxBin)
+
+  for (const s of ['web_only_state.py', 'web_only_bundle_consumer.py', 'web_only_bundle_writer.py']) {
+    const sp = join(root, 'scripts', s)
+    if (existsSync(sp)) writeFileSync(join(sandboxScripts, s), readFileSync(sp), { mode: 0o755 })
+  }
 
   const commandsLog = join(sandboxRoot, 'commands.log')
   const scriptsLog = join(sandboxRoot, 'scripts.log')
@@ -87,7 +93,9 @@ function setupMockDeployEnvironment(options?: {
   const candidateRef = 'crm-sofia-web:20261002'
 
   const initialImage = options?.initialContainerImage !== undefined ? options.initialContainerImage : currentId
-  writeFileSync(containerImageFile, initialImage ? `${initialImage}\n` : '')
+  if (initialImage) {
+    writeFileSync(containerImageFile, `${initialImage}\n`)
+  }
 
   if (options?.containerEnv !== null) {
     const envEntries = options?.containerEnv ?? DEFAULT_OPERATIONAL_GATES
@@ -226,8 +234,12 @@ case "\$cmd" in
     shift || true
     case "\$target" in
       crm-sofia-web|asados-web)
-        if [[ ! -f "\$CONTAINER_FILE" ]]; then
+        if [[ ! -f "\$CONTAINER_FILE" || ! -s "\$CONTAINER_FILE" ]]; then
           exit 1
+        fi
+        if [[ -f "${sandboxState}/fail_health" ]]; then
+          echo "unhealthy"
+          exit 0
         fi
         if [[ \$# -eq 0 ]]; then
           exit 0
@@ -285,8 +297,30 @@ case "\$cmd" in
       echo "Error: invalid compose \$1 arguments" >&2
       exit 1
     fi
-    if [[ \$# -eq 11 && "\$1" == "-f" && "\$3" == "--project-directory" && "\$5" == "--project-name" && "\$6" == "asados" && "\$7" == "up" && "\$8" == "-d" && "\$9" == "--no-deps" && "\${10}" == "--force-recreate" ]]; then
+    if [[ \$# -eq 9 && "\$1" == "-f" && "\$3" == "--project-directory" && "\$5" == "--project-name" && "\$6" == "asados" && "\$7" == "config" && "\$8" == "--format" && "\$9" == "json" ]]; then
       if [[ "\$2" != "${sandboxRoot}/docker-compose.yml" ]]; then
+        echo "Error: invalid compose file path" >&2
+        exit 1
+      fi
+      if [[ "\$4" != "${sandboxRoot}" ]]; then
+        echo "Error: invalid compose project directory" >&2
+        exit 1
+      fi
+      if [[ -f "${sandboxState}/fail_config" ]]; then
+        if [[ -f "${sandboxState}/fail_config_secret" ]]; then
+          echo "config error: super-secret-value-xyz" >&2
+        fi
+        exit 1
+      fi
+      if [[ -f "${sandboxState}/config_output" ]]; then
+        cat "${sandboxState}/config_output"
+        exit 0
+      fi
+      printf '%s\n' '{"services":{"web":{"networks":{"app-private":{"aliases":["asados-web","crm-sofia-web"]}}}},"networks":{"app-private":{"name":"asados-app-private","external":true}}}'
+      exit 0
+    fi
+    if [[ \$# -eq 11 && "\$1" == "-f" && "\$3" == "--project-directory" && "\$5" == "--project-name" && "\$6" == "asados" && "\$7" == "up" && "\$8" == "-d" && "\$9" == "--no-deps" && "\${10}" == "--force-recreate" ]]; then
+      if [[ "\$2" != "${sandboxRoot}/docker-compose.yml" && "\$2" != *rollback-compose.json ]]; then
         echo "Error: invalid compose file path" >&2
         exit 1
       fi
@@ -297,7 +331,11 @@ case "\$cmd" in
       target_svc="\${11}"
       case "\$target_svc" in
         web)
-          requested="\${CRM_SOFIA_WEB_IMAGE:-}"
+          if [[ "\$2" == *rollback-compose.json ]]; then
+            requested="\$(grep -o '"image": *"[^"]*"' "\$2" | head -n 1 | cut -d'"' -f4)"
+          else
+            requested="\${CRM_SOFIA_WEB_IMAGE:-}"
+          fi
           if [[ -n "\$requested" ]]; then
             resolved_id="\$(awk -v r="\$requested" '\$1 == r { print \$2; exit } \$2 == r { print \$2; exit }' "\$TAGS_FILE")"
             if [[ -z "\$resolved_id" ]]; then
@@ -1579,5 +1617,205 @@ describe('Web Image Compatibility & Dual Tagging', () => {
         expect(existsSync(rootDir)).toBe(false)
       })
     })
+
+    describe('U2.2b-ii Manual rollback v2 with validated effective bundle', () => {
+      it('executes successful manual v2 rollback with validated bundle when current web is absent', () => {
+        const harness = setupMockDeployEnvironment({ initialContainerImage: '' })
+        try {
+          const { sandboxRoot, sandboxDeployScript, sandboxState, commandsLog, env } = harness
+          const { prevId, envPath } = setupV2StateFixture(sandboxRoot, sandboxState)
+          const beforeBytes = readFileSync(envPath, 'utf8')
+
+          const res = spawnSync('bash', [sandboxDeployScript, 'rollback'], {
+            env,
+            cwd: sandboxRoot,
+            encoding: 'utf8',
+          })
+
+          expect(res.status).toBe(0)
+          expect(res.stdout).toContain(`Rolled back to ${prevId}`)
+          expect(readFileSync(envPath, 'utf8')).toBe(beforeBytes)
+          const commands = readFileSync(commandsLog, 'utf8')
+          expect(commands).toContain('rollback-compose.json')
+          expect(commands).not.toContain('asados-sofia-inbound-batch-maintenance')
+          expect(commands).not.toContain('_ENABLED=')
+        } finally {
+          harness.cleanup()
+        }
+      })
+
+      it.each([
+        ['duplicate version', (l: string[]) => ['STATE_VERSION=2', ...l], /Duplicate STATE_VERSION key/],
+        ['invalid version 1', (l: string[]) => l.map((s) => s.startsWith('STATE_VERSION=') ? 'STATE_VERSION=1' : s), /Invalid or unsupported STATE_VERSION/],
+        ['invalid version 3', (l: string[]) => l.map((s) => s.startsWith('STATE_VERSION=') ? 'STATE_VERSION=3' : s), /Invalid or unsupported STATE_VERSION/],
+      ])('rejects %s with no mutation', (_, transform, expectedErr) => {
+        const harness = setupMockDeployEnvironment({ initialContainerImage: '' })
+        try {
+          const { sandboxRoot, sandboxDeployScript, sandboxState, commandsLog, env } = harness
+          setupV2StateFixture(sandboxRoot, sandboxState, { transformLines: transform })
+          const res = spawnSync('bash', [sandboxDeployScript, 'rollback'], { env, cwd: sandboxRoot, encoding: 'utf8' })
+          expect(res.status).not.toBe(0)
+          expect(res.stderr).toMatch(expectedErr)
+          expect(readFileSync(commandsLog, 'utf8')).not.toContain('up -d')
+        } finally {
+          harness.cleanup()
+        }
+      })
+
+      it('rejects compose config failure generic redacted without mutation', () => {
+        const harness = setupMockDeployEnvironment({ initialContainerImage: '' })
+        try {
+          const { sandboxRoot, sandboxDeployScript, sandboxState, commandsLog, env } = harness
+          setupV2StateFixture(sandboxRoot, sandboxState)
+          writeFileSync(join(sandboxState, 'fail_config'), '1')
+          writeFileSync(join(sandboxState, 'fail_config_secret'), '1')
+          const res = spawnSync('bash', [sandboxDeployScript, 'rollback'], { env, cwd: sandboxRoot, encoding: 'utf8' })
+          expect(res.status).not.toBe(0)
+          expect(res.stderr).toContain('Failed to obtain expected Compose configuration')
+          expect(res.stderr).not.toContain('super-secret-value-xyz')
+          expect(res.stdout).not.toContain('super-secret-value-xyz')
+          expect(readFileSync(commandsLog, 'utf8')).not.toContain('up -d')
+        } finally {
+          harness.cleanup()
+        }
+      })
+
+      it('rejects network topology mismatch generic redacted without mutation', () => {
+        const harness = setupMockDeployEnvironment({ initialContainerImage: '' })
+        try {
+          const { sandboxRoot, sandboxDeployScript, sandboxState, commandsLog, env } = harness
+          setupV2StateFixture(sandboxRoot, sandboxState)
+          writeFileSync(join(sandboxState, 'config_output'), JSON.stringify({
+            services: { web: { networks: { 'other-net': { aliases: ['web'] } } } },
+            networks: { 'other-net': { name: 'other-network', external: true } },
+          }))
+          const res = spawnSync('bash', [sandboxDeployScript, 'rollback'], { env, cwd: sandboxRoot, encoding: 'utf8' })
+          expect(res.status).not.toBe(0)
+          expect(res.stderr).toContain('Invalid or unverified v2 release state')
+          expect(readFileSync(commandsLog, 'utf8')).not.toContain('up -d')
+        } finally {
+          harness.cleanup()
+        }
+      })
+
+      it('rejects tampered bundle compose payload without mutation', () => {
+        const harness = setupMockDeployEnvironment({ initialContainerImage: '' })
+        try {
+          const { sandboxRoot, sandboxDeployScript, sandboxState, commandsLog, env } = harness
+          const { bdir } = setupV2StateFixture(sandboxRoot, sandboxState)
+          writeFileSync(join(bdir, 'rollback-compose.json'), '{"services":{"web":{"image":"tampered"}}}')
+          const res = spawnSync('bash', [sandboxDeployScript, 'rollback'], { env, cwd: sandboxRoot, encoding: 'utf8' })
+          expect(res.status).not.toBe(0)
+          expect(res.stderr).toContain('Invalid or unverified v2 release state')
+          expect(readFileSync(commandsLog, 'utf8')).not.toContain('up -d')
+        } finally {
+          harness.cleanup()
+        }
+      })
+
+      it.each([
+        ['extra fields', 'ok\t/b\t/r\tsha256:1\tsha256:2\textra', /expected 5 tab-separated fields/],
+        ['empty field', 'ok\t\t/r\tsha256:1\tsha256:2', /empty field detected/],
+        ['multirecord', 'ok\t/b\t/r\tsha256:1\tsha256:2\nsecond_line', /newline detected/],
+        ['control chars', 'ok\t/b\t/r\tsha256:1\tsha256:2\x01', /control characters detected/],
+      ])('fails closed on invalid TSV provider output: %s', (_, stubTsv, expectedErr) => {
+        const harness = setupMockDeployEnvironment({ initialContainerImage: '' })
+        try {
+          const { sandboxRoot, sandboxDeployScript, sandboxState, commandsLog, env } = harness
+          setupV2StateFixture(sandboxRoot, sandboxState)
+          const mockPy = join(sandboxRoot, 'scripts', 'web_only_state.py')
+          writeFileSync(mockPy, `import sys\nsys.stdout.write(${JSON.stringify(stubTsv + '\n')})\nsys.exit(0)\n`, { mode: 0o755 })
+          const res = spawnSync('bash', [sandboxDeployScript, 'rollback'], { env, cwd: sandboxRoot, encoding: 'utf8' })
+          expect(res.status).not.toBe(0)
+          expect(res.stderr).toMatch(expectedErr)
+          expect(readFileSync(commandsLog, 'utf8')).not.toContain('up -d')
+        } finally {
+          harness.cleanup()
+        }
+      })
+
+      it.each([
+        ['smoke failure', 'fail_smoke'],
+        ['health failure', 'fail_health'],
+      ])('preserves release.env byte-identical and touches no scheduler on v2 %s', (_, failFile) => {
+        const harness = setupMockDeployEnvironment({ initialContainerImage: '' })
+        try {
+          const { sandboxRoot, sandboxDeployScript, sandboxState, commandsLog, env } = harness
+          const { envPath } = setupV2StateFixture(sandboxRoot, sandboxState)
+          const beforeBytes = readFileSync(envPath, 'utf8')
+          writeFileSync(join(sandboxState, failFile), '1')
+          const res = spawnSync('bash', [sandboxDeployScript, 'rollback'], {
+            env: { ...env, ASADOS_WEB_HEALTH_TIMEOUT_SECONDS: '1' },
+            cwd: sandboxRoot,
+            encoding: 'utf8',
+          })
+          expect(res.status).not.toBe(0)
+          expect(readFileSync(envPath, 'utf8')).toBe(beforeBytes)
+          const commands = readFileSync(commandsLog, 'utf8')
+          expect(commands).not.toContain('asados-sofia-inbound-batch-maintenance')
+          expect(commands).not.toContain('stop args:')
+        } finally {
+          harness.cleanup()
+        }
+      })
+
+      it.each([
+        ['conflicting DOCKER_HOST', { DOCKER_HOST: 'tcp://remote:2375' }, /Conflicting ambient DOCKER_HOST/],
+        ['conflicting DOCKER_CONTEXT', { DOCKER_CONTEXT: 'remote-ctx' }, /Conflicting ambient DOCKER_CONTEXT/],
+      ])('fails closed before daemon calls on %s with no mutation', (_, conflictEnv, expectedErr) => {
+        const harness = setupMockDeployEnvironment({ initialContainerImage: '' })
+        try {
+          const { sandboxRoot, sandboxDeployScript, sandboxState, commandsLog, env } = harness
+          setupV2StateFixture(sandboxRoot, sandboxState)
+          writeFileSync(commandsLog, '')
+          const res = spawnSync('bash', [sandboxDeployScript, 'rollback'], {
+            env: { ...env, ...conflictEnv },
+            cwd: sandboxRoot,
+            encoding: 'utf8',
+          })
+          expect(res.status).not.toBe(0)
+          expect(res.stderr).toMatch(expectedErr)
+          expect(readFileSync(commandsLog, 'utf8')).toBe('')
+        } finally {
+          harness.cleanup()
+        }
+      })
+    })
   })
 })
+
+function setupV2StateFixture(sandboxRoot: string, sandboxState: string, options?: {
+  nets?: string[]
+  netJson?: string
+  transformLines?: (lines: string[]) => string[]
+}) {
+  const pyCode = `
+import json, os, scripts.web_only_bundle_writer as bw
+CAND_IMG, CURR_IMG = "sha256:" + "1" * 64, "sha256:" + "2" * 64
+nets = ${JSON.stringify(options?.nets ?? ["asados-app-private"])}
+svc_nets = {n: ({"aliases": ["crm-sofia-web"]} if idx == 0 else {}) for idx, n in enumerate(nets)}
+top_nets = {n: {"name": n, "external": True} for n in nets}
+cand = {"services": {"web": {"image": CAND_IMG, "ports": [{"target": 3000, "published": 3020, "host_ip": "127.0.0.1", "protocol": "tcp"}], "networks": svc_nets}}, "networks": top_nets}
+roll = {"services": {"web": {"image": CURR_IMG, "ports": [{"target": 3000, "published": 3020, "host_ip": "127.0.0.1", "protocol": "tcp"}], "networks": svc_nets}}, "networks": top_nets}
+bdir = os.path.join("${sandboxRoot}", "bundle")
+meta = {"project": "asados", "service": "web", "candidate_image_id": CAND_IMG, "current_image_id": CURR_IMG, "ports": {"target": 3000, "published": 3020, "host_ip": "127.0.0.1", "protocol": "tcp"}, "networks": nets, "container_id": "a"*64, "container_name": "crm-sofia-web"}
+res = bw.write_effective_bundle(bdir, (json.dumps(cand) + "\\n").encode(), (json.dumps(roll) + "\\n").encode(), meta)
+print(f"{bdir}\\t{res['manifest_sha256']}\\t{CURR_IMG}\\t{CAND_IMG}")
+`
+  const ret = spawnSync(PYTHON_BIN, ['-B', '-c', pyCode], {
+    env: { PATH: '/usr/bin:/bin', PYTHONDONTWRITEBYTECODE: '1', PYTHONPATH: sandboxRoot },
+    encoding: 'utf8',
+  })
+  if (ret.status !== 0) throw new Error(`v2 fixture setup failed: ${ret.stderr}`)
+  const [bdir, msha, prevId, depId] = ret.stdout.trim().split('\t')
+  let lines = [
+    'STATE_VERSION=2', 'DEPLOY_MODE=web-only', `BUNDLE_DIR=${bdir}`, `MANIFEST_SHA256=${msha}`,
+    'COMPOSE_PROJECT=asados', `OPERATIONAL_ROOT=${sandboxRoot}`, 'DOCKER_ENDPOINT=unix:///var/run/docker.sock',
+    `EXPECTED_NETWORKS=${options?.netJson ?? '["asados-app-private"]'}`, `PREVIOUS_ID=${prevId}`, `DEPLOYED_ID=${depId}`,
+  ]
+  if (options?.transformLines) lines = options.transformLines(lines)
+  const envPath = join(sandboxState, 'release.env')
+  writeFileSync(envPath, lines.join('\n') + '\n', { mode: 0o600 })
+  chmodSync(envPath, 0o600)
+  return { bdir, msha, prevId, depId, envPath }
+}
