@@ -186,7 +186,7 @@ def cf(fd):
     return rf(fd)
 os.fsync = cf
 try: wsp.publish_v2_release_state("${deployDir}", st, **args); raise AssertionError("should have raised PostCommitSyncError")
-except wsp.PostCommitSyncError as e: assert e.committed is True and os.path.exists("${deployDir}/release.env")
+except wsp.PostCommitSyncError as e: assert e.committed is True and e.durable is False and os.path.exists("${deployDir}/release.env")
 finally: os.fsync = rf
 print("POST_COMMIT_SYNC_ERROR_OK")`, fixture, 'POST_COMMIT_SYNC_ERROR_OK')
   })
@@ -203,7 +203,7 @@ def hc(fd):
 fdb = live_fds()
 os.replace, os.close = hr, hc
 try: wsp.publish_v2_release_state("${deployDir}", st, **args); raise AssertionError("should have raised PostCommitSyncError")
-except wsp.PostCommitSyncError as e: assert e.committed is True and os.path.exists("${deployDir}/release.env") and isinstance(e.cause, OSError)
+except wsp.PostCommitSyncError as e: assert e.committed is True and e.durable is False and os.path.exists("${deployDir}/release.env") and isinstance(e.cause, OSError)
 finally: os.replace, os.close = rr, rc
 assert len(att) == 1 and live_fds() == fdb
 print("POST_COMMIT_CLOSE_OSERROR_OK")`, fixture, 'POST_COMMIT_CLOSE_OSERROR_OK')
@@ -223,7 +223,7 @@ def hc(fd):
 fdb = live_fds()
 os.replace, os.fsync, os.close = hr, hf, hc
 try: wsp.publish_v2_release_state("${deployDir}", st, **args); raise AssertionError("should have raised PostCommitSyncError")
-except wsp.PostCommitSyncError as e: assert e.committed is True and e.cause is pri_err
+except wsp.PostCommitSyncError as e: assert e.committed is True and e.durable is False and e.cause is pri_err
 finally: os.replace, os.fsync, os.close = rr, rf, rc
 assert len(att) == 1 and live_fds() == fdb
 print("PRESERVE_PRIMARY_AGAINST_BASE_EXCEPTION_OK")`, fixture, 'PRESERVE_PRIMARY_AGAINST_BASE_EXCEPTION_OK')
@@ -259,5 +259,193 @@ except wsp.PostCommitSyncError: pass
 finally: os.replace, os.close = rr, rc
 assert len(ca) == 1 and live_fds() == fdb
 print("FD_DRAIN_COUNTS_OK")`, fixture, 'FD_DRAIN_COUNTS_OK')
+  })
+
+  it('wraps postcommit ordinary RuntimeError on dir fsync into PostCommitSyncError with committed=True, cause, valid state, and drained FDs', () => {
+    sb = createPrivateSandbox()
+    const { deployDir, fixture } = setupDeploy(sb)
+    expectPy(sb, `${INIT_PY}
+rep, rr, rf = [False], os.replace, os.fsync
+err = RuntimeError("simulated postcommit fsync runtime error")
+def hr(*a, **k): rep[0] = True; return rr(*a, **k)
+def hf(fd):
+    if rep[0]: raise err
+    return rf(fd)
+fdb = live_fds()
+os.replace, os.fsync = hr, hf
+caught = None
+try:
+    wsp.publish_v2_release_state("${deployDir}", st, **args)
+    raise AssertionError("should have raised PostCommitSyncError")
+except wsp.PostCommitSyncError as e:
+    caught = e
+except BaseException as unexpected:
+    raise AssertionError(f"wrong type {type(unexpected).__name__} observed: {unexpected}") from unexpected
+finally:
+    os.replace, os.fsync = rr, rf
+assert caught is not None, "PostCommitSyncError must be raised"
+assert caught.committed is True and caught.durable is False and caught.cause is err
+assert isinstance(caught, wsp.PostCommitSyncError)
+target_path = os.path.join("${deployDir}", "release.env")
+raw = open(target_path, "rb").read()
+assert ws.parse_v2_release_env(raw) == st
+assert raw.decode("utf-8") == wsp.serialize_v2_release_env(st)
+assert live_fds() == fdb
+print("POST_COMMIT_FSYNC_RUNTIME_ERROR_OK")`, fixture, 'POST_COMMIT_FSYNC_RUNTIME_ERROR_OK')
+  })
+
+  it('wraps postcommit ordinary RuntimeError on dir close into PostCommitSyncError with committed=True, cause, valid state, and drained FDs', () => {
+    sb = createPrivateSandbox()
+    const { deployDir, fixture } = setupDeploy(sb)
+    expectPy(sb, `${INIT_PY}
+rep, rr, rc, att = [False], os.replace, os.close, []
+err = RuntimeError("simulated postcommit dir close runtime error")
+def hr(*a, **k): rep[0] = True; return rr(*a, **k)
+def hc(fd):
+    if rep[0]:
+        att.append(fd)
+        rc(fd)
+        raise err
+    return rc(fd)
+fdb = live_fds()
+os.replace, os.close = hr, hc
+caught = None
+try:
+    wsp.publish_v2_release_state("${deployDir}", st, **args)
+    raise AssertionError("should have raised PostCommitSyncError")
+except wsp.PostCommitSyncError as e:
+    caught = e
+except BaseException as unexpected:
+    raise AssertionError(f"wrong type {type(unexpected).__name__} observed: {unexpected}") from unexpected
+finally:
+    os.replace, os.close = rr, rc
+assert caught is not None, "PostCommitSyncError must be raised"
+assert caught.committed is True and caught.durable is False and caught.cause is err
+assert len(att) == 1
+target_path = os.path.join("${deployDir}", "release.env")
+raw = open(target_path, "rb").read()
+assert ws.parse_v2_release_env(raw) == st
+assert raw.decode("utf-8") == wsp.serialize_v2_release_env(st)
+assert live_fds() == fdb
+print("POST_COMMIT_CLOSE_RUNTIME_ERROR_OK")`, fixture, 'POST_COMMIT_CLOSE_RUNTIME_ERROR_OK')
+  })
+
+  it('propagates postcommit control BaseExceptions (KeyboardInterrupt, SystemExit) preserving primary identity', () => {
+    sb = createPrivateSandbox()
+    const { deployDir, fixture } = setupDeploy(sb)
+    expectPy(sb, `${INIT_PY}
+rep, rr, rf, rc, ca = [False], os.replace, os.fsync, os.close, []
+ki = KeyboardInterrupt("postcommit interrupt")
+se = SystemExit(42)
+def hr(*a, **k): rep[0] = True; return rr(*a, **k)
+
+for ctrl in [ki, se]:
+    rep[0] = False
+    def hf(fd, c=ctrl):
+        if rep[0]: raise c
+        return rf(fd)
+    fdb = live_fds()
+    os.replace, os.fsync = hr, hf
+    caught = None
+    try:
+        wsp.publish_v2_release_state("${deployDir}", st, **args)
+        raise AssertionError("should have raised control BaseException on fsync")
+    except BaseException as e:
+        caught = e
+    finally:
+        os.replace, os.fsync = rr, rf
+    assert caught is ctrl, f"expected exact identity {ctrl}, got {type(caught)}"
+    target_path = os.path.join("${deployDir}", "release.env")
+    raw = open(target_path, "rb").read()
+    assert ws.parse_v2_release_env(raw) == st
+    assert raw.decode("utf-8") == wsp.serialize_v2_release_env(st)
+    assert live_fds() == fdb
+
+for ctrl in [ki, se]:
+    rep[0] = False
+    ca.clear()
+    def hc(fd, c=ctrl):
+        if rep[0]:
+            ca.append(fd)
+            rc(fd)
+            raise c
+        return rc(fd)
+    fdb = live_fds()
+    os.replace, os.close = hr, hc
+    caught = None
+    try:
+        wsp.publish_v2_release_state("${deployDir}", st, **args)
+        raise AssertionError("should have raised control BaseException on close")
+    except BaseException as e:
+        caught = e
+    finally:
+        os.replace, os.close = rr, rc
+    assert caught is ctrl, f"expected exact identity {ctrl}, got {type(caught)}"
+    assert len(ca) == 1, "close must be attempted exactly once"
+    target_path = os.path.join("${deployDir}", "release.env")
+    raw = open(target_path, "rb").read()
+    assert ws.parse_v2_release_env(raw) == st
+    assert raw.decode("utf-8") == wsp.serialize_v2_release_env(st)
+    assert live_fds() == fdb
+print("POST_COMMIT_CONTROLS_PRESERVED_OK")`, fixture, 'POST_COMMIT_CONTROLS_PRESERVED_OK')
+  })
+
+  it('retains identity and cause when PostCommitSyncError is already raised postcommit', () => {
+    sb = createPrivateSandbox()
+    const { deployDir, fixture } = setupDeploy(sb)
+    expectPy(sb, `${INIT_PY}
+rep, rr, rf, rc, ca = [False], os.replace, os.fsync, os.close, []
+target_path = os.path.join("${deployDir}", "release.env")
+cause_err = ValueError("inner cause")
+existing_sync_err = wsp.PostCommitSyncError("pre-existing sync failure", state_file=target_path, cause=cause_err)
+def hr(*a, **k): rep[0] = True; return rr(*a, **k)
+def hf(fd):
+    if rep[0]: raise existing_sync_err
+    return rf(fd)
+def hc(fd):
+    if rep[0]:
+        ca.append(fd)
+        rc(fd)
+        raise existing_sync_err
+    return rc(fd)
+fdb = live_fds()
+os.replace, os.fsync = hr, hf
+caught = None
+try:
+    wsp.publish_v2_release_state("${deployDir}", st, **args)
+    raise AssertionError("should have raised PostCommitSyncError")
+except wsp.PostCommitSyncError as e:
+    caught = e
+finally:
+    os.replace, os.fsync = rr, rf
+assert caught is existing_sync_err, "must retain exact identity of existing PostCommitSyncError"
+assert caught.cause is cause_err
+assert caught.committed is True and caught.durable is False
+raw = open(target_path, "rb").read()
+assert ws.parse_v2_release_env(raw) == st
+assert raw.decode("utf-8") == wsp.serialize_v2_release_env(st)
+assert live_fds() == fdb
+
+rep[0] = False
+ca.clear()
+fdb = live_fds()
+os.replace, os.close = hr, hc
+caught = None
+try:
+    wsp.publish_v2_release_state("${deployDir}", st, **args)
+    raise AssertionError("should have raised PostCommitSyncError on close")
+except wsp.PostCommitSyncError as e:
+    caught = e
+finally:
+    os.replace, os.close = rr, rc
+assert caught is existing_sync_err, "must retain exact identity of existing PostCommitSyncError on close"
+assert caught.cause is cause_err
+assert caught.committed is True and caught.durable is False
+assert len(ca) == 1
+raw = open(target_path, "rb").read()
+assert ws.parse_v2_release_env(raw) == st
+assert raw.decode("utf-8") == wsp.serialize_v2_release_env(st)
+assert live_fds() == fdb
+print("EXISTING_POST_COMMIT_SYNC_ERROR_IDENTITY_OK")`, fixture, 'EXISTING_POST_COMMIT_SYNC_ERROR_IDENTITY_OK')
   })
 })

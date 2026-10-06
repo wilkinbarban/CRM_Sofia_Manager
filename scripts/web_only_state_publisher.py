@@ -21,7 +21,7 @@ class PostCommitSyncError(RuntimeError):
 
     def __init__(self, message: str, *, state_file: str, cause: BaseException | None = None) -> None:
         super().__init__(message)
-        self.state_file, self.cause, self.committed = state_file, cause, True
+        self.state_file, self.cause, self.committed, self.durable = state_file, cause, True, False
 
 
 def publish_v2_release_state(
@@ -48,10 +48,13 @@ def publish_v2_release_state(
     - Trusted regular descriptor with verified EUID cleans own identity on mode failure.
     - Directory fsync after replace is durability step that can fail postcommit; close failure
       may leave descriptor open or report error after release; ownership invalidated single attempt no guarantee universal leakfree.
+    - Any ordinary Exception after confirmed commit (os.replace) raises PostCommitSyncError with
+      committed=True, durable=False and cause preserved. Existing PostCommitSyncError retains identity. Control
+      BaseExceptions (KeyboardInterrupt, SystemExit) propagate primary identity after cleanup.
 
     Honest limits: No crash durability across power loss without dir fsync; close that fails
     without releasing has ambiguous descriptor state, never retry (no universal drain guarantee);
-    no Docker in inert module.
+    os.replace exception cannot prove actual commit state on hardware/kernel faults; no Docker in inert module.
     """
     validate_v2_bundle_state(
         state, expected_root=expected_root, expected_endpoint=expected_endpoint,
@@ -101,17 +104,25 @@ def publish_v2_release_state(
         committed, tmp_name = True, None
 
         sync_err = None
-        try: os.fsync(root_fd)
-        except OSError as err: sync_err = err
+        try:
+            os.fsync(root_fd)
+        except Exception as err:
+            sync_err = err
 
         to_close, root_fd = root_fd, -1
         if sync_err is not None:
-            primary = PostCommitSyncError(f"state committed to {target_path} but directory fsync failed: {sync_err}", state_file=target_path, cause=sync_err)
+            if isinstance(sync_err, PostCommitSyncError):
+                primary = sync_err
+            else:
+                primary = PostCommitSyncError(f"state committed to {target_path} but directory fsync failed: {sync_err}", state_file=target_path, cause=sync_err)
             safe_close_cleanup(to_close, primary_err=primary)
-            raise primary from sync_err
+            raise primary from (sync_err if sync_err is not primary else None)
 
-        try: os.close(to_close)
-        except OSError as close_err:
+        try:
+            os.close(to_close)
+        except Exception as close_err:
+            if isinstance(close_err, PostCommitSyncError):
+                raise
             raise PostCommitSyncError(f"state committed to {target_path} but directory close failed: {close_err}", state_file=target_path, cause=close_err) from close_err
 
         return {"status": "ok", "state_file": target_path, "committed": True, "durable": True}
@@ -126,4 +137,10 @@ def publish_v2_release_state(
         if root_fd >= 0:
             to_close, root_fd = root_fd, -1
             safe_close_cleanup(to_close, primary_err=err)
+        if committed:
+            if not isinstance(err, Exception):
+                raise
+            if isinstance(err, PostCommitSyncError):
+                raise
+            raise PostCommitSyncError(f"state committed to {target_path} but postcommit operation failed: {err}", state_file=target_path, cause=err) from err
         raise
