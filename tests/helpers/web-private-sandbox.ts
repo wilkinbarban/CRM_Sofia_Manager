@@ -28,6 +28,8 @@ export interface RunPythonOptions {
 
 export interface PrivateSandbox {
   dir: string
+  rootDev: number
+  rootIno: number
   subdirs: string[]
   mkdir: (name: string, mode?: number) => string
   runPython: (code: string, options?: RunPythonOptions) => RunPythonResult
@@ -151,6 +153,8 @@ export function createPrivateSandbox(prefix = 'priv-sb-'): PrivateSandbox {
 
   const sandbox: PrivateSandbox = {
     dir: ownedRoot,
+    rootDev,
+    rootIno,
     subdirs,
     mkdir,
     runPython(this: PrivateSandbox | void, code: string, options?: RunPythonOptions): RunPythonResult {
