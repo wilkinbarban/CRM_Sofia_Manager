@@ -148,7 +148,7 @@ process.exit(res.status)
   const repoScripts = join(process.cwd(), 'scripts')
   copyFileSync(join(repoScripts, 'deploy-web.sh'), join(scriptsDir, 'deploy-web.sh'))
   chmodSync(join(scriptsDir, 'deploy-web.sh'), 0o755)
-  for (const py of ['web_only_bundle_writer.py', 'web_only_state.py', 'web_only_state_serializer.py', 'web_only_dir.py', 'web_only_bundle_lifecycle.py', 'web_only_bundle_consumer.py']) {
+  for (const py of ['web_only_bundle_writer.py', 'web_only_state.py', 'web_only_state_serializer.py', 'web_only_dir.py', 'web_only_bundle_lifecycle.py', 'web_only_bundle_consumer.py', 'web_only_state_publisher.py']) {
     copyFileSync(join(repoScripts, py), join(scriptsDir, py))
   }
   copyFileSync(join(repoScripts, 'web-only-target-preflight.py'), join(scriptsDir, '_real_preflight.py'))
@@ -195,7 +195,7 @@ describe('web-only-bundle-rollout B1b rollout and rollback contracts', () => {
     expect(tag2).toBeGreaterThan(tag1)
     expect(upIdx).toBeGreaterThan(tag2)
 
-    expect(readdirSync(sb.stateRoot).some((f) => f.startsWith('bundle-'))).toBe(false)
+    expect(readdirSync(sb.stateRoot).some((f) => f.startsWith('bundle-'))).toBe(true)
     expect(existsSync(join(sb.stateRoot, 'release.env'))).toBe(true)
   })
 

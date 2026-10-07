@@ -554,6 +554,38 @@ cleanup_web_only_bundle() {
   }
 }
 
+web_only_publish_state() {
+  local status=0 payload=""
+  payload="$(PYTHONDONTWRITEBYTECODE=1 python3 -B "$root/scripts/web_only_state_publisher.py" \
+    --state-root "$state_root" \
+    --bundle-dir "$web_only_bundle_dir" \
+    --manifest-sha256 "$web_only_manifest_sha" \
+    --previous-id "$previous_id" \
+    --deployed-id "$candidate_id" \
+    --expected-root "$root" \
+    --expected-endpoint "unix:///var/run/docker.sock" \
+    --expected-project "$compose_project" \
+    --expected-networks "$web_only_networks" \
+    --previous-ref "$rollback_ref" \
+    --deployed-ref "$candidate_ref")" || status=$?
+  if [[ "$status" == "0" && "$payload" == *'"committed": true'* ]]; then
+    web_only_bundle_dir=""
+    return 0
+  fi
+  if [[ "$status" == "3" && "$payload" == *'"committed": true'* && "$payload" == *WARN_POST_COMMIT_SYNC* ]]; then
+    web_only_bundle_dir=""
+    printf 'State publication completed with a post-commit durability warning\n' >&2
+    return 0
+  fi
+  if [[ "$status" == "1" && "$payload" == *ERR_PRECOMMIT_FAILED* ]]; then
+    printf 'State publication rejected the release before commit\n' >&2
+    return 1
+  fi
+  web_only_bundle_dir=""
+  printf 'State publication result is unverified; keeping the candidate and its bundle in place\n' >&2
+  return 2
+}
+
 validate_web_only_preflight() {
   local bundle_dir preflight_json extracted manifest_sha networks live_container_id
   bundle_dir="$(PYTHONDONTWRITEBYTECODE=1 python3 -B "$root/scripts/web_only_bundle_lifecycle.py" \
@@ -618,6 +650,8 @@ except Exception as e:
   web_only_bundle_dir="$bundle_dir"
   web_only_candidate_compose="$bundle_dir/candidate-compose.json"
   web_only_rollback_compose="$bundle_dir/rollback-compose.json"
+  web_only_manifest_sha="$manifest_sha"
+  web_only_networks="$networks"
   trap 'cleanup_web_only_bundle "${web_only_bundle_dir:-}" || true' EXIT
 }
 
@@ -648,6 +682,8 @@ case "$action" in
       web_only_bundle_dir=""
       web_only_candidate_compose=""
       web_only_rollback_compose=""
+      web_only_manifest_sha=""
+      web_only_networks=""
       inspect_current_gates "$current_container"
       validate_web_only_preflight
     fi
@@ -664,7 +700,13 @@ case "$action" in
         recreate_and_verify_bundle "$previous_id" "$web_only_rollback_compose"
         exit 1
       fi
-      write_state "$rollback_ref" "$previous_id" "$candidate_ref" "$candidate_id" "web-only"
+      web_only_status=0
+      web_only_publish_state || web_only_status=$?
+      if (( web_only_status == 1 )); then
+        printf '%s\n' 'State publication failed after promotion; restoring the retained previous image' >&2
+        recreate_and_verify_bundle "$previous_id" "$web_only_rollback_compose"
+      fi
+      (( web_only_status == 0 )) || exit 1
       printf 'Deployed %s (%s)\n' "$candidate_ref" "$candidate_id"
     else
       if ! recreate_and_verify "$candidate_ref" "$candidate_id" "$close_operational_gates"; then
