@@ -3,10 +3,15 @@
  * Reuses web-private-sandbox for 0700 root, closed 19-tool binDir, NDJSON logging,
  * and whitelist-only child environment isolation.
  */
-import { appendFileSync, existsSync, symlinkSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
+import { ModuleKind, transpileModule } from 'typescript'
 import { createPrivateSandbox } from './web-private-sandbox'
+import {
+  FIXTURE_INITIAL_IMAGE_ID,
+  FIXTURE_INITIAL_CONFIG_IMAGE,
+} from './web-docker-dispatcher'
 
 export const EXPECTED_TOOLS = [
   'awk', 'bash', 'basename', 'cat', 'cp', 'curl', 'date', 'dirname', 'docker',
@@ -36,8 +41,23 @@ export interface DockerProcessBoundary {
   readonly childEnv: Readonly<Record<string, string>>
   runDocker: (args: string[], ambientEnv?: NodeJS.ProcessEnv) => ProcessResult
   runCurl: (args: string[], ambientEnv?: NodeJS.ProcessEnv) => ProcessResult
+  getCurrentImageId?: () => string
+  getCurrentConfigImage?: () => string
   cleanup: () => void
 }
+
+export interface WebDockerProcessBoundaryHelper {
+  readonly EXPECTED_TOOLS?: readonly string[]
+  readonly CHILD_ENV_KEYS?: readonly string[]
+  createDockerProcessBoundary: (ambientEnv?: NodeJS.ProcessEnv) => DockerProcessBoundary
+}
+
+const DISPATCHER_PATH = join(import.meta.dirname, 'web-docker-dispatcher.ts')
+
+const dispatcherCjs = transpileModule(
+  readFileSync(DISPATCHER_PATH, 'utf8'),
+  { compilerOptions: { module: ModuleKind.CommonJS } },
+).outputText
 
 function buildChildEnv(binDir: string, ambient?: NodeJS.ProcessEnv): Record<string, string> {
   const src = ambient ?? process.env
@@ -60,10 +80,40 @@ export function createDockerProcessBoundary(
   const opRoot = sandbox.mkdir('opRoot', 0o700)
   const commandsLog = join(sandbox.dir, 'commands.ndjson')
   const childEnv = Object.freeze(buildChildEnv(binDir, ambientEnv))
+  const stateFile = join(sandbox.dir, 'docker-state.json')
+  const bridgeScript = join(sandbox.dir, 'docker-bridge.cjs')
+
+  writeFileSync(
+    stateFile,
+    JSON.stringify({
+      currentImageId: FIXTURE_INITIAL_IMAGE_ID,
+      currentConfigImage: FIXTURE_INITIAL_CONFIG_IMAGE,
+    }),
+  )
+
+  const bridgeCode = `${dispatcherCjs}
+const fs = require('node:fs');
+const state = JSON.parse(fs.readFileSync(${JSON.stringify(stateFile)}, 'utf8'));
+const dispatcher = exports.createDockerDispatcher({ opRoot: ${JSON.stringify(opRoot)} });
+dispatcher.setCurrentImageId(state.currentImageId);
+dispatcher.setCurrentConfigImage(state.currentConfigImage);
+const res = dispatcher.runDocker(process.argv.slice(2));
+fs.writeFileSync(${JSON.stringify(stateFile)}, JSON.stringify({
+  currentImageId: dispatcher.getCurrentImageId(),
+  currentConfigImage: dispatcher.getCurrentConfigImage(),
+}));
+if (res.stdout) process.stdout.write(res.stdout);
+if (res.stderr) process.stderr.write(res.stderr);
+process.exit(res.status);
+`
+  writeFileSync(bridgeScript, bridgeCode)
 
   for (const tool of EXPECTED_TOOLS) {
     const targetPath = join(binDir, tool)
-    if (tool === 'docker' || tool === 'curl') {
+    if (tool === 'docker') {
+      const script = `#!/bin/sh\nexec "${process.execPath}" -- "${bridgeScript}" "$@"\n`
+      writeFileSync(targetPath, script, { mode: 0o755 })
+    } else if (tool === 'curl') {
       const script = `#!/bin/sh\nprintf "deny: ${tool} execution forbidden\\n" >&2\nexit 1\n`
       writeFileSync(targetPath, script, { mode: 0o755 })
     } else {
@@ -85,7 +135,7 @@ export function createDockerProcessBoundary(
     const env = callEnv ? buildChildEnv(binDir, { ...childEnv, ...callEnv }) : childEnv
     const res = spawnSync(join(binDir, command), args, {
       cwd: opRoot,
-      env,
+      env: env as NodeJS.ProcessEnv,
       timeout: 10000,
       encoding: 'utf8',
     })
@@ -96,6 +146,12 @@ export function createDockerProcessBoundary(
     }
   }
 
+  const readState = () =>
+    JSON.parse(readFileSync(stateFile, 'utf8')) as {
+      currentImageId: string
+      currentConfigImage: string
+    }
+
   return {
     dir: sandbox.dir,
     binDir,
@@ -104,6 +160,8 @@ export function createDockerProcessBoundary(
     childEnv,
     runDocker: (args, env) => run('docker', args, env),
     runCurl: (args, env) => run('curl', args, env),
+    getCurrentImageId: () => readState().currentImageId,
+    getCurrentConfigImage: () => readState().currentConfigImage,
     cleanup: () => sandbox.cleanup(),
   }
 }

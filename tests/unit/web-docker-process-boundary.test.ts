@@ -127,7 +127,7 @@ describe('web-docker-process-boundary A1b-1: real process boundary, closed bin a
     const dockerRes = boundary.runDocker(['ps', '-aq'])
     expect(dockerRes.status).toBe(1)
     expect(dockerRes.stdout).toBe('')
-    expect(dockerRes.stderr).toMatch(/deny.*docker/i)
+    expect(dockerRes.stderr).toMatch(/deny unauthorized filter/i)
 
     const curlRes = boundary.runCurl(['http://127.0.0.1:8080/health'])
     expect(curlRes.status).toBe(1)
