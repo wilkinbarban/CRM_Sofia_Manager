@@ -1,5 +1,5 @@
 """Inert pure v2 deployment state serializer and atomic state publisher."""
-import os, stat
+import argparse, json, os, stat
 from typing import Any, Mapping, Sequence, AbstractSet
 
 try:
@@ -144,3 +144,103 @@ def publish_v2_release_state(
                 raise
             raise PostCommitSyncError(f"state committed to {target_path} but postcommit operation failed: {err}", state_file=target_path, cause=err) from err
         raise
+
+
+def _parse_cli_networks(value: str) -> list[str]:
+    if not isinstance(value, str) or isinstance(value, bool):
+        raise ValueError("ERR_INVALID_ARGS")
+    v = value.strip()
+    if not v:
+        raise ValueError("ERR_INVALID_ARGS")
+    raw_list: list[Any]
+    if v.startswith(("[", "{", '"', "'")):
+        try:
+            parsed = json.loads(v)
+        except Exception:
+            raise ValueError("ERR_INVALID_ARGS") from None
+        if not isinstance(parsed, list):
+            raise ValueError("ERR_INVALID_ARGS")
+        raw_list = parsed
+    else:
+        raw_parts = v.split(",")
+        if any(not p.strip() for p in raw_parts):
+            raise ValueError("ERR_INVALID_ARGS")
+        raw_list = [p.strip() for p in raw_parts]
+
+    if not raw_list:
+        raise ValueError("ERR_INVALID_ARGS")
+    result: list[str] = []
+    seen: set[str] = set()
+    for item in raw_list:
+        if not isinstance(item, str) or isinstance(item, bool):
+            raise ValueError("ERR_INVALID_ARGS")
+        s = item.strip()
+        if not s or s in seen:
+            raise ValueError("ERR_INVALID_ARGS")
+        seen.add(s)
+        result.append(s)
+    return result
+
+
+class _SyntaxArgumentParser(argparse.ArgumentParser):
+    def error(self, message: str) -> None:
+        raise ValueError("ERR_INVALID_ARGS")
+
+    def exit(self, status: int = 0, message: str | None = None) -> None:
+        raise ValueError("ERR_INVALID_ARGS")
+
+
+def _parse_cli_syntax(argv: Sequence[str]) -> dict[str, Any]:
+    if not isinstance(argv, (list, tuple)):
+        raise ValueError("ERR_INVALID_ARGS")
+    seen_flags: set[str] = set()
+    for a in argv:
+        if not isinstance(a, str) or isinstance(a, bool):
+            raise ValueError("ERR_INVALID_ARGS")
+        if a.startswith("-") and a != "-":
+            flag = a.split("=", 1)[0]
+            if flag in seen_flags:
+                raise ValueError("ERR_INVALID_ARGS")
+            seen_flags.add(flag)
+
+    parser = _SyntaxArgumentParser(add_help=False, allow_abbrev=False)
+    for flag in (
+        "--state-root",
+        "--bundle-dir",
+        "--manifest-sha256",
+        "--previous-id",
+        "--deployed-id",
+        "--expected-root",
+        "--expected-endpoint",
+        "--expected-project",
+        "--expected-networks",
+    ):
+        parser.add_argument(flag, required=True)
+
+    for flag in ("--previous-ref", "--deployed-ref", "--recorded-at", "--docker-endpoint"):
+        parser.add_argument(flag, required=False, default=None)
+
+    args = parser.parse_args(list(argv))
+    parsed = vars(args)
+
+    for k in (
+        "state_root",
+        "bundle_dir",
+        "manifest_sha256",
+        "previous_id",
+        "deployed_id",
+        "expected_root",
+        "expected_endpoint",
+        "expected_project",
+    ):
+        val = parsed[k]
+        if not isinstance(val, str) or not val.strip():
+            raise ValueError("ERR_INVALID_ARGS")
+
+    for k in ("previous_ref", "deployed_ref", "recorded_at", "docker_endpoint"):
+        val = parsed[k]
+        if val is not None and (not isinstance(val, str) or not val.strip()):
+            raise ValueError("ERR_INVALID_ARGS")
+
+    parsed["expected_networks"] = _parse_cli_networks(parsed["expected_networks"])
+    return parsed
