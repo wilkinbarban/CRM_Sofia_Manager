@@ -1,5 +1,5 @@
 """Inert pure v2 deployment state serializer and atomic state publisher."""
-import argparse, json, os, stat
+import argparse, json, os, stat, sys
 from typing import Any, Mapping, Sequence, AbstractSet
 
 try:
@@ -13,7 +13,7 @@ except ImportError:
     from web_only_bundle_writer import safe_close_cleanup, write_all, safe_unlink_devino
     from web_only_dir import open_state_root
 
-__all__ = ["serialize_v2_release_env", "publish_v2_release_state", "PostCommitSyncError"]
+__all__ = ["serialize_v2_release_env", "publish_v2_release_state", "PostCommitSyncError", "main"]
 
 
 class PostCommitSyncError(RuntimeError):
@@ -292,3 +292,74 @@ def _parse_cli_args(argv: Sequence[str]) -> dict[str, Any]:
         err = ValueError("ERR_INVALID_ARGS")
         err.__suppress_context__ = True
         raise err from None
+
+
+def _emit_output(payload: dict[str, Any], code: int, diag: str | None = None) -> int:
+    if diag is not None:
+        sys.stderr.write(f"{diag}\n")
+    try:
+        sys.stdout.write(json.dumps(payload) + "\n")
+        sys.stdout.flush()
+        return code
+    except Exception:
+        sys.stderr.write("ERR_TRANSPORT_STDOUT\n")
+        return 4
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """CLI transport executing validated atomic publication of v2 release state."""
+    if argv is None:
+        argv = sys.argv[1:]
+    try:
+        cli_ctx = _parse_cli_args(argv)
+    except Exception:
+        return _emit_output(
+            {"status": "error", "committed": False, "durable": False, "error": "ERR_INVALID_ARGS"},
+            code=2,
+            diag="ERR_INVALID_ARGS",
+        )
+
+    target_path = os.path.join(cli_ctx["state_root"], "release.env")
+    pub_err = None
+    res = None
+    try:
+        res = publish_v2_release_state(
+            state_root=cli_ctx["state_root"],
+            state=cli_ctx["state"],
+            expected_root=cli_ctx["expected_root"],
+            expected_endpoint=cli_ctx["expected_endpoint"],
+            expected_project=cli_ctx["expected_project"],
+            expected_networks=cli_ctx["expected_networks"],
+        )
+    except (PostCommitSyncError, Exception) as err:
+        pub_err = err
+
+    if pub_err is None:
+        return _emit_output(res, code=0)
+    if isinstance(pub_err, PostCommitSyncError):
+        return _emit_output(
+            {
+                "status": "warning",
+                "state_file": pub_err.state_file,
+                "committed": True,
+                "durable": False,
+                "error": "WARN_POST_COMMIT_SYNC",
+            },
+            code=3,
+            diag="WARN_POST_COMMIT_SYNC",
+        )
+    return _emit_output(
+        {
+            "status": "error",
+            "state_file": target_path,
+            "committed": False,
+            "durable": False,
+            "error": "ERR_PRECOMMIT_FAILED",
+        },
+        code=1,
+        diag="ERR_PRECOMMIT_FAILED",
+    )
+
+
+if __name__ == "__main__":
+    sys.exit(main())
