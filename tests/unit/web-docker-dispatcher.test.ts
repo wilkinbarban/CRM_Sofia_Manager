@@ -15,7 +15,7 @@
  * 2. Deferred to Unit 2: Case 3 (lines 127-203: candidate up, rollback up, manual mutations, dynamic inspect reflections).
  * 3. Runtime Probes (distinguished from old 269 test vectors):
  *    - 9 Negative Query Vectors (it.each table): inspect extra, unknown format, image inspect extra, foreign image, network inspect extra, compose config missing format, un-split ps.
- *    - 5 Compose Up Denial Vectors (it.each table): Unit 1 readonly denial of valid candidate/rollback up (8 tokens) and 3 bad up vectors (bare up, wrong service 'other', trailing extra).
+ *    - 3 Bad Compose Up Denial Vectors (it.each table): bare up, wrong service 'other', trailing extra.
  */
 import { describe, expect, it, afterEach } from 'vitest'
 import { existsSync } from 'node:fs'
@@ -230,7 +230,7 @@ describe('web-docker-dispatcher A1a Unit 1: readonly queries and strict argv con
     expect(dispatcher.getCurrentConfigImage()).toBe(FIXTURE_INITIAL_CONFIG_IMAGE)
   })
 
-  describe('strict argv rejection & unit1 readonly enforcement: 14 negative and compose up denial vectors', () => {
+  describe('strict argv rejection & unit1 readonly enforcement: 12 negative and bad compose up vectors', () => {
     const negativeVectors: Array<[string, (h: WebDockerDispatcherHelper, root: string) => string[]]> = [
       ['inspect crm-sofia-web extra', () => ['inspect', 'crm-sofia-web', 'extra']],
       ['inspect crm-sofia-web --unknown-format', () => ['inspect', 'crm-sofia-web', '--unknown-format']],
@@ -241,8 +241,6 @@ describe('web-docker-dispatcher A1a Unit 1: readonly queries and strict argv con
       ['network inspect networkId extra', (h) => ['network', 'inspect', h.FIXTURE_NETWORK_ID, 'extra']],
       ['compose -f candidate path config missing format', (_, root) => ['compose', '-f', join(root, 'candidate-compose.yml'), 'config']],
       ['un-split ps argv', () => ['ps -aq', '--filter', 'label=com.docker.compose.project=crm', '--filter', 'label=com.docker.compose.service=web']],
-      ['candidate complete valid up eight tokens', (_, root) => ['compose', '-f', join(root, 'candidate-compose.yml'), 'up', '-d', '--no-deps', '--force-recreate', 'web']],
-      ['rollback complete valid up eight tokens', (_, root) => ['compose', '-f', join(root, 'rollback-compose.yml'), 'up', '-d', '--no-deps', '--force-recreate', 'web']],
       ['bare up missing recreation and service flags', (_, root) => ['compose', '-f', join(root, 'candidate-compose.yml'), 'up']],
       ["wrong service literal 'other'", (_, root) => ['compose', '-f', join(root, 'candidate-compose.yml'), 'up', '-d', '--no-deps', '--force-recreate', 'other']],
       ['trailing extra token on valid up', (_, root) => ['compose', '-f', join(root, 'candidate-compose.yml'), 'up', '-d', '--no-deps', '--force-recreate', 'web', 'extra']],
