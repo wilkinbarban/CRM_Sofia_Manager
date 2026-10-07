@@ -212,6 +212,15 @@ recreate_and_verify_web_only() {
   "$ingress_limit_probe" "$public_origin" || return 1
 }
 
+recreate_and_verify_bundle() {
+  local expected_id=$1 compose_file=$2
+  docker compose -f "$compose_file" \
+    --project-directory "$root" --project-name "$compose_project" up -d --no-deps --force-recreate web || return 1
+  wait_healthy || return 1
+  ASADOS_EXPECTED_IMAGE_ID="$expected_id" "$smoke" || return 1
+  "$ingress_limit_probe" "$public_origin" || return 1
+}
+
 recreate_and_verify() {
   local ref=$1 expected_id=$2 close_operational_gates=${3:-false}
   if [[ "$close_operational_gates" == true ]]; then
@@ -606,7 +615,10 @@ except Exception as e:
     exit 2
   }
 
-  cleanup_web_only_bundle "$bundle_dir"
+  web_only_bundle_dir="$bundle_dir"
+  web_only_candidate_compose="$bundle_dir/candidate-compose.json"
+  web_only_rollback_compose="$bundle_dir/rollback-compose.json"
+  trap 'cleanup_web_only_bundle "${web_only_bundle_dir:-}" || true' EXIT
 }
 
 "$preflight" check "$state_root"
@@ -633,6 +645,9 @@ case "$action" in
     }
 
     if [[ "$web_only" == true ]]; then
+      web_only_bundle_dir=""
+      web_only_candidate_compose=""
+      web_only_rollback_compose=""
       inspect_current_gates "$current_container"
       validate_web_only_preflight
     fi
@@ -644,9 +659,9 @@ case "$action" in
     previous_id="$(image_id "$rollback_ref")"
 
     if [[ "$web_only" == true ]]; then
-      if ! recreate_and_verify_web_only "$candidate_ref" "$candidate_id"; then
+      if ! recreate_and_verify_bundle "$candidate_id" "$web_only_candidate_compose"; then
         printf '%s\n' 'Promotion failed; restoring the retained previous image' >&2
-        recreate_and_verify_web_only "$rollback_ref" "$previous_id"
+        recreate_and_verify_bundle "$previous_id" "$web_only_rollback_compose"
         exit 1
       fi
       write_state "$rollback_ref" "$previous_id" "$candidate_ref" "$candidate_id" "web-only"
