@@ -3,12 +3,12 @@ import argparse, json, os, stat
 from typing import Any, Mapping, Sequence, AbstractSet
 
 try:
-    from scripts.web_only_state import validate_v2_bundle_state, parse_v2_release_env
+    from scripts.web_only_state import validate_v2_bundle_state, parse_v2_release_env, _validate_caller_context
     from scripts.web_only_state_serializer import serialize_v2_release_env
     from scripts.web_only_bundle_writer import safe_close_cleanup, write_all, safe_unlink_devino
     from scripts.web_only_dir import open_state_root
 except ImportError:
-    from web_only_state import validate_v2_bundle_state, parse_v2_release_env
+    from web_only_state import validate_v2_bundle_state, parse_v2_release_env, _validate_caller_context
     from web_only_state_serializer import serialize_v2_release_env
     from web_only_bundle_writer import safe_close_cleanup, write_all, safe_unlink_devino
     from web_only_dir import open_state_root
@@ -244,3 +244,51 @@ def _parse_cli_syntax(argv: Sequence[str]) -> dict[str, Any]:
 
     parsed["expected_networks"] = _parse_cli_networks(parsed["expected_networks"])
     return parsed
+
+
+def _parse_cli_args(argv: Sequence[str]) -> dict[str, Any]:
+    try:
+        syntax = _parse_cli_syntax(argv)
+        docker_endpoint = syntax.get("docker_endpoint")
+        expected_endpoint = syntax["expected_endpoint"]
+        if docker_endpoint is not None and docker_endpoint != expected_endpoint:
+            raise ValueError("ERR_INVALID_ARGS")
+
+        _validate_caller_context(
+            syntax["expected_root"],
+            expected_endpoint,
+            syntax["expected_project"],
+            syntax["expected_networks"],
+        )
+
+        state: dict[str, str] = {
+            "STATE_VERSION": "2",
+            "DEPLOY_MODE": "web-only",
+            "BUNDLE_DIR": syntax["bundle_dir"],
+            "MANIFEST_SHA256": syntax["manifest_sha256"],
+            "COMPOSE_PROJECT": syntax["expected_project"],
+            "OPERATIONAL_ROOT": syntax["expected_root"],
+            "DOCKER_ENDPOINT": docker_endpoint or expected_endpoint,
+            "EXPECTED_NETWORKS": json.dumps(syntax["expected_networks"]),
+            "PREVIOUS_ID": syntax["previous_id"],
+            "DEPLOYED_ID": syntax["deployed_id"],
+        }
+        if syntax.get("previous_ref") is not None:
+            state["PREVIOUS_REF"] = syntax["previous_ref"]
+        if syntax.get("deployed_ref") is not None:
+            state["DEPLOYED_REF"] = syntax["deployed_ref"]
+        if syntax.get("recorded_at") is not None:
+            state["RECORDED_AT"] = syntax["recorded_at"]
+
+        return {
+            "state_root": syntax["state_root"],
+            "expected_root": syntax["expected_root"],
+            "expected_endpoint": expected_endpoint,
+            "expected_project": syntax["expected_project"],
+            "expected_networks": syntax["expected_networks"],
+            "state": state,
+        }
+    except Exception:
+        err = ValueError("ERR_INVALID_ARGS")
+        err.__suppress_context__ = True
+        raise err from None
