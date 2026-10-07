@@ -536,6 +536,79 @@ except Exception:
   compose_project="${compose_project:-$(resolve_compose_project)}"
 }
 
+cleanup_web_only_bundle() {
+  local bdir=${1:-}
+  [[ -n "$bdir" ]] || return 0
+  PYTHONDONTWRITEBYTECODE=1 python3 -B "$root/scripts/web_only_bundle_lifecycle.py" cleanup --bundle-dir "$bdir" || {
+    printf 'Failed to cleanup bundle directory: %s\n' "$bdir" >&2
+    return 2
+  }
+}
+
+validate_web_only_preflight() {
+  local bundle_dir preflight_json extracted manifest_sha networks live_container_id
+  bundle_dir="$(PYTHONDONTWRITEBYTECODE=1 python3 -B "$root/scripts/web_only_bundle_lifecycle.py" \
+    allocate --state-root "$state_root")" || {
+    printf 'Failed to allocate bundle directory\n' >&2
+    exit 2
+  }
+
+  preflight_json="$(PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$root/scripts" python3 -B \
+    "$root/scripts/web-only-target-preflight.py" \
+    --root "$root" --project "$compose_project" \
+    --candidate-image "$candidate_ref" --action generate-effective \
+    --bundle-dir "$bundle_dir")" || {
+    printf 'Web-only preflight generation failed\n' >&2
+    cleanup_web_only_bundle "$bundle_dir" || true
+    exit 2
+  }
+
+  extracted="$(printf '%s\n' "$preflight_json" | PYTHONDONTWRITEBYTECODE=1 python3 -B -c '
+import json, re, sys
+try:
+    doc = json.load(sys.stdin)
+    if not isinstance(doc, dict):
+        raise ValueError("preflight output is not a JSON object")
+    if doc.get("status") != "ok" or doc.get("action") != "generate-effective":
+        raise ValueError("invalid status or action")
+    if doc.get("bundle_dir") != sys.argv[1]:
+        raise ValueError("bundle_dir mismatch")
+    if doc.get("candidate_image_id") != sys.argv[2] or doc.get("current_image_id") != sys.argv[3]:
+        raise ValueError("image ID mismatch")
+    sha = doc.get("manifest_sha256")
+    if not isinstance(sha, str) or not re.fullmatch(r"^[0-9a-fA-F]{64}$", sha):
+        raise ValueError("invalid manifest_sha256")
+    nets = doc.get("networks")
+    if not isinstance(nets, list) or not nets or not all(isinstance(n, str) and n.strip() for n in nets):
+        raise ValueError("invalid networks list")
+    print(sha, ",".join(n.strip() for n in nets))
+except Exception as e:
+    err = str(e).replace("\n", " ")[:200]
+    sys.stderr.write(f"Preflight JSON validation error: {err}\n")
+    sys.exit(2)
+' "$bundle_dir" "$candidate_id" "$current_id")" || {
+    cleanup_web_only_bundle "$bundle_dir" || true
+    exit 2
+  }
+  manifest_sha="${extracted%% *}"
+  networks="${extracted#* }"
+
+  live_container_id="$(docker inspect "$current_container" --format '{{.Id}}')" || {
+    cleanup_web_only_bundle "$bundle_dir" || true
+    exit 2
+  }
+
+  PYTHONDONTWRITEBYTECODE=1 python3 -B "$root/scripts/web_only_bundle_lifecycle.py" validate \
+    --bundle-dir "$bundle_dir" --manifest-sha "$manifest_sha" --project "$compose_project" \
+    --candidate-image-id "$candidate_id" --current-image-id "$current_id" \
+    --container-id "$live_container_id" --networks "$networks" || {
+    cleanup_web_only_bundle "$bundle_dir" || true
+    exit 2
+  }
+
+  cleanup_web_only_bundle "$bundle_dir"
+}
+
 "$preflight" check "$state_root"
 exec 9>"$state_root/deploy.lock"
 flock -n 9 || { printf '%s\n' 'Another Web deployment is active' >&2; exit 1; }
@@ -561,6 +634,7 @@ case "$action" in
 
     if [[ "$web_only" == true ]]; then
       inspect_current_gates "$current_container"
+      validate_web_only_preflight
     fi
 
     rollback_ref="asados-web:rollback-${current_id#sha256:}"
