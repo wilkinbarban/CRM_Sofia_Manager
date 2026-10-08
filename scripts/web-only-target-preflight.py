@@ -262,6 +262,8 @@ def validate_networks(endpoint: str, c: dict, compose_doc: dict, project: str) -
     for log_key, log_cfg in w_nets.items():
         if not isinstance(log_key, str) or not log_key.strip():
             emit_error("invalid network logical key")
+        if log_cfg is None:
+            log_cfg = {}
         if not isinstance(log_cfg, dict):
             emit_error("invalid compose web networks")
         n_def = top_nets.get(log_key, {})

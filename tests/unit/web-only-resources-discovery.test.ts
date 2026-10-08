@@ -283,7 +283,6 @@ describe('web-only-resources-discovery-domain', () => {
     ['web attachment non-dict boolean', { default: false }, 'invalid compose web networks'],
     ['web attachment non-dict integer', { default: 0 }, 'invalid compose web networks'],
     ['web attachment non-dict string', { default: 'val' }, 'invalid compose web networks'],
-    ['web attachment non-dict null', { default: null }, 'invalid compose web networks'],
     ['declared aliases non-string', { default: { aliases: [123] } }, 'invalid compose network aliases'],
     ['string false external', 'false', 'invalid compose network external definition'],
     ['integer external', 1, 'invalid compose network external definition'],
@@ -307,6 +306,23 @@ describe('web-only-resources-discovery-domain', () => {
       FAKE_DOCKER_COMPOSE_CONFIG_OUTPUT: compose, FAKE_DOCKER_INSPECT_OUTPUT: makeInspectFixture(sb.opRoot),
     })
     expectHelperError(ret, err, [SPY_PS(), SPY_INSPECT(), SPY_IMAGE(), SPY_COMPOSE(sb.opRoot)])
+  })
+
+  it('accepts a null web network attachment as compose renders a bare entry', () => {
+    sb = createSandbox()
+    const composeNullAttachment = JSON.stringify({
+      services: { web: { ports: [{ target: 3000, published: 3020, host_ip: '127.0.0.1', protocol: 'tcp' }], networks: { supabase_private: null } } },
+      networks: { supabase_private: { name: 'asados-supabase-private', external: true } },
+    })
+    const ret = sb.runHelper(['--root', sb.opRoot, '--action', 'inspect-resources', '--candidate-image', 'asados-web:candidate'], {
+      FAKE_DOCKER_COMPOSE_CONFIG_OUTPUT: composeNullAttachment,
+      FAKE_DOCKER_INSPECT_OUTPUT: makeInspectFixture(sb.opRoot, {}, {
+        NetworkSettings: { Networks: { 'asados-supabase-private': { NetworkID: FIXTURE_NETWORK_ID, Aliases: ['asados-web'] } } },
+      }),
+      FAKE_DOCKER_NETWORK_INSPECT_OUTPUT: JSON.stringify([{ Id: FIXTURE_NETWORK_ID, Name: 'asados-supabase-private', Labels: {} }]),
+    })
+    expect(ret.status).toBe(0)
+    expect(JSON.parse(ret.stdout.trim()).networks).toEqual(['asados-supabase-private'])
   })
 
   it('permits external network with exact boolean true without project label', () => {

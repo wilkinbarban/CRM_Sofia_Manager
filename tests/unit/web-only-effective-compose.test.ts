@@ -162,6 +162,38 @@ describe('web-only-effective-compose Unit U1 CLI', () => {
     expect(rollDoc.networks).toEqual({ external_runtime_net: { name: 'external_runtime_net', external: true } })
   })
 
+  it('accepts a bare service network entry that compose renders as null', () => {
+    sb = createSandbox()
+    const bundleDir = join(sb.dir, 'null-net-bundle')
+    const composeNullNet = JSON.stringify({
+      services: {
+        web: {
+          ports: [{ mode: 'ingress', target: 3000, published: '3020', protocol: 'tcp', host_ip: '127.0.0.1' }],
+          networks: { supabase_private: null },
+        },
+      },
+      networks: { supabase_private: { name: 'asados-supabase-private', external: true } },
+    })
+
+    const ret = sb.runHelper(
+      ['--root', sb.opRoot, '--action', 'generate-effective', '--candidate-image', 'asados-web:candidate', '--bundle-dir', bundleDir],
+      {
+        FAKE_DOCKER_COMPOSE_CONFIG_OUTPUT: composeNullNet,
+        FAKE_DOCKER_INSPECT_OUTPUT: makeInspectFixture(sb.opRoot, {}, {
+          NetworkSettings: { Networks: { 'asados-supabase-private': { NetworkID: FIXTURE_NETWORK_ID, Aliases: ['asados-web'] } } },
+        }),
+        FAKE_DOCKER_NETWORK_INSPECT_OUTPUT: JSON.stringify([{ Id: FIXTURE_NETWORK_ID, Name: 'asados-supabase-private', Labels: {} }]),
+      },
+    )
+    expect(ret.status).toBe(0)
+    const out = JSON.parse(ret.stdout.trim())
+    expect(out.networks).toEqual(['asados-supabase-private'])
+
+    const candDoc = JSON.parse(readFileSync(out.candidate_compose_path, 'utf8'))
+    expect(candDoc.services.web.networks).toEqual({ 'asados-supabase-private': {} })
+    expect(candDoc.networks).toEqual({ 'asados-supabase-private': { name: 'asados-supabase-private', external: true } })
+  })
+
   it('fails closed before bundle write when web service defines dependencies', () => {
     sb = createSandbox()
     const bundleDir = join(sb.dir, 'deps-bundle')
