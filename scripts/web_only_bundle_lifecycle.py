@@ -19,6 +19,7 @@ try:
     from scripts.web_only_bundle_consumer import (
         open_validated_bundle_fd, parse_json_safe, validate_effective_bundle,
     )
+    from scripts.web_only_state import parse_v2_release_env, read_safe_state_file
 except ImportError:
     from web_only_dir import open_state_dir
     from web_only_bundle_writer import (
@@ -27,6 +28,7 @@ except ImportError:
     from web_only_bundle_consumer import (
         open_validated_bundle_fd, parse_json_safe, validate_effective_bundle,
     )
+    from web_only_state import parse_v2_release_env, read_safe_state_file
 
 __all__ = [
     "allocate_bundle_path", "validate_bundle", "cleanup_bundle", "main",
@@ -154,6 +156,50 @@ def cleanup_bundle(bundle_dir: str) -> None:
         safe_close_cleanup(parent_fd)
 
 
+def prune_superseded_bundles(
+    state_root: str,
+    keep: list[str] | None = None,
+    dry_run: bool = False,
+) -> tuple[list[str], list[str]]:
+    """Remove superseded bundle directories, keeping the bundle named by release.env."""
+    if not state_root or not os.path.isabs(state_root):
+        raise ValueError("state root must be an absolute path")
+    resolved_root = os.path.realpath(state_root)
+    state = parse_v2_release_env(read_safe_state_file(os.path.join(resolved_root, "release.env")))
+    if state.get("STATE_VERSION") != "2":
+        raise ValueError("release state is not version 2")
+    active = os.path.realpath(state["BUNDLE_DIR"])
+    if not os.path.isabs(state["BUNDLE_DIR"]) or os.path.dirname(active) != resolved_root:
+        raise ValueError("active bundle directory is outside the state root")
+    protected = {active}
+    for extra in keep or ():
+        if not isinstance(extra, str) or not os.path.isabs(extra):
+            raise ValueError("protected bundle paths must be absolute")
+        protected.add(os.path.realpath(extra))
+    root_fd = open_state_dir(resolved_root)
+    pruned: list[str] = []
+    skipped: list[str] = []
+    try:
+        for name in sorted(os.listdir(root_fd)):
+            if not name.startswith("bundle-"):
+                continue
+            path = os.path.join(resolved_root, name)
+            if os.path.realpath(path) in protected:
+                continue
+            if dry_run:
+                pruned.append(path)
+                continue
+            try:
+                cleanup_bundle(path)
+            except Exception:
+                skipped.append(path)
+                continue
+            pruned.append(path)
+    finally:
+        safe_close_cleanup(root_fd)
+    return pruned, skipped
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Web-only bundle lifecycle CLI")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -170,6 +216,11 @@ def main(argv: list[str] | None = None) -> int:
 
     clean_p = sub.add_parser("cleanup")
     clean_p.add_argument("--bundle-dir", required=True)
+
+    prune_p = sub.add_parser("prune")
+    prune_p.add_argument("--state-root", required=True)
+    prune_p.add_argument("--keep", action="append", default=[])
+    prune_p.add_argument("--dry-run", action="store_true")
 
     try:
         args = parser.parse_args(argv)
@@ -192,6 +243,13 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "cleanup":
             cleanup_bundle(args.bundle_dir)
             return 0
+        if args.command == "prune":
+            pruned, skipped = prune_superseded_bundles(args.state_root, args.keep, args.dry_run)
+            for path in pruned:
+                sys.stdout.write(f"{'would prune' if args.dry_run else 'pruned'} {path}\n")
+            for path in skipped:
+                sys.stdout.write(f"skipped {path}\n")
+            return 2 if skipped else 0
     except Exception as err:
         sys.stderr.write(f"{args.command} error: {err}\n")
         return 2
