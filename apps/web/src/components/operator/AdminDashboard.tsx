@@ -1467,7 +1467,7 @@ export default function AdminDashboard({
               <span className="relative inline-flex rounded-full h-3 w-3 bg-amber-500"></span>
             </span>
             <div>
-              <div className="text-xs font-bold text-zinc-200">Painel de Controle • {resolvedProfile.name}</div>
+              <h1 className="text-sm font-bold text-zinc-200 tracking-tight">Painel de Controle • {resolvedProfile.name}</h1>
               <div className="text-[11px] text-zinc-400">Gestão centralizada de estoque, pré-vendas, IA e equipe</div>
             </div>
           </div>
@@ -1515,7 +1515,7 @@ export default function AdminDashboard({
                       telefone: '',
                     })
                   }}
-                  className="flex items-center gap-1.5 px-4 py-2.5 bg-amber-500 hover:bg-amber-600 font-bold text-zinc-950 text-xs rounded-xl shadow-md shadow-amber-500/10 transition-all cursor-pointer shrink-0 active:scale-95"
+                  className="flex items-center gap-1.5 px-4 py-2.5 min-h-11 bg-amber-500 hover:bg-amber-600 font-bold text-zinc-950 text-xs rounded-xl shadow-md shadow-amber-500/10 transition-all cursor-pointer shrink-0 active:scale-95 focus-visible:ring-2 focus-visible:ring-amber-500/40"
                 >
                   <UserPlus className="h-4 w-4" />
                   <span>Novo Membro</span>

@@ -156,6 +156,22 @@ describe('AdminDashboard — Gestão de Usuários, Métricas, Logs e Comprovante
     expect(screen.queryByText(/Painel de Controle • CRM Sofia Manager/)).not.toBeInTheDocument()
   })
 
+  it('exposes one level-one heading and a mobile-sized primary action in the control panel', async () => {
+    render(
+      <AdminDashboard
+        {...defaultProps}
+        systemConfigs={{ BUSINESS_NAME: 'Padaria do Zé', BUSINESS_SHORT_NAME: 'Padaria Zé' }}
+      />
+    )
+
+    const headings = await screen.findAllByRole('heading', { level: 1 })
+    expect(headings).toHaveLength(1)
+    expect(headings[0]).toHaveTextContent(/Painel de Controle • Padaria do Zé/)
+
+    const createMember = screen.getByRole('button', { name: /Novo Membro/i })
+    expect(createMember.className).toContain('min-h-11')
+  })
+
   it('1. Gestão de Usuários: abre modal de criação e cadastra novo membro', async () => {
     render(<AdminDashboard {...defaultProps} />)
 
