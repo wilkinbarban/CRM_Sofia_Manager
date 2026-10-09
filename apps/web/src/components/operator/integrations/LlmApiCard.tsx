@@ -56,6 +56,9 @@ export default function LlmApiCard({ initialConfigs, showToast }: IntegrationCar
 
   const [apiKey, setApiKey] = useState('')
   const [showApiKey, setShowApiKey] = useState(false)
+  // A typed or pasted key is not yet persisted, so every action that depends on
+  // the stored credential stays blocked until the save round-trip succeeds.
+  const hasUnsavedKey = apiKey.trim().length > 0
   const [effectiveModel, setEffectiveModel] = useState(initialEffectiveModel)
   const [model, setModel] = useState('')
   const [isConfigured, setIsConfigured] = useState(initialConfigs?.DEEPSEEK_CONFIGURED === 'true')
@@ -292,7 +295,7 @@ export default function LlmApiCard({ initialConfigs, showToast }: IntegrationCar
           <button
             type="button"
             onClick={() => void loadModels()}
-            disabled={loadingModels}
+            disabled={loadingModels || hasUnsavedKey}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-800/80 hover:bg-zinc-700 text-zinc-300 text-[11px] font-semibold border border-zinc-700 transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
           >
             {loadingModels ? (
@@ -374,7 +377,9 @@ export default function LlmApiCard({ initialConfigs, showToast }: IntegrationCar
           <button
             type="button"
             onClick={() => void handleTestModel()}
-            disabled={testingModel || loadingModels || model.trim() === '' || modelOptions.length === 0}
+            disabled={
+              testingModel || loadingModels || model.trim() === '' || modelOptions.length === 0 || hasUnsavedKey
+            }
             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-sky-500/10 hover:bg-sky-500/20 text-sky-400 text-xs font-semibold border border-sky-500/30 transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
           >
             {testingModel ? (

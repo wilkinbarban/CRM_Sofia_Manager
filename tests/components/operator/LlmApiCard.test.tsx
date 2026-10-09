@@ -785,4 +785,65 @@ describe('LlmApiCard — integração DeepSeek', () => {
       expect(within(select).getByRole('option', { name: 'DeepSeek Reasoner (R1)' })).toBeInTheDocument()
     })
   })
+
+  it('bloqueia as ações enquanto existe chave nova não persistida e reativa após salvar', async () => {
+    renderCard({ DEEPSEEK_CONFIGURED: 'true' })
+    await waitForModels()
+
+    const select = screen.getByLabelText(/DEEPSEEK_MODEL/i) as HTMLSelectElement
+    await waitFor(() => {
+      expect(within(select).getAllByRole('option')).toHaveLength(AUTHORIZED_MODELS.length)
+    })
+    fireEvent.change(select, { target: { value: 'deepseek-chat' } })
+
+    expect(screen.getByRole('button', { name: /Recarregar modelos/i })).toBeEnabled()
+    expect(screen.getByRole('button', { name: /Testar modelo/i })).toBeEnabled()
+    expect(screen.getByRole('button', { name: /Salvar configurações da DeepSeek/i })).toBeEnabled()
+
+    const keyInput = screen.getByLabelText(/DEEPSEEK_API_KEY/i) as HTMLInputElement
+    fireEvent.change(keyInput, { target: { value: 'sk-typed-operator-key' } })
+
+    expect(screen.getByRole('button', { name: /Recarregar modelos/i })).toBeDisabled()
+    expect(screen.getByRole('button', { name: /Testar modelo/i })).toBeDisabled()
+    expect(screen.getByRole('button', { name: /Salvar configurações da DeepSeek/i })).toBeEnabled()
+    expect(vi.mocked(listAuthorizedDeepSeekModels)).toHaveBeenCalledTimes(1)
+
+    fireEvent.click(screen.getByRole('button', { name: /Salvar configurações da DeepSeek/i }))
+
+    await waitFor(() => {
+      expect(vi.mocked(salvarConfiguracaoAdmin)).toHaveBeenCalledWith(
+        'DEEPSEEK_API_KEY',
+        'sk-typed-operator-key'
+      )
+    })
+    await waitFor(() => {
+      expect((screen.getByLabelText(/DEEPSEEK_API_KEY/i) as HTMLInputElement).value).toBe('')
+    })
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /Recarregar modelos/i })).toBeEnabled()
+    })
+    expect(screen.getByRole('button', { name: /Testar modelo/i })).toBeEnabled()
+  })
+
+  it('mantém as ações bloqueadas quando a chave não é persistida', async () => {
+    vi.mocked(salvarConfiguracaoAdmin).mockResolvedValue({
+      success: false,
+      error: 'falha de persistência',
+    })
+
+    renderCard({ DEEPSEEK_CONFIGURED: 'true' })
+    await waitForModels()
+
+    const keyInput = screen.getByLabelText(/DEEPSEEK_API_KEY/i) as HTMLInputElement
+    fireEvent.change(keyInput, { target: { value: 'sk-rejected-key' } })
+
+    fireEvent.click(screen.getByRole('button', { name: /Salvar configurações da DeepSeek/i }))
+
+    await waitFor(() => {
+      expect(vi.mocked(salvarConfiguracaoAdmin)).toHaveBeenCalledWith('DEEPSEEK_API_KEY', 'sk-rejected-key')
+    })
+    expect(keyInput.value).toBe('sk-rejected-key')
+    expect(screen.getByRole('button', { name: /Recarregar modelos/i })).toBeDisabled()
+    expect(screen.getByRole('button', { name: /Testar modelo/i })).toBeDisabled()
+  })
 })
