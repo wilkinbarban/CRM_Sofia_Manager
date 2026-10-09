@@ -1,10 +1,31 @@
 import { describe, expect, it, afterEach } from 'vitest'
-import { writeFileSync, unlinkSync, readFileSync } from 'node:fs'
+import { mkdirSync, writeFileSync, unlinkSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { createSandbox, makeInspectFixture, FIXTURE_ID, FIXTURE_IMAGE, Sandbox } from '../helpers/web-target-sandbox'
 
 let sb: Sandbox
 afterEach(() => sb?.cleanup())
+
+/** Complete v2 release.env fixture: the parser rejects a partial state file. */
+function writePublishedState(stateRoot: string, bundleDir: string, operationalRoot: string) {
+  writeFileSync(
+    join(stateRoot, 'release.env'),
+    [
+      `STATE_VERSION='2'`,
+      `DEPLOY_MODE='web-only'`,
+      `BUNDLE_DIR='${bundleDir}'`,
+      `MANIFEST_SHA256='${'a'.repeat(64)}'`,
+      `COMPOSE_PROJECT='asados'`,
+      `OPERATIONAL_ROOT='${operationalRoot}'`,
+      `DOCKER_ENDPOINT='unix:///var/run/docker.sock'`,
+      `EXPECTED_NETWORKS='["asados_default"]'`,
+      `PREVIOUS_ID='sha256:${'1'.repeat(64)}'`,
+      `DEPLOYED_ID='sha256:${'2'.repeat(64)}'`,
+      '',
+    ].join('\n'),
+    { mode: 0o600 },
+  )
+}
 
 describe('web-only-target-contract', () => {
   it('validates canonical target with exact call sequence and sanitized context', () => {
@@ -75,6 +96,51 @@ describe('web-only-target-contract', () => {
     expect(sb.runHelper(['--root', sb.opRoot]).status).not.toBe(0)
     unlinkSync(join(sb.opRoot, 'docker-compose.yaml')); unlinkSync(join(sb.opRoot, '.env'))
     expect(sb.runHelper(['--root', sb.opRoot]).status).not.toBe(0)
+  })
+
+  it('accepts a web container recreated from the bundle compose published by the web-only deploy', () => {
+    sb = createSandbox()
+    const stateRoot = join(sb.dir, 'state')
+    mkdirSync(stateRoot, { mode: 0o700 })
+    const bundleDir = join(stateRoot, 'bundle-active')
+    mkdirSync(bundleDir, { recursive: true })
+    const bundleCompose = join(bundleDir, 'candidate-compose.json')
+    writeFileSync(bundleCompose, '{"services":{}}')
+    // The published state is read through the secure reader, which requires a
+    // private directory (0700) and a private file (0600).
+    writePublishedState(stateRoot, bundleDir, sb.opRoot)
+
+    const ret = sb.runHelper(['--root', sb.opRoot, '--project', 'asados', '--state-root', stateRoot], {
+      FAKE_DOCKER_INSPECT_OUTPUT: makeInspectFixture(sb.opRoot, {
+        'com.docker.compose.project.config_files': bundleCompose,
+      }),
+    })
+
+    expect(ret.status).toBe(0)
+    expect(JSON.parse(ret.stdout.trim()).config_files).toBe(bundleCompose)
+  })
+
+  it('rejects a bundle compose that the published state does not own', () => {
+    sb = createSandbox()
+    const stateRoot = join(sb.dir, 'state')
+    mkdirSync(stateRoot, { mode: 0o700 })
+    const ownedBundle = join(stateRoot, 'bundle-active')
+    const foreignBundle = join(sb.dir, 'foreign-bundle')
+    mkdirSync(ownedBundle, { recursive: true })
+    mkdirSync(foreignBundle, { recursive: true })
+    writeFileSync(join(ownedBundle, 'candidate-compose.json'), '{"services":{}}')
+    const foreignCompose = join(foreignBundle, 'candidate-compose.json')
+    writeFileSync(foreignCompose, '{"services":{}}')
+    writePublishedState(stateRoot, ownedBundle, sb.opRoot)
+
+    const ret = sb.runHelper(['--root', sb.opRoot, '--state-root', stateRoot], {
+      FAKE_DOCKER_INSPECT_OUTPUT: makeInspectFixture(sb.opRoot, {
+        'com.docker.compose.project.config_files': foreignCompose,
+      }),
+    })
+
+    expect(ret.status).not.toBe(0)
+    expect(JSON.parse(ret.stdout.trim()).status).toBe('error')
   })
 
   it('asserts constant error payload on docker command timeout', () => {

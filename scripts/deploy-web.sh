@@ -597,6 +597,7 @@ validate_web_only_preflight() {
   preflight_json="$(PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$root/scripts" python3 -B \
     "$root/scripts/web-only-target-preflight.py" \
     --root "$root" --project "$compose_project" \
+    --state-root "$state_root" \
     --candidate-image "$candidate_ref" --action generate-effective \
     --bundle-dir "$bundle_dir")" || {
     printf 'Web-only preflight generation failed\n' >&2

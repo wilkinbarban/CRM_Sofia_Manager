@@ -13,7 +13,16 @@ if _scripts_dir not in sys.path:
     sys.path.insert(0, _scripts_dir)
 import web_only_bundle_writer as bw
 
+try:
+    import web_only_state
+    _state_reader_available = True
+except Exception:
+    web_only_state = None
+    _state_reader_available = False
+
 DEFAULT_DOCKER_HOST = "unix:///var/run/docker.sock"
+DEFAULT_STATE_ROOT = "/var/lib/asados/deploy"
+BUNDLE_COMPOSE_NAMES = ("candidate-compose.json", "rollback-compose.json")
 HEX_64_PATTERN = re.compile(r"^[0-9a-fA-F]{64}$")
 IMAGE_ID_PATTERN = re.compile(r"^sha256:[0-9a-fA-F]{64}$")
 
@@ -37,6 +46,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--container", default=None)
     parser.add_argument("--candidate-image", default=None)
     parser.add_argument("--docker-host", default=DEFAULT_DOCKER_HOST)
+    parser.add_argument("--state-root", default=DEFAULT_STATE_ROOT)
     parser.add_argument("--generate", action="store_true")
     parser.add_argument("--activate", action="store_true")
     parser.add_argument("--action", default="validate")
@@ -114,8 +124,40 @@ def resolve_container_id(endpoint: str, project: str, service: str, container_hi
     return lines[0]
 
 
+def published_bundle_compose_paths(state_root: str) -> set[str]:
+    """Compose files rendered by the certified web-only deploy for the active bundle.
+
+    A web-only promotion recreates the Web container with the bundle-rendered
+    compose, so `com.docker.compose.project.config_files` points inside
+    `<state_root>/bundle-*`. Only the bundle the published state records as
+    active is accepted, and only when it is a direct child of the state root.
+    """
+    if not _state_reader_available or web_only_state is None:
+        return set()
+    release_env = os.path.join(state_root, "release.env")
+    if not os.path.isfile(release_env):
+        return set()
+    try:
+        state = web_only_state.parse_v2_release_env(web_only_state.read_safe_state_file(release_env))
+    except Exception:
+        return set()
+    bundle_dir = state.get("BUNDLE_DIR")
+    if not isinstance(bundle_dir, str) or not bundle_dir.strip():
+        return set()
+    bundle = os.path.realpath(bundle_dir)
+    if os.path.dirname(bundle) != os.path.realpath(state_root):
+        return set()
+    allowed = set()
+    for name in BUNDLE_COMPOSE_NAMES:
+        candidate = os.path.join(bundle, name)
+        if os.path.isfile(candidate):
+            allowed.add(os.path.realpath(candidate))
+    return allowed
+
+
 def inspect_and_validate_target(
     endpoint: str, target: str, expected_project: str, expected_service: str, canonical_root: str, canonical_config: str,
+    allowed_compose_paths: set[str] | None = None,
 ) -> dict:
     inspect_raw = run_docker(endpoint, ["inspect", target])
     try:
@@ -163,7 +205,8 @@ def inspect_and_validate_target(
     if not isinstance(actual_cfiles, str) or not actual_cfiles.strip():
         emit_error("container config files label missing")
     cfile_paths = [os.path.realpath(p.strip()) for p in actual_cfiles.split(",") if p.strip()]
-    if len(cfile_paths) != 1 or cfile_paths[0] != canonical_config:
+    published = allowed_compose_paths or set()
+    if len(cfile_paths) != 1 or (cfile_paths[0] != canonical_config and cfile_paths[0] not in published):
         emit_error("container config files mismatch")
 
     return {
@@ -175,7 +218,7 @@ def inspect_and_validate_target(
         "project": actual_proj,
         "service": actual_svc,
         "working_dir": canonical_root,
-        "config_files": canonical_config,
+        "config_files": cfile_paths[0],
         "endpoint": endpoint,
         "env_file_present": True,
     }, c
@@ -366,8 +409,11 @@ def main() -> None:
             emit_error("extraneous bundle-dir on readonly action", code=2)
         endpoint = validate_environment(args.docker_host)
         canonical_root, canonical_config = validate_operational_root(args.root)
+        allowed_compose_paths = published_bundle_compose_paths(args.state_root)
         target = resolve_container_id(endpoint, args.project, args.service, args.container)
-        metadata, container_data = inspect_and_validate_target(endpoint, target, args.project, args.service, canonical_root, canonical_config)
+        metadata, container_data = inspect_and_validate_target(
+            endpoint, target, args.project, args.service, canonical_root, canonical_config, allowed_compose_paths,
+        )
         if args.action == "inspect-resources":
             metadata, _, _ = inspect_and_validate_resources(endpoint, container_data, args.candidate_image, args.project, canonical_root, canonical_config)
         elif args.action == "generate-effective":
