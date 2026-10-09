@@ -13,6 +13,58 @@ interface HorarioDia {
   ativo: boolean
 }
 
+const HORA_PATTERN = /^\d{2}:\d{2}(:\d{2})?$/
+
+// Edição fluida: o valor digitado vive no rascunho local e só é persistido
+// quando o usuário confirma (blur ou Enter), para que cada tecla não dispare um
+// salvamento nem desabilite o campo no meio da digitação.
+function TimeField({
+  label,
+  value,
+  onCommit,
+}: {
+  label: string
+  value: string
+  onCommit: (value: string) => void
+}) {
+  const [draft, setDraft] = useState(value)
+  // Último valor realmente confirmado neste campo: evita reenviar o mesmo
+  // rascunho enquanto o salvamento ainda não confirmou (ou foi recusado).
+  const [lastCommitted, setLastCommitted] = useState(value)
+
+  useEffect(() => {
+    setDraft(value)
+    setLastCommitted(value)
+  }, [value])
+
+  const commit = () => {
+    if (draft === lastCommitted) return
+    if (!HORA_PATTERN.test(draft)) {
+      setDraft(lastCommitted)
+      return
+    }
+    setLastCommitted(draft)
+    onCommit(draft)
+  }
+
+  return (
+    <input
+      type="time"
+      aria-label={label}
+      value={draft}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault()
+          commit()
+        }
+      }}
+      className="w-full px-2 py-1.5 bg-zinc-950 border border-zinc-800 focus:border-amber-500/80 rounded-lg text-xs text-zinc-200 outline-none transition-all disabled:opacity-50"
+    />
+  )
+}
+
 export default function BusinessHoursManager() {
   const [horarios, setHorarios] = useState<HorarioDia[]>([])
   const [rawMensagem, setRawMensagem] = useState('')
@@ -202,24 +254,20 @@ export default function BusinessHoursManager() {
                     <label className="block text-[10px] font-semibold text-zinc-500 uppercase tracking-wider mb-1">
                       Abertura
                     </label>
-                    <input
-                      type="time"
+                    <TimeField
+                      label="Abertura"
                       value={dia.hora_abertura}
-                      onChange={(e) => handleTimeChange(dia, 'hora_abertura', e.target.value)}
-                      disabled={isSaving}
-                      className="w-full px-2 py-1.5 bg-zinc-950 border border-zinc-800 focus:border-amber-500/80 rounded-lg text-xs text-zinc-200 outline-none transition-all disabled:opacity-50"
+                      onCommit={(value) => handleTimeChange(dia, 'hora_abertura', value)}
                     />
                   </div>
                   <div>
                     <label className="block text-[10px] font-semibold text-zinc-500 uppercase tracking-wider mb-1">
                       Fechamento
                     </label>
-                    <input
-                      type="time"
+                    <TimeField
+                      label="Fechamento"
                       value={dia.hora_fechamento}
-                      onChange={(e) => handleTimeChange(dia, 'hora_fechamento', e.target.value)}
-                      disabled={isSaving}
-                      className="w-full px-2 py-1.5 bg-zinc-950 border border-zinc-800 focus:border-amber-500/80 rounded-lg text-xs text-zinc-200 outline-none transition-all disabled:opacity-50"
+                      onCommit={(value) => handleTimeChange(dia, 'hora_fechamento', value)}
                     />
                   </div>
                 </div>
