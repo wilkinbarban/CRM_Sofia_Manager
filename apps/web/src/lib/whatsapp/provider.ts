@@ -1,6 +1,5 @@
 import { createAdminClient } from '@/lib/supabase/admin'
 import type { EvolutionPresenceEvent } from './evolution-presence'
-import { obterConfiguracaoSistema } from '@/lib/config/sistema'
 import { cache } from 'react'
 
 export type TipoCategoriaMensagem = 'REACTIVE' | 'ORDER' | 'SERVICE' | 'MARKETING' | 'CARDAPIO'
@@ -119,18 +118,8 @@ export async function validarJanelaEnvio(conversaId: string, payload: EnviarMens
 }
 
 export const obterProvedorAtivo = cache(async (): Promise<ProvedorWhatsApp> => {
-  let providerKey = await obterConfiguracaoSistema('PROVEDOR_WHATSAPP_ATIVO')
-  if (!providerKey) {
-    providerKey = await obterConfiguracaoSistema('WHATSAPP_PROVIDER')
-  }
-
-  const normalized = providerKey?.toLowerCase()
-
-  if (normalized === 'evolution') {
-    const { EvolutionProvider } = await import('./evolution')
-    return new EvolutionProvider()
-  }
-
-  const { MetaProvider } = await import('./send')
-  return new MetaProvider()
+  // The CRM runs on Evolution API only: the retired Meta Cloud API provider is
+  // never selected, no matter what a legacy configuration key still contains.
+  const { EvolutionProvider } = await import('./evolution')
+  return new EvolutionProvider()
 })

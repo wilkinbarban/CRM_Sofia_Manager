@@ -159,7 +159,7 @@ export default async function AdminPage({ searchParams }: AdminPageProps) {
     EVOLUTION_API_URL: '',
     EVOLUTION_API_KEY: '',
     EVOLUTION_INSTANCE_NAME: '',
-    WHATSAPP_PROVIDER: 'meta',
+    WHATSAPP_PROVIDER: 'evolution',
     MERCADO_PAGO_ACCESS_TOKEN: '',
     MERCADO_PAGO_PUBLIC_KEY: '',
     MERCADO_PAGO_WEBHOOK_SECRET: '',

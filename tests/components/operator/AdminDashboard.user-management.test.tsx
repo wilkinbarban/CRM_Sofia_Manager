@@ -79,7 +79,6 @@ vi.mock('@/app/actions/admin', () => ({
     ],
   }),
   salvarConfiguracaoAdmin: vi.fn().mockResolvedValue({ success: true }),
-  testarConexaoMeta: vi.fn(),
   testarConexaoEvolution: vi.fn(),
   obterQrCodeEvolution: vi.fn(),
 }))

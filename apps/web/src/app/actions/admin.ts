@@ -818,62 +818,6 @@ export async function testAuthorizedDeepSeekModel(modelId: unknown): Promise<
 }
 
 /**
- * Server Action: testarConexaoMeta
- * Verifica a validade do Token de Acesso e do Phone Number ID chamando a Graph API da Meta.
- */
-export async function testarConexaoMeta(accessToken: string, phoneNumberId: string) {
-  try {
-    const check = await verificarPermissaoOperador()
-    if (!check.authorized || !check.user) {
-      return { success: false, error: check.error || 'ACESSO_NEGADO_NAO_AUTENTICADO' }
-    }
-
-    if (!accessToken || accessToken.trim() === '' || !phoneNumberId || phoneNumberId.trim() === '') {
-      return { success: false, error: 'O Token de Acesso e o ID do Número são obrigatórios para o teste.' }
-    }
-
-    const url = `https://graph.facebook.com/v21.0/${phoneNumberId}`
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: {
-        'Authorization': `Bearer ${accessToken}`,
-        'Content-Type': 'application/json'
-      }
-    })
-
-    if (!response.ok) {
-      const errJson = await response.json().catch(() => ({}))
-      const errMsg = errJson.error?.message || response.statusText
-      throw new Error(`HTTP ${response.status} - ${errMsg}`)
-    }
-
-    const data = await response.json()
-    
-    // Log de auditoria
-    const adminSupabase = createAdminClient()
-    await adminSupabase.from('logs_auditoria').insert({
-      usuario_id: check.user.id,
-      acao: 'teste_meta',
-      detalhes: {
-        phone_number_id: phoneNumberId,
-        display_phone_number: data.display_phone_number || 'N/A',
-        verified_name: data.verified_name || 'N/A'
-      }
-    })
-
-    return { 
-      success: true, 
-      display_phone_number: data.display_phone_number || 'N/A',
-      verified_name: data.verified_name || 'N/A',
-      quality_rating: data.quality_rating || 'N/A'
-    }
-  } catch (error: any) {
-    console.error('Erro na Server Action testarConexaoMeta:', error)
-    return { success: false, error: error.message || 'ERRO_INTERNO' }
-  }
-}
-
-/**
  * Server Action: testarConexaoEvolution
  * Verifica a conectividade com a Evolution API e o estado da instância informada.
  */
