@@ -25,11 +25,13 @@ function makeStatus(overrides: Partial<SofiaAtendimentoStatus> = {}): SofiaAtend
         enabled: true,
         key: 'SOFIA_GLOBAL_WHATSAPP_ENABLED',
         availability: 'operational',
+        configured: true,
       },
       telegram: {
         enabled: false,
         key: 'SOFIA_GLOBAL_TELEGRAM_ENABLED',
         availability: 'global_off',
+        configured: true,
       },
     },
     credits: {
@@ -82,11 +84,13 @@ describe('SofiaGlobalStatusBar', () => {
               enabled: true,
               key: 'SOFIA_GLOBAL_WHATSAPP_ENABLED',
               availability: 'scheduled_pause',
+              configured: true,
             },
             telegram: {
               enabled: true,
               key: 'SOFIA_GLOBAL_TELEGRAM_ENABLED',
               availability: 'scheduled_pause',
+              configured: true,
             },
           },
           schedule: {
@@ -170,5 +174,69 @@ describe('SofiaGlobalStatusBar', () => {
 
     expect(screen.getByText('Unknown balance')).toBeInTheDocument()
     expect(screen.queryByText('$2.50')).not.toBeInTheDocument()
+  })
+
+  it('blocks the global toggle while a channel still lacks its credentials', () => {
+    const onToggleChannel = vi.fn()
+    render(
+      <SofiaGlobalStatusBar
+        status={makeStatus({
+          channels: {
+            whatsapp: {
+              enabled: true,
+              key: 'SOFIA_GLOBAL_WHATSAPP_ENABLED',
+              availability: 'operational',
+              configured: false,
+            },
+            telegram: {
+              enabled: false,
+              key: 'SOFIA_GLOBAL_TELEGRAM_ENABLED',
+              availability: 'global_off',
+              configured: true,
+            },
+          },
+        })}
+        onToggleChannel={onToggleChannel}
+      />,
+    )
+
+    const blocked = screen.getByRole('button', {
+      name: /Configure WhatsApp credentials to control Sofia/i,
+    })
+    expect(blocked).toBeDisabled()
+    expect(screen.getByText(/Falta configurar o WhatsApp/i)).toBeInTheDocument()
+
+    fireEvent.click(blocked)
+    expect(onToggleChannel).not.toHaveBeenCalled()
+  })
+
+  it('keeps the global toggle available for a configured channel', () => {
+    const onToggleChannel = vi.fn()
+    render(
+      <SofiaGlobalStatusBar
+        status={makeStatus({
+          channels: {
+            whatsapp: {
+              enabled: true,
+              key: 'SOFIA_GLOBAL_WHATSAPP_ENABLED',
+              availability: 'operational',
+              configured: false,
+            },
+            telegram: {
+              enabled: false,
+              key: 'SOFIA_GLOBAL_TELEGRAM_ENABLED',
+              availability: 'global_off',
+              configured: true,
+            },
+          },
+        })}
+        onToggleChannel={onToggleChannel}
+      />,
+    )
+
+    fireEvent.click(
+      screen.getByRole('button', { name: /Enable Sofia for Telegram/i }),
+    )
+    expect(onToggleChannel).toHaveBeenCalledWith('telegram', true)
   })
 })

@@ -80,6 +80,8 @@ function ChannelCard({
 }) {
   const copy = AVAILABILITY_COPY[status.availability]
   const Icon = channel === 'whatsapp' ? MessageCircle : Bot
+  const unconfigured = status.configured === false
+  const channelLabel = CHANNEL_LABELS[channel]
 
   return (
     <div className={`rounded-xl border p-3 ${copy.className}`}>
@@ -93,14 +95,23 @@ function ChannelCard({
           <div>
             <p className="text-xs font-semibold uppercase tracking-wide">{copy.label}</p>
             <p className="mt-0.5 text-[11px] leading-snug text-zinc-400">{copy.description}</p>
+            {unconfigured && (
+              <p className="mt-1 text-[11px] font-semibold leading-snug text-amber-300">
+                Falta configurar o {channelLabel}: cadastre as credenciais em Administração → Integrações.
+              </p>
+            )}
           </div>
         </div>
 
         <button
           type="button"
           onClick={() => onToggleChannel(channel, !status.enabled)}
-          disabled={!canToggle || disabled}
-          aria-label={`${status.enabled ? 'Disable' : 'Enable'} Sofia for ${CHANNEL_LABELS[channel]}`}
+          disabled={!canToggle || disabled || unconfigured}
+          aria-label={
+            unconfigured
+              ? `Configure ${channelLabel} credentials to control Sofia`
+              : `${status.enabled ? 'Disable' : 'Enable'} Sofia for ${channelLabel}`
+          }
           className={`flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 min-h-11 sm:min-h-9 text-[11px] font-bold transition-all focus-visible:ring-2 focus-visible:ring-amber-500/40 focus-visible:outline-hidden ${
             status.enabled
               ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20'
@@ -108,7 +119,7 @@ function ChannelCard({
           } disabled:cursor-not-allowed disabled:opacity-50`}
         >
           {disabled ? <Loader2 className="h-3 w-3 animate-spin" /> : <Power className="h-3 w-3" />}
-          {status.enabled ? 'Enabled' : 'Off'}
+          {unconfigured ? 'Falta configurar' : status.enabled ? 'Enabled' : 'Off'}
         </button>
       </div>
     </div>

@@ -27,6 +27,7 @@ export type SofiaAtendimentoStatus = {
     enabled: boolean
     key: string
     availability: SofiaChannelAvailability
+    configured: boolean
   }>
   credits: Awaited<ReturnType<typeof getLlmCreditStatus>>
   runtime: {
@@ -66,11 +67,13 @@ export async function obterStatusSofiaAtendimento() {
           enabled: globalConfig.whatsapp.enabled,
           key: globalConfig.whatsapp.key,
           availability: deriveSofiaChannelAvailability(globalConfig.whatsapp.enabled, horario.dentro),
+          configured: globalConfig.whatsapp.configured,
         },
         telegram: {
           enabled: globalConfig.telegram.enabled,
           key: globalConfig.telegram.key,
           availability: deriveSofiaChannelAvailability(globalConfig.telegram.enabled, horario.dentro),
+          configured: globalConfig.telegram.configured,
         },
       },
       credits,

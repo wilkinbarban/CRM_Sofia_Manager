@@ -72,11 +72,13 @@ function makeStatus(overrides: Partial<SofiaAtendimentoStatus> = {}): SofiaAtend
         enabled: true,
         key: 'SOFIA_GLOBAL_WHATSAPP_ENABLED',
         availability: 'operational',
+        configured: true,
       },
       telegram: {
         enabled: true,
         key: 'SOFIA_GLOBAL_TELEGRAM_ENABLED',
         availability: 'operational',
+        configured: true,
       },
     },
     credits: {
@@ -116,11 +118,13 @@ describe('OperatorInboxContainer Sofia status refresh flow', () => {
           enabled: false,
           key: 'SOFIA_GLOBAL_WHATSAPP_ENABLED',
           availability: 'global_off',
+          configured: true,
         },
         telegram: {
           enabled: true,
           key: 'SOFIA_GLOBAL_TELEGRAM_ENABLED',
           availability: 'operational',
+          configured: true,
         },
       },
     })

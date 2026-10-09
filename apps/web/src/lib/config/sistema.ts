@@ -46,6 +46,22 @@ export type SofiaGlobalChannelConfig = {
   key: (typeof SOFIA_GLOBAL_CONFIG_KEYS)[SofiaGlobalChannel]
   enabled: boolean
   rawValue: string | null
+  configured: boolean
+}
+
+const SOFIA_CHANNEL_CREDENTIAL_KEYS: Record<SofiaGlobalChannel, readonly string[]> = {
+  whatsapp: ['EVOLUTION_API_URL', 'EVOLUTION_API_KEY', 'EVOLUTION_INSTANCE_NAME'],
+  telegram: ['TELEGRAM_BOT_TOKEN'],
+}
+
+export function deriveSofiaChannelConfigured(
+  channel: SofiaGlobalChannel,
+  values: Record<string, string | null | undefined>,
+): boolean {
+  return SOFIA_CHANNEL_CREDENTIAL_KEYS[channel].every(key => {
+    const value = values[key]
+    return typeof value === 'string' && value.trim().length > 0
+  })
 }
 
 const BOOLEAN_TRUE_VALUES = new Set(['true', '1', 'yes', 'y', 'on', 'enabled', 'sim'])
@@ -72,13 +88,22 @@ export function deriveSofiaChannelAvailability(
 
 export async function obterSofiaGlobalChannelConfig(channel: SofiaGlobalChannel): Promise<SofiaGlobalChannelConfig> {
   const key = SOFIA_GLOBAL_CONFIG_KEYS[channel]
-  const rawValue = await obterConfiguracaoSistema(key)
+  const credentialKeys = SOFIA_CHANNEL_CREDENTIAL_KEYS[channel]
+  const [rawValue, ...credentialValues] = await Promise.all([
+    obterConfiguracaoSistema(key),
+    ...credentialKeys.map(credentialKey => obterConfiguracaoSistema(credentialKey)),
+  ])
+
+  const credentials = Object.fromEntries(
+    credentialKeys.map((credentialKey, index) => [credentialKey, credentialValues[index]]),
+  )
 
   return {
     channel,
     key,
     enabled: parseBooleanConfigValue(rawValue, true),
     rawValue,
+    configured: deriveSofiaChannelConfigured(channel, credentials),
   }
 }
 
@@ -109,5 +134,5 @@ export async function salvarSofiaGlobalChannelConfig(channel: SofiaGlobalChannel
     throw new Error(`Failed to persist Sofia global status: ${error.message}`)
   }
 
-  return { channel, key, enabled, rawValue: value }
+  return obterSofiaGlobalChannelConfig(channel)
 }
