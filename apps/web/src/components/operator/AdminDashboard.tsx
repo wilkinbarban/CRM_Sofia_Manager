@@ -2184,7 +2184,7 @@ export default function AdminDashboard({
 
         {/* TAB 5: PROMPT */}
         {activeTab === 'prompt' && (
-          <div className="flex flex-col h-full space-y-6 overflow-hidden max-w-4xl">
+          <div data-testid="admin-prompt-panel" className="flex flex-col h-full w-full space-y-6 overflow-y-auto pb-10">
             <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-4 shrink-0">
               <div>
                 <h2 className="text-2xl font-bold text-zinc-100 tracking-tight">Master System Prompt</h2>

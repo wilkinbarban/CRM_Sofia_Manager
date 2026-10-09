@@ -156,8 +156,7 @@ describe('AdminDashboard — Gestão de Usuários, Métricas, Logs e Comprovante
     expect(screen.queryByText(/Painel de Controle • CRM Sofia Manager/)).not.toBeInTheDocument()
   })
 
-  it('exposes one level-one heading and a mobile-sized primary action in the control panel', async () => {
-    render(
+  it('exposes one level-one heading and a mobile-sized primary action in the control panel', async () => {    render(
       <AdminDashboard
         {...defaultProps}
         systemConfigs={{ BUSINESS_NAME: 'Padaria do Zé', BUSINESS_SHORT_NAME: 'Padaria Zé' }}
@@ -170,6 +169,22 @@ describe('AdminDashboard — Gestão de Usuários, Métricas, Logs e Comprovante
 
     const createMember = screen.getByRole('button', { name: /Novo Membro/i })
     expect(createMember.className).toContain('min-h-11')
+  })
+
+  it('fills the dashboard width in the system prompt module', async () => {
+    render(<AdminDashboard {...defaultProps} initialTab="prompt" />)
+
+    const panel = await screen.findByTestId('admin-prompt-panel')
+    expect(panel).toHaveClass('w-full')
+    expect(panel.className).not.toContain('max-w-4xl')
+  })
+
+  it('fills the dashboard width in the company profile module', async () => {
+    render(<AdminDashboard {...defaultProps} initialTab="empresa" />)
+
+    const card = await screen.findByTestId('business-profile-card')
+    expect(card).toHaveClass('w-full')
+    expect(card.className).not.toContain('max-w-5xl')
   })
 
   it('1. Gestão de Usuários: abre modal de criação e cadastra novo membro', async () => {
