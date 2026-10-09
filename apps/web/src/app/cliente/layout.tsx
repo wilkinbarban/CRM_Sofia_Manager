@@ -5,6 +5,7 @@ import { createClient } from '@/lib/supabase/server'
 import { BrandLogo } from '@/components/ui/BrandLogo'
 import { LogOut } from 'lucide-react'
 import ClienteNav from '@/components/cliente/ClienteNav'
+import { getBusinessProfile } from '@/lib/config/business-profile'
 
 // Server Action for logout
 async function handleLogout() {
@@ -46,13 +47,20 @@ export default async function ClienteLayout({
     redirect('/cliente/verificar-telefone')
   }
 
+  const businessProfile = await getBusinessProfile()
+
   return (
     <div className="h-screen bg-zinc-950 text-zinc-100 flex flex-col font-sans animate-in fade-in duration-300 overflow-hidden">
       {/* Header bar */}
       <header className="border-b border-zinc-900/90 bg-zinc-950/80 backdrop-blur-md sticky top-0 z-40">
         <div className="max-w-4xl mx-auto px-4 py-3 flex items-center justify-between">
           <div className="flex items-center space-x-6">
-            <BrandLogo size="md" href="/cliente/chat" />
+            <BrandLogo
+              size="md"
+              href="/cliente/chat"
+              brandName={businessProfile.name}
+              subtitle={businessProfile.location}
+            />
 
             {/* Navigation Tabs */}
             <ClienteNav />

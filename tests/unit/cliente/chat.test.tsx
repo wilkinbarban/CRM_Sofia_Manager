@@ -199,6 +199,20 @@ describe('ChatContainer Core UI Tests (Phase 2)', () => {
     await waitFor(() => expect(screen.queryByText('Digitando')).not.toBeInTheDocument())
   })
 
+  it('greets the customer with the business name supplied by the server', () => {
+    render(
+      <ChatContainer
+        clienteNome="Ana Silva"
+        conversaInicial={baseConversa}
+        mensagensIniciais={[]}
+        produtos={[]}
+        brandName="Padaria do Zé"
+      />
+    )
+
+    expect(screen.getByText(/Padaria do Zé/)).toBeInTheDocument()
+  })
+
   it('Task 2.1: Aligns client messages to the right and IA/Operator messages to the left', () => {
     const mensagens = [
       {

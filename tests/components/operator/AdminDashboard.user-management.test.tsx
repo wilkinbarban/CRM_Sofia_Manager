@@ -144,6 +144,18 @@ describe('AdminDashboard — Gestão de Usuários, Métricas, Logs e Comprovante
     cleanup()
   })
 
+  it('titles the control panel with the configured business name', async () => {
+    render(
+      <AdminDashboard
+        {...defaultProps}
+        systemConfigs={{ BUSINESS_NAME: 'Padaria do Zé', BUSINESS_SHORT_NAME: 'Padaria Zé' }}
+      />
+    )
+
+    expect(await screen.findByText(/Painel de Controle • Padaria do Zé/)).toBeInTheDocument()
+    expect(screen.queryByText(/Painel de Controle • CRM Sofia Manager/)).not.toBeInTheDocument()
+  })
+
   it('1. Gestão de Usuários: abre modal de criação e cadastra novo membro', async () => {
     render(<AdminDashboard {...defaultProps} />)
 

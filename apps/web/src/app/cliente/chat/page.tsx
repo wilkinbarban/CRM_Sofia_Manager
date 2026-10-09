@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import ChatContainer from '@/components/chat/ChatContainer';
+import { getBusinessProfile } from '@/lib/config/business-profile';
 
 export const dynamic = 'force-dynamic';
 
@@ -88,6 +89,8 @@ export default async function ClienteChatPage() {
     console.error('Erro ao buscar produtos disponíveis:', produtosError);
   }
 
+  const businessProfile = await getBusinessProfile()
+
   return (
     <main className="flex-1 flex flex-col h-screen w-full bg-zinc-950 text-zinc-100 overflow-hidden">
       <ChatContainer
@@ -95,6 +98,7 @@ export default async function ClienteChatPage() {
         conversaInicial={conversa}
         mensagensIniciais={mensagensIniciais}
         produtos={produtos || []}
+        brandName={businessProfile.name}
       />
     </main>
   );

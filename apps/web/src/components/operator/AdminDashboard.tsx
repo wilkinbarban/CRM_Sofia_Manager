@@ -1467,7 +1467,7 @@ export default function AdminDashboard({
               <span className="relative inline-flex rounded-full h-3 w-3 bg-amber-500"></span>
             </span>
             <div>
-              <div className="text-xs font-bold text-zinc-200">Painel de Controle • CRM Sofia Manager</div>
+              <div className="text-xs font-bold text-zinc-200">Painel de Controle • {resolvedProfile.name}</div>
               <div className="text-[11px] text-zinc-400">Gestão centralizada de estoque, pré-vendas, IA e equipe</div>
             </div>
           </div>

@@ -118,6 +118,7 @@ interface ChatContainerProps {
   conversaInicial: Conversa;
   mensagensIniciais: Mensagem[];
   produtos?: Produto[];
+  brandName?: string;
 }
 
 const HORARIOS_RETIRADA = [
@@ -253,7 +254,11 @@ export default function ChatContainer({
   conversaInicial,
   mensagensIniciais,
   produtos = [],
+  brandName,
 }: ChatContainerProps) {
+  // O nome da empresa vem do perfil resolvido no servidor; sem ele o componente
+  // ainda usa o perfil por ambiente, nunca um texto fixo.
+  const brandLabel = brandName?.trim() || resolveBusinessProfileSync().name
   const supabase = useMemo(() => createClient(), []);
   const [conversa, setConversa] = useState<Conversa>(conversaInicial);
   const [mensagens, setMensagens] = useState<Mensagem[]>(mensagensIniciais);
@@ -887,7 +892,7 @@ export default function ChatContainer({
         {/* CABEÇALHO DO CHAT */}
         <header className="min-h-16 px-3 py-2 sm:px-5 border-b border-zinc-900 bg-zinc-950/80 backdrop-blur-md flex items-center justify-between gap-3 z-10 shrink-0">
           <div className="flex items-center gap-3 min-w-0">
-            <BrandLogo size="sm" showSubtitle={false} />
+            <BrandLogo size="sm" showSubtitle={false} brandName={brandLabel} />
             <div className="h-4 w-px bg-zinc-800 hidden sm:block" />
             <div className="hidden min-w-0 flex-col sm:flex">
               <span className="text-xs font-semibold text-zinc-200">Sofia • Atendimento Virtual</span>
@@ -1097,7 +1102,7 @@ export default function ChatContainer({
               </div>
               <h3 className="text-zinc-200 font-semibold">Olá, {clienteNome}!</h3>
               <p className="text-sm text-zinc-500 max-w-xs">
-                Seja bem-vindo à {resolveBusinessProfileSync().name}! Escolha seus produtos no catálogo ao lado para montar seu pedido personalizado.
+                Seja bem-vindo à {brandLabel}! Escolha seus produtos no catálogo ao lado para montar seu pedido personalizado.
               </p>
             </div>
           ) : (
