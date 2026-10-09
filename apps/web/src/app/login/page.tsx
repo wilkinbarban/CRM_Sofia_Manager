@@ -23,6 +23,10 @@ const operatorLoginSchema = z.object({
   senha: z.string().min(1, 'A senha é obrigatória'),
 })
 
+// Estilo único dos campos do login: evita divergência entre os inputs do formulário.
+const FIELD_CLASS =
+  'w-full pl-10 pr-10 py-3 bg-zinc-950/80 border border-zinc-800 focus:border-amber-500 rounded-xl text-sm text-white placeholder-zinc-500 focus:outline-hidden focus:ring-2 focus:ring-amber-500/20 transition-all font-medium'
+
 function LoginContent() {
   const searchParams = useSearchParams()
   const supabase = createClient()
@@ -279,6 +283,7 @@ function LoginContent() {
         {/* Header com Logo */}
         <div className="flex flex-col items-center mb-8 text-center">
           <BrandLogo size="xl" showSubtitle={false} className="flex-col !gap-3" brandName={brandName || undefined} />
+          <h1 className="sr-only">{brandName || brandShortName}</h1>
           <span className="mt-1.5 inline-flex items-center rounded-full border border-amber-500/30 bg-amber-500/10 px-3 py-0.5 text-xs font-bold tracking-widest text-amber-400 uppercase">
             {brandShortName}
           </span>
@@ -398,24 +403,38 @@ function LoginContent() {
         {/* Card Principal */}
         <div className="backdrop-blur-md bg-zinc-900/50 border border-zinc-800 rounded-2xl p-6 md:p-8 shadow-2xl transition-all duration-300">
           {/* Alternador de tipo de login */}
-          <div className="flex bg-zinc-950/80 p-1 rounded-xl border border-zinc-800 mb-6">
+          <div role="tablist" aria-label="Tipo de acesso" className="flex bg-zinc-950/80 p-1 rounded-xl border border-zinc-800 mb-6">
             <button
               type="button"
+              role="tab"
+              id="login-tab-cliente"
+              aria-controls="login-panel-cliente"
+              aria-selected={tipoLogin === 'cliente'}
               onClick={() => { setTipoLogin('cliente'); setApiError(null); }}
-              className={`flex-1 py-2 text-xs font-semibold rounded-lg transition-all ${tipoLogin === 'cliente' ? 'bg-amber-500 text-zinc-950 shadow-md font-bold' : 'text-zinc-400 hover:text-zinc-200'}`}
+              className={`flex-1 min-h-11 px-3 text-xs font-semibold rounded-lg transition-all focus-visible:ring-2 focus-visible:ring-amber-500/40 focus-visible:outline-hidden ${tipoLogin === 'cliente' ? 'bg-amber-500 text-zinc-950 shadow-md font-bold' : 'text-zinc-400 hover:text-zinc-200'}`}
             >
               Sou Cliente
             </button>
             <button
               type="button"
+              role="tab"
+              id="login-tab-operador"
+              aria-controls="login-panel-operador"
+              aria-selected={tipoLogin === 'operador'}
               onClick={() => { setTipoLogin('operador'); setApiError(null); }}
-              className={`flex-1 py-2 text-xs font-semibold rounded-lg transition-all ${tipoLogin === 'operador' ? 'bg-amber-500 text-zinc-950 shadow-md font-bold' : 'text-zinc-400 hover:text-zinc-200'}`}
+              className={`flex-1 min-h-11 px-3 text-xs font-semibold rounded-lg transition-all focus-visible:ring-2 focus-visible:ring-amber-500/40 focus-visible:outline-hidden ${tipoLogin === 'operador' ? 'bg-amber-500 text-zinc-950 shadow-md font-bold' : 'text-zinc-400 hover:text-zinc-200'}`}
             >
               Equipe / Operador
             </button>
           </div>
 
-          <form onSubmit={handleSubmit} className="space-y-5">
+          <form
+            onSubmit={handleSubmit}
+            role="tabpanel"
+            id={`login-panel-${tipoLogin}`}
+            aria-labelledby={`login-tab-${tipoLogin}`}
+            className="space-y-5"
+          >
             {apiError && (
               <div className="p-4 bg-red-500/10 border border-red-500/20 text-red-400 text-sm rounded-xl font-medium">
                 {apiError}
@@ -445,7 +464,7 @@ function LoginContent() {
                     value={telefone}
                     onChange={(e) => handlePhoneChange(e, setTelefone)}
                     placeholder="(41) 98888-7777"
-                    className="w-full pl-10 pr-4 py-3 bg-zinc-950/80 border border-zinc-800 focus:border-amber-500 rounded-xl text-sm text-white placeholder-zinc-500 focus:outline-hidden focus:ring-2 focus:ring-amber-500/20 transition-all font-medium"
+                    className={FIELD_CLASS}
                   />
                 </div>
               </div>
@@ -466,7 +485,7 @@ function LoginContent() {
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     placeholder="operador@crmsofiamanager.com.br"
-                    className="w-full pl-10 pr-4 py-3 bg-zinc-950/80 border border-zinc-800 focus:border-amber-500 rounded-xl text-sm text-white placeholder-zinc-500 focus:outline-hidden focus:ring-2 focus:ring-amber-500/20 transition-all font-medium"
+                    className={FIELD_CLASS}
                   />
                 </div>
               </div>
@@ -497,7 +516,7 @@ function LoginContent() {
                   value={senha}
                   onChange={(e) => setSenha(e.target.value)}
                   placeholder="Sua senha de acesso"
-                  className="w-full pl-10 pr-10 py-3 bg-zinc-950/80 border border-zinc-800 focus:border-amber-500 rounded-xl text-sm text-white placeholder-zinc-500 focus:outline-hidden focus:ring-2 focus:ring-amber-500/20 transition-all font-medium"
+                  className={FIELD_CLASS}
                 />
                 <button
                   type="button"
@@ -513,7 +532,7 @@ function LoginContent() {
             <button
               type="submit"
               disabled={isLoading}
-              className="w-full py-3 bg-linear-to-r from-red-600 to-amber-500 hover:from-red-500 hover:to-amber-400 disabled:opacity-50 text-white rounded-xl text-sm font-semibold shadow-lg shadow-red-600/20 hover:shadow-red-600/35 active:scale-[0.98] transition-all flex items-center justify-center cursor-pointer"
+              className="w-full min-h-11 py-3 bg-linear-to-r from-red-600 to-amber-500 hover:from-red-500 hover:to-amber-400 disabled:opacity-50 text-white rounded-xl text-sm font-semibold shadow-lg shadow-red-600/20 hover:shadow-red-600/35 active:scale-[0.98] transition-all flex items-center justify-center cursor-pointer focus-visible:ring-2 focus-visible:ring-amber-500/40 focus-visible:outline-hidden"
             >
               {isLoading ? (
                 <>
