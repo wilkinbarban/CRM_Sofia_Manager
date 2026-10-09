@@ -210,7 +210,26 @@ describe('ChatContainer Core UI Tests (Phase 2)', () => {
       />
     )
 
-    expect(screen.getByText(/Padaria do Zé/)).toBeInTheDocument()
+    expect(screen.getByText(/Seja bem-vindo à Padaria do Zé/)).toBeInTheDocument()
+  })
+
+  it('heads the chat with the business name and sizes the header actions for touch', () => {
+    render(
+      <ChatContainer
+        clienteNome="Ana Silva"
+        conversaInicial={baseConversa}
+        mensagensIniciais={[]}
+        produtos={[]}
+        brandName="Padaria do Zé"
+      />
+    )
+
+    const headings = screen.getAllByRole('heading', { level: 1 })
+    expect(headings).toHaveLength(1)
+    expect(headings[0]).toHaveTextContent(/Padaria do Zé/)
+
+    expect(screen.getByRole('button', { name: /Abrir cardápio/i }).className).toContain('min-h-11')
+    expect(screen.getByRole('button', { name: /Abrir meu pedido/i }).className).toContain('min-h-11')
   })
 
   it('Task 2.1: Aligns client messages to the right and IA/Operator messages to the left', () => {

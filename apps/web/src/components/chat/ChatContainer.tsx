@@ -893,9 +893,10 @@ export default function ChatContainer({
         <header className="min-h-16 px-3 py-2 sm:px-5 border-b border-zinc-900 bg-zinc-950/80 backdrop-blur-md flex items-center justify-between gap-3 z-10 shrink-0">
           <div className="flex items-center gap-3 min-w-0">
             <BrandLogo size="sm" showSubtitle={false} brandName={brandLabel} />
+            <h1 className="sr-only">{brandLabel}</h1>
             <div className="h-4 w-px bg-zinc-800 hidden sm:block" />
             <div className="hidden min-w-0 flex-col sm:flex">
-              <span className="text-xs font-semibold text-zinc-200">Sofia • Atendimento Virtual</span>
+              <h2 className="text-xs font-semibold text-zinc-200">Sofia • Atendimento Virtual</h2>
               <span className="text-[10px] text-zinc-400">Atendimento e pedidos</span>
             </div>
           </div>
@@ -909,7 +910,7 @@ export default function ChatContainer({
                 setSidebarTab('cardapio');
                 setShowMobileDrawer(true);
               }}
-              className="lg:hidden flex items-center gap-1.5 rounded-xl border border-zinc-700 bg-zinc-900 px-2.5 py-2 text-xs font-bold text-zinc-100 transition-all hover:border-amber-500/40 hover:text-amber-300 active:scale-95"
+              className="lg:hidden flex items-center gap-1.5 rounded-xl border border-zinc-700 bg-zinc-900 px-2.5 py-2 min-h-11 sm:min-h-9 text-xs font-bold text-zinc-100 transition-all hover:border-amber-500/40 hover:text-amber-300 active:scale-95 focus-visible:ring-2 focus-visible:ring-amber-500/40 focus-visible:outline-hidden"
             >
               <Utensils className="h-4 w-4 text-amber-500" />
               <span className="hidden xs:inline">Cardápio</span>
@@ -923,7 +924,7 @@ export default function ChatContainer({
                 setSidebarTab('carrinho');
                 setShowMobileDrawer(true);
               }}
-              className="flex items-center gap-2 px-2.5 py-2 sm:px-3 rounded-xl border border-amber-500/40 bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 text-xs font-bold transition-all cursor-pointer select-none active:scale-95 shadow-sm shadow-amber-950/20"
+              className="flex items-center gap-2 px-2.5 py-2 sm:px-3 min-h-11 sm:min-h-9 rounded-xl border border-amber-500/40 bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 text-xs font-bold transition-all cursor-pointer select-none active:scale-95 shadow-sm shadow-amber-950/20 focus-visible:ring-2 focus-visible:ring-amber-500/40 focus-visible:outline-hidden"
               title="Ver meu pedido personalizado"
             >
               <ShoppingCart className="h-4 w-4 text-amber-500" />
@@ -946,7 +947,7 @@ export default function ChatContainer({
                 setSidebarTab('pedidos');
                 setShowMobileDrawer(true);
               }}
-              className="flex items-center gap-1.5 px-2.5 py-2 sm:px-3 rounded-xl border border-zinc-700 bg-zinc-900 hover:border-amber-500/40 text-zinc-200 text-xs font-bold transition-all cursor-pointer select-none active:scale-95 shadow-sm"
+              className="flex items-center gap-1.5 px-2.5 py-2 sm:px-3 min-h-11 sm:min-h-9 rounded-xl border border-zinc-700 bg-zinc-900 hover:border-amber-500/40 text-zinc-200 text-xs font-bold transition-all cursor-pointer select-none active:scale-95 shadow-sm focus-visible:ring-2 focus-visible:ring-amber-500/40 focus-visible:outline-hidden"
               title="Ver meus pedidos confirmados"
             >
               <Package className="h-4 w-4 text-amber-400" />
