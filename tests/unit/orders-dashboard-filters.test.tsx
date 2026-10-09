@@ -168,3 +168,44 @@ describe('OrdersManagementDashboard - CRM visual hierarchy', () => {
     expect(screen.getByRole('region', { name: 'Fluxo e filtros de pedidos' })).toBeInTheDocument()
   })
 })
+
+describe('OrdersManagementDashboard - mobile touch targets', () => {
+  const pedido: any = {
+    id: 'ped-touch',
+    status: 'novo',
+    status_pagamento: 'pendente',
+    tipo_entrega: 'entrega',
+    endereco_entrega: 'Rua Nicola Pellanda, 1500 - Umbará',
+    taxa_entrega_centavos: 1000,
+    total_produtos_centavos: 6990,
+    total_pedido_centavos: 7990,
+    meio_pagamento: 'pix',
+    data_criacao: new Date().toISOString(),
+    data_atualizacao: new Date().toISOString(),
+    cliente_id: 'cli-touch',
+    clientes: { id: 'cli-touch', nome: 'Wilkin Silva', telefone: '5541998887777' },
+    itens: [
+      { id: 'it-touch', quantidade: 1, preco_unitario_centavos: 6990, preco_total_centavos: 6990, produtos: { id: 'p-touch', nome: 'Combo 1' } },
+    ],
+  }
+
+  it('sizes every interactive control for touch while keeping desktop density', () => {
+    render(<OrdersManagementDashboard usuarioLogado={{ id: 'user-admin', nome: 'Admin Sofia', funcao: 'admin' }} pedidosIniciais={[pedido]} />)
+
+    // The advanced filter selects only exist once the filter panel is expanded.
+    fireEvent.click(screen.getByRole('button', { name: /Filtros/i }))
+
+    const controls = [
+      ...screen.getAllByRole('button'),
+      ...screen.getAllByRole('textbox'),
+      ...screen.getAllByRole('combobox'),
+    ]
+    expect(controls.length).toBeGreaterThan(8)
+
+    for (const control of controls) {
+      const label = control.getAttribute('aria-label') ?? control.textContent ?? control.tagName
+      expect(control.className, `mobile target: ${label}`).toContain('min-h-11')
+      expect(control.className, `desktop override: ${label}`).toMatch(/sm:min-h-(6|9)/)
+    }
+  })
+})

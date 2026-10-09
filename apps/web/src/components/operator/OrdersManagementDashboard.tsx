@@ -594,7 +594,7 @@ export default function OrdersManagementDashboard({
               <button
                 type="button"
                 onClick={() => setStatusFilter('todos')}
-                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer select-none whitespace-nowrap ${
+                className={`min-h-11 sm:min-h-9 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer select-none whitespace-nowrap ${
                   statusFilter === 'todos'
                     ? 'bg-amber-500 text-zinc-950 shadow-md shadow-amber-500/10'
                     : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60'
@@ -606,7 +606,7 @@ export default function OrdersManagementDashboard({
               <button
                 type="button"
                 onClick={() => setStatusFilter('novo')}
-                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer select-none whitespace-nowrap ${
+                className={`min-h-11 sm:min-h-9 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer select-none whitespace-nowrap ${
                   statusFilter === 'novo'
                     ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/20'
                     : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60'
@@ -618,7 +618,7 @@ export default function OrdersManagementDashboard({
               <button
                 type="button"
                 onClick={() => setStatusFilter('confirmado')}
-                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer select-none whitespace-nowrap ${
+                className={`min-h-11 sm:min-h-9 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer select-none whitespace-nowrap ${
                   statusFilter === 'confirmado'
                     ? 'bg-blue-600 text-white shadow-md shadow-blue-600/20'
                     : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60'
@@ -630,7 +630,7 @@ export default function OrdersManagementDashboard({
               <button
                 type="button"
                 onClick={() => setStatusFilter('entregue')}
-                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer select-none whitespace-nowrap ${
+                className={`min-h-11 sm:min-h-9 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer select-none whitespace-nowrap ${
                   statusFilter === 'entregue'
                     ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/20'
                     : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60'
@@ -642,7 +642,7 @@ export default function OrdersManagementDashboard({
               <button
                 type="button"
                 onClick={() => setStatusFilter('cancelado')}
-                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer select-none whitespace-nowrap ${
+                className={`min-h-11 sm:min-h-9 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer select-none whitespace-nowrap ${
                   statusFilter === 'cancelado'
                     ? 'bg-red-600 text-white shadow-md shadow-red-600/20'
                     : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60'
@@ -661,13 +661,13 @@ export default function OrdersManagementDashboard({
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   placeholder="Buscar cliente, fone, #PED, item..."
-                  className="w-full pl-9 pr-8 py-2 bg-zinc-900/80 border border-zinc-800 rounded-xl text-xs text-zinc-100 placeholder-zinc-500 focus:border-amber-500 focus:outline-none transition-all"
+                  className="min-h-11 sm:min-h-9 w-full pl-9 pr-8 py-2 bg-zinc-900/80 border border-zinc-800 rounded-xl text-xs text-zinc-100 placeholder-zinc-500 focus:border-amber-500 focus:outline-none transition-all"
                 />
                 {searchQuery && (
                   <button
                     type="button"
                     onClick={() => setSearchQuery('')}
-                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300"
+                    className="absolute right-1 top-1/2 -translate-y-1/2 min-h-11 min-w-11 items-center justify-center sm:min-h-6 sm:min-w-6 inline-flex text-zinc-500 hover:text-zinc-300"
                   >
                     <X className="h-3.5 w-3.5" />
                   </button>
@@ -678,7 +678,7 @@ export default function OrdersManagementDashboard({
               <button
                 type="button"
                 onClick={() => setShowAdvancedFilters(!showAdvancedFilters)}
-                className={`flex items-center gap-1.5 px-3 py-2 border rounded-xl text-xs font-semibold transition-all cursor-pointer select-none ${
+                className={`min-h-11 sm:min-h-9 flex items-center gap-1.5 px-3 py-2 border rounded-xl text-xs font-semibold transition-all cursor-pointer select-none ${
                   showAdvancedFilters || activeFiltersCount > 0
                     ? 'bg-amber-500/10 border-amber-500/40 text-amber-400 shadow-sm'
                     : 'bg-zinc-900 border-zinc-800 text-zinc-300 hover:bg-zinc-800'
@@ -698,7 +698,7 @@ export default function OrdersManagementDashboard({
                 type="button"
                 disabled={refreshing}
                 onClick={() => carregarPedidos(true)}
-                className="flex items-center gap-1.5 px-3 py-2 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 rounded-xl text-xs font-semibold text-zinc-300 hover:text-zinc-100 transition-all cursor-pointer select-none"
+                className="min-h-11 sm:min-h-9 flex items-center gap-1.5 px-3 py-2 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 rounded-xl text-xs font-semibold text-zinc-300 hover:text-zinc-100 transition-all cursor-pointer select-none"
                 title="Atualizar lista de pedidos"
               >
                 <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin text-amber-500' : ''}`} />
@@ -719,7 +719,7 @@ export default function OrdersManagementDashboard({
                 <select
                   value={pagamentoFilter}
                   onChange={(e) => setPagamentoFilter(e.target.value as any)}
-                  className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-2.5 py-1.5 text-xs text-zinc-200 focus:border-amber-500 focus:outline-none"
+                  className="min-h-11 sm:min-h-9 w-full bg-zinc-900 border border-zinc-800 rounded-xl px-2.5 py-1.5 text-xs text-zinc-200 focus:border-amber-500 focus:outline-none"
                 >
                   <option value="todos">Todos os pagamentos</option>
                   <option value="pendente">⏳ Pendente (Aguardando)</option>
@@ -738,7 +738,7 @@ export default function OrdersManagementDashboard({
                 <select
                   value={entregaFilter}
                   onChange={(e) => setEntregaFilter(e.target.value as any)}
-                  className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-2.5 py-1.5 text-xs text-zinc-200 focus:border-amber-500 focus:outline-none"
+                  className="min-h-11 sm:min-h-9 w-full bg-zinc-900 border border-zinc-800 rounded-xl px-2.5 py-1.5 text-xs text-zinc-200 focus:border-amber-500 focus:outline-none"
                 >
                   <option value="todos">Todas as modalidades</option>
                   <option value="entrega">🛵 Delivery (Entrega)</option>
@@ -755,7 +755,7 @@ export default function OrdersManagementDashboard({
                 <select
                   value={meioPagamentoFilter}
                   onChange={(e) => setMeioPagamentoFilter(e.target.value as any)}
-                  className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-2.5 py-1.5 text-xs text-zinc-200 focus:border-amber-500 focus:outline-none"
+                  className="min-h-11 sm:min-h-9 w-full bg-zinc-900 border border-zinc-800 rounded-xl px-2.5 py-1.5 text-xs text-zinc-200 focus:border-amber-500 focus:outline-none"
                 >
                   <option value="todos">Todas as formas</option>
                   <option value="pix">⚡ Pix</option>
@@ -774,7 +774,7 @@ export default function OrdersManagementDashboard({
                 <select
                   value={periodoFilter}
                   onChange={(e) => setPeriodoFilter(e.target.value as any)}
-                  className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-2.5 py-1.5 text-xs text-zinc-200 focus:border-amber-500 focus:outline-none"
+                  className="min-h-11 sm:min-h-9 w-full bg-zinc-900 border border-zinc-800 rounded-xl px-2.5 py-1.5 text-xs text-zinc-200 focus:border-amber-500 focus:outline-none"
                 >
                   <option value="todos">Todos os registros</option>
                   <option value="hoje">☀️ Hoje</option>
@@ -792,7 +792,7 @@ export default function OrdersManagementDashboard({
                 <select
                   value={ordenacao}
                   onChange={(e) => setOrdenacao(e.target.value as any)}
-                  className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-2.5 py-1.5 text-xs text-zinc-200 focus:border-amber-500 focus:outline-none"
+                  className="min-h-11 sm:min-h-9 w-full bg-zinc-900 border border-zinc-800 rounded-xl px-2.5 py-1.5 text-xs text-zinc-200 focus:border-amber-500 focus:outline-none"
                 >
                   <option value="recente">🕒 Mais recente primeiro</option>
                   <option value="antigo">⏰ Mais antigo primeiro</option>
@@ -817,7 +817,7 @@ export default function OrdersManagementDashboard({
                 {pagamentoFilter !== 'todos' && (
                   <span className="inline-flex items-center gap-1 bg-zinc-800 text-zinc-300 text-[11px] px-2 py-0.5 rounded-md border border-zinc-700">
                     Pagamento: {pagamentoFilter}
-                    <button type="button" onClick={() => setPagamentoFilter('todos')} className="hover:text-red-400">
+                    <button type="button" onClick={() => setPagamentoFilter('todos')} className="inline-flex min-h-11 min-w-11 items-center justify-center sm:min-h-6 sm:min-w-6 hover:text-red-400">
                       <X className="h-3 w-3" />
                     </button>
                   </span>
@@ -825,7 +825,7 @@ export default function OrdersManagementDashboard({
                 {entregaFilter !== 'todos' && (
                   <span className="inline-flex items-center gap-1 bg-zinc-800 text-zinc-300 text-[11px] px-2 py-0.5 rounded-md border border-zinc-700">
                     Entrega: {entregaFilter}
-                    <button type="button" onClick={() => setEntregaFilter('todos')} className="hover:text-red-400">
+                    <button type="button" onClick={() => setEntregaFilter('todos')} className="inline-flex min-h-11 min-w-11 items-center justify-center sm:min-h-6 sm:min-w-6 hover:text-red-400">
                       <X className="h-3 w-3" />
                     </button>
                   </span>
@@ -833,7 +833,7 @@ export default function OrdersManagementDashboard({
                 {meioPagamentoFilter !== 'todos' && (
                   <span className="inline-flex items-center gap-1 bg-zinc-800 text-zinc-300 text-[11px] px-2 py-0.5 rounded-md border border-zinc-700">
                     Meio: {meioPagamentoFilter}
-                    <button type="button" onClick={() => setMeioPagamentoFilter('todos')} className="hover:text-red-400">
+                    <button type="button" onClick={() => setMeioPagamentoFilter('todos')} className="inline-flex min-h-11 min-w-11 items-center justify-center sm:min-h-6 sm:min-w-6 hover:text-red-400">
                       <X className="h-3 w-3" />
                     </button>
                   </span>
@@ -841,7 +841,7 @@ export default function OrdersManagementDashboard({
                 {periodoFilter !== 'todos' && (
                   <span className="inline-flex items-center gap-1 bg-zinc-800 text-zinc-300 text-[11px] px-2 py-0.5 rounded-md border border-zinc-700">
                     Período: {periodoFilter}
-                    <button type="button" onClick={() => setPeriodoFilter('todos')} className="hover:text-red-400">
+                    <button type="button" onClick={() => setPeriodoFilter('todos')} className="inline-flex min-h-11 min-w-11 items-center justify-center sm:min-h-6 sm:min-w-6 hover:text-red-400">
                       <X className="h-3 w-3" />
                     </button>
                   </span>
@@ -849,7 +849,7 @@ export default function OrdersManagementDashboard({
                 {ordenacao !== 'recente' && (
                   <span className="inline-flex items-center gap-1 bg-zinc-800 text-zinc-300 text-[11px] px-2 py-0.5 rounded-md border border-zinc-700">
                     Ordem: {ordenacao}
-                    <button type="button" onClick={() => setOrdenacao('recente')} className="hover:text-red-400">
+                    <button type="button" onClick={() => setOrdenacao('recente')} className="inline-flex min-h-11 min-w-11 items-center justify-center sm:min-h-6 sm:min-w-6 hover:text-red-400">
                       <X className="h-3 w-3" />
                     </button>
                   </span>
@@ -857,7 +857,7 @@ export default function OrdersManagementDashboard({
                 <button
                   type="button"
                   onClick={handleLimparFiltros}
-                  className="inline-flex items-center gap-1 text-[11px] font-semibold text-rose-400 hover:text-rose-300 px-2 py-0.5 rounded-md bg-rose-500/10 border border-rose-500/20 cursor-pointer select-none ml-1 transition-all"
+                  className="inline-flex min-h-11 sm:min-h-9 items-center gap-1 text-[11px] font-semibold text-rose-400 hover:text-rose-300 px-2 py-0.5 rounded-md bg-rose-500/10 border border-rose-500/20 cursor-pointer select-none ml-1 transition-all"
                 >
                   <RotateCcw className="h-3 w-3" />
                   <span>Limpar Filtros</span>
@@ -884,7 +884,7 @@ export default function OrdersManagementDashboard({
               <button
                 type="button"
                 onClick={handleLimparFiltros}
-                className="mt-4 inline-flex items-center gap-1.5 px-3 py-1.5 bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/30 rounded-xl text-xs font-semibold cursor-pointer transition-all"
+                className="mt-4 inline-flex min-h-11 sm:min-h-9 items-center gap-1.5 px-3 py-1.5 bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/30 rounded-xl text-xs font-semibold cursor-pointer transition-all"
               >
                 <RotateCcw className="h-3.5 w-3.5" />
                 <span>Resetar Filtros</span>
@@ -1011,7 +1011,7 @@ export default function OrdersManagementDashboard({
                         <button
                           type="button"
                           onClick={() => setExpandedId(isExpanded ? null : pedido.id)}
-                          className="text-[11px] text-amber-500 hover:text-amber-400 flex items-center gap-0.5 cursor-pointer font-medium"
+                          className="min-h-11 sm:min-h-9 inline-flex sm:min-h-6 text-[11px] text-amber-500 hover:text-amber-400 items-center gap-0.5 cursor-pointer font-medium"
                         >
                           {isExpanded ? 'Recolher' : 'Ver Detalhes'}
                           {isExpanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
@@ -1081,7 +1081,7 @@ export default function OrdersManagementDashboard({
                         <p className="mb-2 text-[11px] text-zinc-400" role="status">{continuation.message}</p>
                         {pedido.elegivel_para_comprovante && <ReceiptOutputActions pedidoId={pedido.id} disabled={isCurrentAction} />}
                         {continuation.actions.length > 0 && <div className="flex flex-wrap items-center gap-2">
-                          {continuation.actions.map((action) => <button key={action} type="button" disabled={isCurrentAction} onClick={() => handleOrderAction(pedido.id, action)} aria-label={actionLabels[action]} className={action === 'cancelar' ? 'inline-flex items-center gap-1.5 py-2 px-3 rounded-xl text-xs font-bold border border-zinc-700 text-zinc-300 hover:border-red-900 hover:bg-red-950/40 hover:text-red-300 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-400 disabled:opacity-50' : 'inline-flex items-center gap-1.5 py-2 px-3 bg-amber-500 hover:bg-amber-400 text-zinc-950 rounded-xl text-xs font-bold focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-400 disabled:opacity-50'}>
+                          {continuation.actions.map((action) => <button key={action} type="button" disabled={isCurrentAction} onClick={() => handleOrderAction(pedido.id, action)} aria-label={actionLabels[action]} className={action === 'cancelar' ? 'inline-flex min-h-11 sm:min-h-9 items-center gap-1.5 py-2 px-3 rounded-xl text-xs font-bold border border-zinc-700 text-zinc-300 hover:border-red-900 hover:bg-red-950/40 hover:text-red-300 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-400 disabled:opacity-50' : 'inline-flex min-h-11 sm:min-h-9 items-center gap-1.5 py-2 px-3 bg-amber-500 hover:bg-amber-400 text-zinc-950 rounded-xl text-xs font-bold focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-400 disabled:opacity-50'}>
                             {isCurrentAction ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : actionLabels[action]}
                           </button>)}
                         </div>}
