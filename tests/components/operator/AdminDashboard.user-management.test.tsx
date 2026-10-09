@@ -1,5 +1,5 @@
 import React from 'react'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import AdminDashboard from '@/components/operator/AdminDashboard'
 import {
@@ -185,6 +185,26 @@ describe('AdminDashboard — Gestão de Usuários, Métricas, Logs e Comprovante
     const card = await screen.findByTestId('business-profile-card')
     expect(card).toHaveClass('w-full')
     expect(card.className).not.toContain('max-w-5xl')
+  })
+
+  it('stacks the admin shell and its module menu on phones', () => {
+    render(<AdminDashboard {...defaultProps} />)
+
+    expect(screen.getByTestId('admin-shell')).toHaveClass('flex-col', 'lg:flex-row', 'overflow-y-auto', 'lg:overflow-hidden')
+
+    const sidebar = screen.getByTestId('admin-sidebar')
+    expect(sidebar).toHaveClass('w-full', 'lg:w-72', 'max-h-[45vh]', 'lg:max-h-none', 'overflow-y-auto')
+  })
+
+  it('keeps every admin module tab tappable on phones', () => {
+    render(<AdminDashboard {...defaultProps} />)
+
+    const tabs = within(screen.getByTestId('admin-sidebar')).getAllByRole('button')
+    expect(tabs.length).toBeGreaterThanOrEqual(8)
+
+    for (const tab of tabs) {
+      expect(tab.className, `touch target: ${tab.textContent}`).toContain('min-h-11')
+    }
   })
 
   it('1. Gestão de Usuários: abre modal de criação e cadastra novo membro', async () => {

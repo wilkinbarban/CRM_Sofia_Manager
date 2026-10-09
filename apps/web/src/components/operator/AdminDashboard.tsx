@@ -883,12 +883,12 @@ export default function AdminDashboard({
   }
 
   return (
-    <div className="flex h-full w-full bg-zinc-950 text-zinc-200">
+    <div data-testid="admin-shell" className="flex h-full w-full flex-col overflow-y-auto bg-zinc-950 text-zinc-200 lg:flex-row lg:overflow-hidden">
       
       {/* Toast Alert */}
       {toast && (
         <div
-          className={`fixed right-6 top-24 z-[100] flex items-center gap-3 rounded-2xl border px-4 py-3.5 shadow-2xl backdrop-blur-md transition-all duration-300 transform scale-100 translate-y-0 ${
+          className={`fixed left-4 right-4 top-24 sm:left-auto sm:right-6 z-[100] flex items-center gap-3 rounded-2xl border px-4 py-3.5 shadow-2xl backdrop-blur-md transition-all duration-300 transform scale-100 translate-y-0 ${
             toast.type === 'success'
               ? 'bg-zinc-900/95 border-emerald-500/30 text-emerald-400 shadow-emerald-950/20'
               : 'bg-zinc-900/95 border-rose-500/30 text-rose-400 shadow-rose-950/20'
@@ -1284,19 +1284,19 @@ export default function AdminDashboard({
       )}
 
       {/* Sidebar Navigation */}
-      <aside className="w-72 shrink-0 border-r border-zinc-800/80 bg-zinc-950/80 p-5 flex flex-col justify-between backdrop-blur-md overflow-y-auto">
-        <div className="space-y-6">
-          <nav className="space-y-5">
+      <aside data-testid="admin-sidebar" className="w-full shrink-0 overflow-y-auto max-h-[45vh] lg:max-h-none lg:w-72 border-b lg:border-b-0 border-zinc-800/80 lg:border-r bg-zinc-950/80 p-3 lg:p-5 flex flex-col justify-between backdrop-blur-md">
+        <div className="space-y-4 lg:space-y-6">
+          <nav className="space-y-4 lg:space-y-5">
             {/* Categoria 1: Operacional & Vendas */}
-            <div className="space-y-1">
-              <div className="px-3 py-1 text-[11px] font-bold uppercase tracking-wider text-amber-500/90 flex items-center gap-1.5">
+            <div className="grid grid-cols-2 gap-2 lg:block lg:space-y-1">
+              <div className="col-span-2 px-3 py-1 text-[11px] font-bold uppercase tracking-wider text-amber-500/90 flex items-center gap-1.5">
                 <span>🥩</span>
                 <span>Operacional & Vendas</span>
               </div>
 
               <button
                 onClick={() => setActiveTab('estoque')}
-                className={`flex w-full items-center gap-3 rounded-xl px-3.5 py-2.5 text-xs font-semibold transition-all cursor-pointer ${
+                className={`flex min-h-11 lg:min-h-10 w-full items-center gap-3 rounded-xl px-3.5 py-2.5 text-xs font-semibold transition-all cursor-pointer ${
                   activeTab === 'estoque'
                     ? 'bg-amber-500/15 text-amber-400 border border-amber-500/30 shadow-sm shadow-amber-500/10'
                     : 'text-zinc-400 hover:bg-zinc-900/60 hover:text-zinc-200'
@@ -1308,7 +1308,7 @@ export default function AdminDashboard({
 
               <button
                 onClick={() => setActiveTab('horarios')}
-                className={`flex w-full items-center gap-3 rounded-xl px-3.5 py-2.5 text-xs font-semibold transition-all cursor-pointer ${
+                className={`flex min-h-11 lg:min-h-10 w-full items-center gap-3 rounded-xl px-3.5 py-2.5 text-xs font-semibold transition-all cursor-pointer ${
                   activeTab === 'horarios'
                     ? 'bg-amber-500/15 text-amber-400 border border-amber-500/30 shadow-sm shadow-amber-500/10'
                     : 'text-zinc-400 hover:bg-zinc-900/60 hover:text-zinc-200'
@@ -1320,7 +1320,7 @@ export default function AdminDashboard({
 
               <button
                 onClick={() => setActiveTab('comprovantes')}
-                className={`flex w-full items-center gap-3 rounded-xl px-3.5 py-2.5 text-xs font-semibold transition-all cursor-pointer ${
+                className={`flex min-h-11 lg:min-h-10 w-full items-center gap-3 rounded-xl px-3.5 py-2.5 text-xs font-semibold transition-all cursor-pointer ${
                   activeTab === 'comprovantes'
                     ? 'bg-amber-500/15 text-amber-400 border border-amber-500/30 shadow-sm shadow-amber-500/10'
                     : 'text-zinc-400 hover:bg-zinc-900/60 hover:text-zinc-200'
@@ -1332,15 +1332,15 @@ export default function AdminDashboard({
             </div>
 
             {/* Categoria 2: Inteligência Artificial & Sofia CRM */}
-            <div className="space-y-1">
-              <div className="px-3 py-1 text-[11px] font-bold uppercase tracking-wider text-amber-500/90 flex items-center gap-1.5">
+            <div className="grid grid-cols-2 gap-2 lg:block lg:space-y-1">
+              <div className="col-span-2 px-3 py-1 text-[11px] font-bold uppercase tracking-wider text-amber-500/90 flex items-center gap-1.5">
                 <span>🤖</span>
                 <span>Inteligência & Sofía CRM</span>
               </div>
 
               <button
                 onClick={() => setActiveTab('prompt')}
-                className={`flex w-full items-center gap-3 rounded-xl px-3.5 py-2.5 text-xs font-semibold transition-all cursor-pointer ${
+                className={`flex min-h-11 lg:min-h-10 w-full items-center gap-3 rounded-xl px-3.5 py-2.5 text-xs font-semibold transition-all cursor-pointer ${
                   activeTab === 'prompt'
                     ? 'bg-amber-500/15 text-amber-400 border border-amber-500/30 shadow-sm shadow-amber-500/10'
                     : 'text-zinc-400 hover:bg-zinc-900/60 hover:text-zinc-200'
@@ -1352,7 +1352,7 @@ export default function AdminDashboard({
 
               <button
                 onClick={() => setActiveTab('conhecimento')}
-                className={`flex w-full items-center gap-3 rounded-xl px-3.5 py-2.5 text-xs font-semibold transition-all cursor-pointer ${
+                className={`flex min-h-11 lg:min-h-10 w-full items-center gap-3 rounded-xl px-3.5 py-2.5 text-xs font-semibold transition-all cursor-pointer ${
                   activeTab === 'conhecimento'
                     ? 'bg-amber-500/15 text-amber-400 border border-amber-500/30 shadow-sm shadow-amber-500/10'
                     : 'text-zinc-400 hover:bg-zinc-900/60 hover:text-zinc-200'
@@ -1364,7 +1364,7 @@ export default function AdminDashboard({
 
               <button
                 onClick={() => setActiveTab('integracoes')}
-                className={`flex w-full items-center gap-3 rounded-xl px-3.5 py-2.5 text-xs font-semibold transition-all cursor-pointer ${
+                className={`flex min-h-11 lg:min-h-10 w-full items-center gap-3 rounded-xl px-3.5 py-2.5 text-xs font-semibold transition-all cursor-pointer ${
                   activeTab === 'integracoes'
                     ? 'bg-amber-500/15 text-amber-400 border border-amber-500/30 shadow-sm shadow-amber-500/10'
                     : 'text-zinc-400 hover:bg-zinc-900/60 hover:text-zinc-200'
@@ -1376,15 +1376,15 @@ export default function AdminDashboard({
             </div>
 
             {/* Categoria 3: Governança & Gestão */}
-            <div className="space-y-1">
-              <div className="px-3 py-1 text-[11px] font-bold uppercase tracking-wider text-amber-500/90 flex items-center gap-1.5">
+            <div className="grid grid-cols-2 gap-2 lg:block lg:space-y-1">
+              <div className="col-span-2 px-3 py-1 text-[11px] font-bold uppercase tracking-wider text-amber-500/90 flex items-center gap-1.5">
                 <span>🛡️</span>
                 <span>Governança & Gestão</span>
               </div>
 
               <button
                 onClick={() => setActiveTab('operadores')}
-                className={`flex w-full items-center gap-3 rounded-xl px-3.5 py-2.5 text-xs font-semibold transition-all cursor-pointer ${
+                className={`flex min-h-11 lg:min-h-10 w-full items-center gap-3 rounded-xl px-3.5 py-2.5 text-xs font-semibold transition-all cursor-pointer ${
                   activeTab === 'operadores'
                     ? 'bg-amber-500/15 text-amber-400 border border-amber-500/30 shadow-sm shadow-amber-500/10'
                     : 'text-zinc-400 hover:bg-zinc-900/60 hover:text-zinc-200'
@@ -1396,7 +1396,7 @@ export default function AdminDashboard({
 
               <button
                 onClick={() => setActiveTab('empresa')}
-                className={`flex w-full items-center gap-3 rounded-xl px-3.5 py-2.5 text-xs font-semibold transition-all cursor-pointer ${
+                className={`flex min-h-11 lg:min-h-10 w-full items-center gap-3 rounded-xl px-3.5 py-2.5 text-xs font-semibold transition-all cursor-pointer ${
                   activeTab === 'empresa'
                     ? 'bg-amber-500/15 text-amber-400 border border-amber-500/30 shadow-sm shadow-amber-500/10'
                     : 'text-zinc-400 hover:bg-zinc-900/60 hover:text-zinc-200'
@@ -1408,7 +1408,7 @@ export default function AdminDashboard({
 
               <button
                 onClick={() => setActiveTab('metricas')}
-                className={`flex w-full items-center gap-3 rounded-xl px-3.5 py-2.5 text-xs font-semibold transition-all cursor-pointer ${
+                className={`flex min-h-11 lg:min-h-10 w-full items-center gap-3 rounded-xl px-3.5 py-2.5 text-xs font-semibold transition-all cursor-pointer ${
                   activeTab === 'metricas'
                     ? 'bg-amber-500/15 text-amber-400 border border-amber-500/30 shadow-sm shadow-amber-500/10'
                     : 'text-zinc-400 hover:bg-zinc-900/60 hover:text-zinc-200'
@@ -1420,7 +1420,7 @@ export default function AdminDashboard({
 
               <button
                 onClick={() => setActiveTab('auditoria')}
-                className={`flex w-full items-center gap-3 rounded-xl px-3.5 py-2.5 text-xs font-semibold transition-all cursor-pointer ${
+                className={`flex min-h-11 lg:min-h-10 w-full items-center gap-3 rounded-xl px-3.5 py-2.5 text-xs font-semibold transition-all cursor-pointer ${
                   activeTab === 'auditoria'
                     ? 'bg-amber-500/15 text-amber-400 border border-amber-500/30 shadow-sm shadow-amber-500/10'
                     : 'text-zinc-400 hover:bg-zinc-900/60 hover:text-zinc-200'
@@ -1432,7 +1432,7 @@ export default function AdminDashboard({
 
               <button
                 onClick={() => setActiveTab('storage-orphans')}
-                className={`flex w-full items-center gap-3 rounded-xl px-3.5 py-2.5 text-xs font-semibold transition-all cursor-pointer ${
+                className={`flex min-h-11 lg:min-h-10 w-full items-center gap-3 rounded-xl px-3.5 py-2.5 text-xs font-semibold transition-all cursor-pointer ${
                   activeTab === 'storage-orphans'
                     ? 'bg-amber-500/15 text-amber-400 border border-amber-500/30 shadow-sm shadow-amber-500/10'
                     : 'text-zinc-400 hover:bg-zinc-900/60 hover:text-zinc-200'
@@ -1445,7 +1445,7 @@ export default function AdminDashboard({
           </nav>
         </div>
         
-        <div className="space-y-3 pt-6 border-t border-zinc-800/80">
+        <div className="hidden lg:block space-y-3 pt-6 border-t border-zinc-800/80">
           {/* Info logado */}
           <div className="rounded-xl bg-zinc-900/50 border border-zinc-800/60 p-3 text-xs">
             <div className="text-zinc-500 font-medium text-[11px]">Operador Ativo</div>
@@ -1788,7 +1788,7 @@ export default function AdminDashboard({
 
         {/* TAB: BASE DE CONHECIMENTO */}
         {activeTab === 'conhecimento' && (
-          <div className="flex flex-col h-full w-full overflow-hidden -m-8 flex-1">
+          <div className="flex flex-col h-full w-full overflow-hidden -m-4 md:-m-8 flex-1">
             <KnowledgeCRUD artigosIniciais={artigosIniciais} perfilFuncao={usuarioLogado.funcao} />
           </div>
         )}
