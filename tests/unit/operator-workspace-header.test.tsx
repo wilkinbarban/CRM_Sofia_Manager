@@ -43,4 +43,17 @@ describe('OperatorWorkspaceHeader', () => {
     expect(screen.getByTestId('operator-workspace-header')).toBeInTheDocument()
     expect(screen.queryByText('CRM Sofia Manager')).not.toBeInTheDocument()
   })
+
+  it('sizes the module links for touch while scrolling on small screens', () => {
+    render(<OperatorWorkspaceHeader active="atendimento" role="admin" />)
+
+    const nav = screen.getByRole('navigation', { name: 'Módulos do atendimento' })
+    expect(nav).toHaveClass('overflow-x-auto')
+
+    const links = within(nav).getAllByRole('link')
+    expect(links.length).toBeGreaterThan(0)
+    for (const link of links) {
+      expect(link).toHaveClass('h-11', 'sm:h-9')
+    }
+  })
 })

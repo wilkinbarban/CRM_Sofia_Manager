@@ -65,7 +65,7 @@ export function OperatorTopNavigation({ active, role, adminTab }: OperatorTopNav
                 key={`${item.id}:${item.href}`}
                 href={item.href}
                 aria-current={isActive ? 'page' : undefined}
-                className={`inline-flex h-9 items-center gap-1.5 whitespace-nowrap rounded-lg px-3 text-xs font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-400 ${
+                className={`inline-flex h-11 sm:h-9 items-center gap-1.5 whitespace-nowrap rounded-lg px-3 text-xs font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-400 ${
                   isActive
                     ? 'bg-amber-500 text-zinc-950 shadow-sm shadow-amber-500/20'
                     : 'text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100'

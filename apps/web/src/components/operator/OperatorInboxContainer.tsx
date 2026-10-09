@@ -582,7 +582,7 @@ export default function OperatorInboxContainer({
           data-testid="queue-region"
           aria-label="Fila de atendimento"
           data-workspace-label="Atendimento"
-          className="h-64 w-full shrink-0 overflow-hidden border-b border-zinc-800 xl:h-full xl:w-72 xl:border-b-0 2xl:w-[22rem]"
+          className="h-[42vh] min-h-56 max-h-72 w-full shrink-0 overflow-hidden border-b border-zinc-800 xl:h-full xl:w-72 xl:border-b-0 2xl:w-[22rem]"
         >
           {sofiaToggleError && (
             <div className="border-b border-red-500/20 bg-red-500/10 px-3 py-2 text-xs text-red-400">
@@ -602,7 +602,7 @@ export default function OperatorInboxContainer({
         <section
           data-testid="chat-region"
           aria-label="Conversa ativa"
-          className="min-h-[24rem] w-full flex-1 overflow-hidden border-b border-zinc-800 xl:min-h-0 xl:h-full xl:border-b-0"
+          className="min-h-[60vh] w-full flex-1 overflow-hidden border-b border-zinc-800 xl:min-h-0 xl:h-full xl:border-b-0"
         >
           <OperatorChatConsole
             conversa={activeConversa}
@@ -616,7 +616,7 @@ export default function OperatorInboxContainer({
           data-testid="commercial-region"
           aria-label="Carrinho, pedidos e dados do cliente"
           data-workspace-label="Venda e relacionamento"
-          className="h-[36rem] w-full shrink-0 overflow-hidden xl:h-full xl:w-[28rem] 2xl:w-[32rem]"
+          className="h-[60vh] max-h-[36rem] w-full shrink-0 overflow-hidden xl:h-full xl:w-[28rem] 2xl:w-[32rem]"
         >
           <ClientCrmPanel
             cliente={activeConversa?.clientes || null}
