@@ -1,4 +1,3 @@
-import React from 'react'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import AdminDashboard from '@/components/operator/AdminDashboard'
@@ -35,9 +34,8 @@ const props = {
   logsIniciais: [], artigosIniciais: [], systemConfigs: {},
 }
 
-function WhatsAppHarness({ initial = 'meta' as const }) {
-  const [provider, setProvider] = React.useState<'meta' | 'evolution'>(initial)
-  return <WhatsAppCard initialConfigs={{}} showToast={vi.fn()} provedorAtivo={provider} onProvedorChange={setProvider} />
+function renderWhatsAppCard() {
+  return render(<WhatsAppCard initialConfigs={{}} showToast={vi.fn()} />)
 }
 
 describe('Integrações do Sistema', () => {
@@ -61,30 +59,30 @@ describe('Integrações do Sistema', () => {
     expect(screen.queryByText(/OpenRouter/)).not.toBeInTheDocument()
   })
 
-  it('shows only Meta fields and saves only the active Meta configuration', async () => {
-    render(<WhatsAppHarness />)
-    expect(screen.getByRole('heading', { name: 'Configuração da Meta Cloud API' })).toBeInTheDocument()
-    expect(screen.queryByRole('heading', { name: 'Configuração da Evolution API' })).not.toBeInTheDocument()
-    fireEvent.change(screen.getByLabelText('Token de acesso da Meta'), { target: { value: 'meta-token' } })
-    fireEvent.change(screen.getByLabelText('ID do número de telefone'), { target: { value: 'phone-id' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Salvar configuração da Meta' }))
-    await waitFor(() => expect(salvarConfiguracaoAdmin).toHaveBeenCalledTimes(4))
-    expect(vi.mocked(salvarConfiguracaoAdmin).mock.calls.map(([key]) => key)).toEqual([
-      'WHATSAPP_ACCESS_TOKEN', 'WHATSAPP_PHONE_NUMBER_ID', 'WHATSAPP_APP_SECRET', 'WHATSAPP_VERIFY_TOKEN',
-    ])
+  it('renders the Evolution surface only and never the retired Meta Cloud API controls', () => {
+    renderWhatsAppCard()
+
+    expect(screen.getByRole('heading', { name: 'Configuração da Evolution API' })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Configuração da Meta Cloud API' })).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Token de acesso da Meta')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('ID do número de telefone')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Segredo do aplicativo Meta')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Token de verificação do webhook')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Testar Conexão Meta' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('radiogroup', { name: 'Provedor ativo do WhatsApp' })).not.toBeInTheDocument()
+    expect(screen.queryByText(/Meta Cloud API/)).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Obter QR Code' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Salvar configuração da Evolution' })).toBeInTheDocument()
   })
 
-  it('switches to Evolution, renders its QR controls, and saves only Evolution fields', async () => {
-    render(<WhatsAppHarness />)
-    fireEvent.click(screen.getByRole('radio', { name: 'Evolution API' }))
-    await waitFor(() => expect(screen.getByRole('heading', { name: 'Configuração da Evolution API' })).toBeInTheDocument())
-    expect(screen.queryByRole('heading', { name: 'Configuração da Meta Cloud API' })).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Obter QR Code' })).toBeInTheDocument()
-    vi.mocked(salvarConfiguracaoAdmin).mockClear()
+  it('saves only Evolution fields and never writes the retired Meta credentials', async () => {
+    renderWhatsAppCard()
+
     fireEvent.change(screen.getByLabelText('URL da Evolution API'), { target: { value: 'http://evolution:8080' } })
     fireEvent.change(screen.getByLabelText('Chave da Evolution API'), { target: { value: 'evolution-key' } })
     fireEvent.change(screen.getByLabelText('Nome da instância'), { target: { value: 'asados' } })
     fireEvent.click(screen.getByRole('button', { name: 'Salvar configuração da Evolution' }))
+
     await waitFor(() => expect(salvarConfiguracaoAdmin).toHaveBeenCalledTimes(3))
     expect(vi.mocked(salvarConfiguracaoAdmin).mock.calls.map(([key]) => key)).toEqual([
       'EVOLUTION_API_URL', 'EVOLUTION_API_KEY', 'EVOLUTION_INSTANCE_NAME',

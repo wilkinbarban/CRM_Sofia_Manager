@@ -157,9 +157,6 @@ export default function AdminDashboard({
     if (tab && allowedTabs.includes(tab)) setActiveTab(tab)
   }, [initialTab])
 
-  // State para Provedor de WhatsApp Ativo (coordenado entre cartões)
-  const [provedorAtivo, setProvedorAtivo] = useState<'meta' | 'evolution'>((systemConfigs?.WHATSAPP_PROVIDER as 'meta' | 'evolution') || 'meta')
-  
   // States para Operadores
   const [usuarios, setUsuarios] = useState<Usuario[]>(usuariosIniciais)
   const [searchQuery, setSearchQuery] = useState('')
@@ -1778,8 +1775,6 @@ export default function AdminDashboard({
                 <WhatsAppCard
                   initialConfigs={systemConfigs}
                   showToast={showToast}
-                  provedorAtivo={provedorAtivo}
-                  onProvedorChange={setProvedorAtivo}
                 />
               </article>
               <article aria-label="LLM API" className="lg:col-span-2">
