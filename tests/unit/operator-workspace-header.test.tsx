@@ -20,4 +20,27 @@ describe('OperatorWorkspaceHeader', () => {
     expect(screen.getByRole('link', { name: 'Meu Perfil' })).toHaveAttribute('aria-current', 'page')
     expect(screen.getByTestId('operator-workspace-header')).toHaveClass('overflow-hidden')
   })
+
+  it('renders the business profile name and short name supplied by the server', () => {
+    render(
+      <OperatorWorkspaceHeader
+        active="atendimento"
+        role="admin"
+        brand={{ name: 'Padaria do Zé', shortName: 'Padaria Zé', subtitle: 'Curitiba - PR' }}
+      />
+    )
+
+    expect(screen.getByText(/Padaria do/)).toBeInTheDocument()
+    expect(screen.getByText('Zé')).toBeInTheDocument()
+    expect(screen.getByText('Padaria Zé')).toBeInTheDocument()
+    expect(screen.getByText('Curitiba - PR')).toBeInTheDocument()
+    expect(screen.queryByText('CRM Sofia Manager')).not.toBeInTheDocument()
+  })
+
+  it('keeps rendering a brand when no server profile is supplied', () => {
+    render(<OperatorWorkspaceHeader active="perfil" role="vendedor" />)
+
+    expect(screen.getByTestId('operator-workspace-header')).toBeInTheDocument()
+    expect(screen.queryByText('CRM Sofia Manager')).not.toBeInTheDocument()
+  })
 })

@@ -4,6 +4,7 @@ import OperatorInboxContainer from '@/components/operator/OperatorInboxContainer
 import { OperatorWorkspaceHeader } from '@/components/operator/OperatorWorkspaceHeader'
 import { obterStatusSofiaAtendimento } from '@/app/actions/atendimento'
 import type { SofiaAtendimentoStatus } from '@/app/actions/atendimento'
+import { getBusinessProfile } from '@/lib/config/business-profile'
 import type { Cliente, Conversa, Mensagem } from '@/components/operator/ConversationsQueue'
 
 export const dynamic = 'force-dynamic'
@@ -123,9 +124,19 @@ export default async function AtendimentoPage() {
     } satisfies Conversa
   })
 
+  const businessProfile = await getBusinessProfile()
+
   return (
     <div className="flex h-screen w-full flex-col bg-zinc-950 text-zinc-50 overflow-hidden font-sans">
-      <OperatorWorkspaceHeader active="atendimento" role={perfil.funcao} />
+      <OperatorWorkspaceHeader
+        active="atendimento"
+        role={perfil.funcao}
+        brand={{
+          name: businessProfile.name,
+          shortName: businessProfile.shortName,
+          subtitle: businessProfile.location,
+        }}
+      />
 
       {/* Área de Trabalho */}
       <main className="flex-1 overflow-auto">

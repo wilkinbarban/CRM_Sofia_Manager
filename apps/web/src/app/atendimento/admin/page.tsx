@@ -247,6 +247,11 @@ export default async function AdminPage({ searchParams }: AdminPageProps) {
         active="admin"
         role={perfil.funcao}
         adminTab={initialTab}
+        brand={{
+          name: systemConfigs.BUSINESS_NAME,
+          shortName: systemConfigs.BUSINESS_SHORT_NAME,
+          subtitle: systemConfigs.BUSINESS_LOCATION,
+        }}
       />
 
       {/* Conteúdo Principal */}

@@ -1,11 +1,19 @@
 import { BrandLogo } from '@/components/ui/BrandLogo'
 import { OperatorLogoutButton } from '@/components/operator/OperatorLogoutButton'
 import { OperatorTopNavigation } from '@/components/operator/OperatorTopNavigation'
+import { resolveBusinessProfileSync } from '@/lib/config/business-profile'
+
+export type WorkspaceBrand = {
+  name?: string
+  shortName?: string
+  subtitle?: string
+}
 
 type OperatorWorkspaceHeaderProps = {
   active: 'atendimento' | 'pedidos' | 'admin' | 'estoque' | 'conhecimento' | 'perfil'
   role: string
   adminTab?: string
+  brand?: WorkspaceBrand
 }
 
 function roleLabel(role: string) {
@@ -14,16 +22,23 @@ function roleLabel(role: string) {
   return 'Atendente'
 }
 
-export function OperatorWorkspaceHeader({ active, role, adminTab }: OperatorWorkspaceHeaderProps) {
+export function OperatorWorkspaceHeader({ active, role, adminTab, brand }: OperatorWorkspaceHeaderProps) {
+  // O perfil vem do servidor quando disponível; sem ele o cabeçalho ainda usa
+  // o perfil resolvido por ambiente, nunca um texto fixo.
+  const fallbackProfile = resolveBusinessProfileSync()
+  const brandName = brand?.name?.trim() || fallbackProfile.name
+  const brandShortName = brand?.shortName?.trim() || fallbackProfile.shortName || brandName
+  const brandSubtitle = brand?.subtitle?.trim() || fallbackProfile.location
+
   return (
     <header
       data-testid="operator-workspace-header"
       className="sticky top-0 z-40 flex min-h-16 w-full items-center gap-3 overflow-hidden border-b border-zinc-800 bg-zinc-900/80 px-3 py-2 backdrop-blur-md sm:px-6"
     >
       <div className="hidden shrink-0 items-center gap-2.5 sm:flex">
-        <BrandLogo size="md" href="/atendimento" />
+        <BrandLogo size="md" href="/atendimento" brandName={brandName} subtitle={brandSubtitle} />
         <span className="hidden rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-bold tracking-wider text-amber-400 uppercase xl:inline-block">
-          CRM Sofia Manager
+          {brandShortName}
         </span>
       </div>
       <div className="ml-auto flex min-w-0 items-center gap-2">
