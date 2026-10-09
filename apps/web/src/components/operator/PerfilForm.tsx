@@ -202,7 +202,7 @@ export default function PerfilForm({ operatorInfo }: PerfilFormProps) {
                     value={nome}
                     onChange={(e) => setNome(e.target.value)}
                     placeholder="Seu nome completo"
-                    className="w-full rounded-xl border border-zinc-800 bg-zinc-950/50 px-4 py-3 text-sm text-zinc-200 placeholder-zinc-600 focus:border-amber-500/50 focus:outline-none focus:ring-1 focus:ring-amber-500/30 transition-all"
+                    className="min-h-11 w-full rounded-xl border border-zinc-800 bg-zinc-950/50 px-4 py-3 text-sm text-zinc-200 placeholder-zinc-600 focus:border-amber-500/50 focus:outline-none focus:ring-1 focus:ring-amber-500/30 transition-all"
                   />
                 </div>
               </div>
@@ -211,7 +211,7 @@ export default function PerfilForm({ operatorInfo }: PerfilFormProps) {
                 <button
                   type="submit"
                   disabled={salvandoNome}
-                  className="flex items-center justify-center gap-2 rounded-xl bg-amber-500 px-5 py-2.5 text-sm font-bold text-zinc-950 shadow-md shadow-amber-500/10 hover:bg-amber-600 active:scale-[0.98] transition-all disabled:opacity-50 cursor-pointer"
+                  className="flex min-h-11 w-full sm:w-auto items-center justify-center gap-2 rounded-xl bg-amber-500 px-5 py-2.5 text-sm font-bold text-zinc-950 shadow-md shadow-amber-500/10 hover:bg-amber-600 active:scale-[0.98] transition-all disabled:opacity-50 cursor-pointer"
                 >
                   {salvandoNome ? (
                     <>
@@ -249,12 +249,13 @@ export default function PerfilForm({ operatorInfo }: PerfilFormProps) {
                       value={novaSenha}
                       onChange={(e) => setNovaSenha(e.target.value)}
                       placeholder="••••••••"
-                      className="w-full rounded-xl border border-zinc-800 bg-zinc-950/50 pl-4 pr-10 py-3 text-sm text-zinc-200 placeholder-zinc-650 focus:border-amber-500/50 focus:outline-none focus:ring-1 focus:ring-amber-500/30 transition-all"
+                      className="min-h-11 w-full rounded-xl border border-zinc-800 bg-zinc-950/50 pl-4 pr-10 py-3 text-sm text-zinc-200 placeholder-zinc-650 focus:border-amber-500/50 focus:outline-none focus:ring-1 focus:ring-amber-500/30 transition-all"
                     />
                     <button
                       type="button"
                       onClick={() => setVerSenha(!verSenha)}
-                      className="absolute right-3 top-3.5 text-zinc-500 hover:text-zinc-300"
+                      aria-label={verSenha ? 'Ocultar senha' : 'Mostrar senha'}
+                      className="absolute right-1 top-1/2 -translate-y-1/2 inline-flex min-h-11 min-w-11 items-center justify-center sm:min-h-9 sm:min-w-9 text-zinc-500 hover:text-zinc-300"
                     >
                       {verSenha ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                     </button>
@@ -272,12 +273,13 @@ export default function PerfilForm({ operatorInfo }: PerfilFormProps) {
                       value={confirmarSenha}
                       onChange={(e) => setConfirmarSenha(e.target.value)}
                       placeholder="••••••••"
-                      className="w-full rounded-xl border border-zinc-800 bg-zinc-950/50 pl-4 pr-10 py-3 text-sm text-zinc-200 placeholder-zinc-650 focus:border-amber-500/50 focus:outline-none focus:ring-1 focus:ring-amber-500/30 transition-all"
+                      className="min-h-11 w-full rounded-xl border border-zinc-800 bg-zinc-950/50 pl-4 pr-10 py-3 text-sm text-zinc-200 placeholder-zinc-650 focus:border-amber-500/50 focus:outline-none focus:ring-1 focus:ring-amber-500/30 transition-all"
                     />
                     <button
                       type="button"
                       onClick={() => setVerConfirmarSenha(!verConfirmarSenha)}
-                      className="absolute right-3 top-3.5 text-zinc-500 hover:text-zinc-300"
+                      aria-label={verConfirmarSenha ? 'Ocultar confirmação de senha' : 'Mostrar confirmação de senha'}
+                      className="absolute right-1 top-1/2 -translate-y-1/2 inline-flex min-h-11 min-w-11 items-center justify-center sm:min-h-9 sm:min-w-9 text-zinc-500 hover:text-zinc-300"
                     >
                       {verConfirmarSenha ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                     </button>
@@ -289,7 +291,7 @@ export default function PerfilForm({ operatorInfo }: PerfilFormProps) {
                 <button
                   type="submit"
                   disabled={salvandoSenha}
-                  className="flex items-center justify-center gap-2 rounded-xl bg-amber-500 px-5 py-2.5 text-sm font-bold text-zinc-950 shadow-md shadow-amber-500/10 hover:bg-amber-600 active:scale-[0.98] transition-all disabled:opacity-50 cursor-pointer"
+                  className="flex min-h-11 w-full sm:w-auto items-center justify-center gap-2 rounded-xl bg-amber-500 px-5 py-2.5 text-sm font-bold text-zinc-950 shadow-md shadow-amber-500/10 hover:bg-amber-600 active:scale-[0.98] transition-all disabled:opacity-50 cursor-pointer"
                 >
                   {salvandoSenha ? (
                     <>
