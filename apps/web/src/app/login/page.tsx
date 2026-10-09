@@ -8,6 +8,8 @@ import { createClient } from '@/lib/supabase/client'
 import { Eye, EyeOff, Loader2, Mail, Lock, Phone, KeyRound, CheckCircle2 } from 'lucide-react'
 import { BrandLogo } from '@/components/ui/BrandLogo'
 import { getRoleRedirectPath, safeInternalRedirect } from '@/lib/auth/safe-redirect'
+import { obterPerfilPublico } from '@/app/actions/public-profile'
+import { resolveBusinessProfileSync } from '@/lib/config/business-profile'
 
 // Schema do Login Cliente (Phone-First)
 const clientLoginSchema = z.object({
@@ -44,6 +46,9 @@ function LoginContent() {
 
   // UI States
   const [showPassword, setShowPassword] = useState(false)
+  const [brandShortName, setBrandShortName] = useState('CRM Sofia')
+  const [brandName, setBrandName] = useState('')
+  const [brandLocation, setBrandLocation] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [apiError, setApiError] = useState<string | null>(null)
   const [infoMessage, setInfoMessage] = useState<string | null>(null)
@@ -68,6 +73,33 @@ function LoginContent() {
     const timer = setInterval(() => setRecoveryCooldown((prev) => prev - 1), 1000)
     return () => clearInterval(timer)
   }, [recoveryCooldown])
+
+  useEffect(() => {
+    let active = true
+    const applyFallback = () => {
+      const fallback = resolveBusinessProfileSync()
+      if (!active) return
+      setBrandName(fallback.name)
+      setBrandShortName(fallback.shortName || fallback.name)
+      setBrandLocation(fallback.location)
+    }
+
+    obterPerfilPublico()
+      .then((perfil) => {
+        if (!active) return
+        setBrandName(perfil.name)
+        setBrandShortName(perfil.shortName || perfil.name)
+        setBrandLocation(perfil.location)
+      })
+      .catch(() => {
+        // Sem a base o login mantém a marca resolvida por ambiente.
+        applyFallback()
+      })
+
+    return () => {
+      active = false
+    }
+  }, [])
 
   const handlePhoneChange = (e: React.ChangeEvent<HTMLInputElement>, setter: (v: string) => void) => {
     let raw = e.target.value.replace(/\D/g, '')
@@ -246,12 +278,12 @@ function LoginContent() {
       <div className="w-full max-w-md z-10 transition-all duration-300">
         {/* Header com Logo */}
         <div className="flex flex-col items-center mb-8 text-center">
-          <BrandLogo size="xl" showSubtitle={false} className="flex-col !gap-3" />
+          <BrandLogo size="xl" showSubtitle={false} className="flex-col !gap-3" brandName={brandName || undefined} />
           <span className="mt-1.5 inline-flex items-center rounded-full border border-amber-500/30 bg-amber-500/10 px-3 py-0.5 text-xs font-bold tracking-widest text-amber-400 uppercase">
-            CRM Sofia Manager
+            {brandShortName}
           </span>
           <p className="text-sm text-zinc-400 mt-2">
-            Acesse sua conta para pedir seu combo ou gerenciar o atendimento
+            Acesse sua conta para pedir seu combo ou gerenciar {brandLocation ? `o atendimento em ${brandLocation}` : 'o atendimento'}
           </p>
         </div>
 

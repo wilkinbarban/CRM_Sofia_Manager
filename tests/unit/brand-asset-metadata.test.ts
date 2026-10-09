@@ -1,9 +1,19 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { createHash } from 'node:crypto'
-import { metadata } from '@/app/layout'
+import { generateMetadata } from '@/app/layout'
 import { resolveBusinessProfileSync } from '@/lib/config/business-profile'
+
+// O perfil da base nunca se consulta nesta suíte: o teste fica determinístico
+// ao injetar o mesmo perfil resolvido por ambiente.
+vi.mock('@/lib/config/business-profile', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/config/business-profile')>()
+  return {
+    ...actual,
+    getBusinessProfile: vi.fn(async () => actual.resolveBusinessProfileSync()),
+  }
+})
 
 function sha256(filePath: string): string {
   const buffer = readFileSync(filePath)
@@ -91,8 +101,9 @@ describe('brand visual identity assets & metadata', () => {
     }
   })
 
-  it('configures layout.tsx OpenGraph metadata to 1200x630 banner and preserves dynamic business profile', () => {
+  it('configures layout.tsx OpenGraph metadata to 1200x630 banner and preserves dynamic business profile', async () => {
     const profile = resolveBusinessProfileSync()
+    const metadata = await generateMetadata()
 
     const og = metadata.openGraph as {
       title?: string
@@ -124,8 +135,9 @@ describe('brand visual identity assets & metadata', () => {
     expect(primaryImage.alt).toBe(`${profile.name} - Atendimento Inteligente`)
   })
 
-  it('configures Twitter summary_large_image card sharing metadata with the 1200x630 banner', () => {
+  it('configures Twitter summary_large_image card sharing metadata with the 1200x630 banner', async () => {
     const profile = resolveBusinessProfileSync()
+    const metadata = await generateMetadata()
 
     expect(metadata.twitter).toBeDefined()
     const twitter = metadata.twitter as {
@@ -140,7 +152,8 @@ describe('brand visual identity assets & metadata', () => {
     expect(twitter?.images).toEqual(['/banners/banner-og-dark-1200x630.png'])
   })
 
-  it('preserves valid favicon and icon references in layout metadata', () => {
+  it('preserves valid favicon and icon references in layout metadata', async () => {
+    const metadata = await generateMetadata()
     expect(metadata.icons).toBeDefined()
     const icons = metadata.icons as {
       icon?: Array<{ url: string; sizes?: string; type?: string }>

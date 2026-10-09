@@ -30,4 +30,29 @@ describe('brand runtime wiring', () => {
     expect(source).not.toContain('Painel de Controle • CRM Sofia Manager')
     expect(source).toMatch(/Painel de Controle • \{/)
   })
+
+  it('brands the login screen from the public profile accessor', () => {
+    const source = read('apps/web/src/app/login/page.tsx')
+
+    expect(source).toContain('obterPerfilPublico')
+    expect(source).not.toContain('CRM Sofia Manager')
+  })
+
+  it('keeps a real fallback in the login screen when the public profile fails', () => {
+    const source = read('apps/web/src/app/login/page.tsx')
+
+    expect(source).toContain('resolveBusinessProfileSync')
+    expect(source).toMatch(/\.catch\(\(\) => \{[\s\S]{0,240}applyFallback\(\)/)
+  })
+
+  it('exposes only public brand fields from the public profile action', () => {
+    const source = read('apps/web/src/app/actions/public-profile.ts')
+
+    expect(source).toContain("'use server'")
+    expect(source).toContain('getBusinessProfile')
+    expect(source).toMatch(/name: profile\.name/)
+    expect(source).toMatch(/shortName: profile\.shortName/)
+    expect(source).toMatch(/location: profile\.location/)
+    expect(source).not.toMatch(/API_KEY|SECRET|TOKEN|DATABASE_URL/)
+  })
 })
