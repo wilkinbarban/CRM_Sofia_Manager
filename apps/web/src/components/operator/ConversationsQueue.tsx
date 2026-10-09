@@ -328,12 +328,12 @@ export default function ConversationsQueue({
       <div className="flex items-center justify-between px-3 py-2 border-b border-zinc-800/80 bg-zinc-900/60">
         <div className="flex items-center gap-1.5">
           <MessageSquare className="h-4 w-4 text-amber-500" />
-          <span className="text-xs font-bold text-zinc-200 tracking-tight">Fila de Atendimento</span>
+          <h2 className="text-xs font-bold text-zinc-200 tracking-tight">Fila de Atendimento</h2>
         </div>
         <button
           type="button"
           onClick={handleToggleSom}
-          className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-semibold border transition-all cursor-pointer select-none ${
+          className={`flex items-center gap-1 px-2 py-1 min-h-11 sm:min-h-9 rounded-lg text-[11px] font-semibold border transition-all cursor-pointer select-none focus-visible:ring-2 focus-visible:ring-amber-500/40 focus-visible:outline-hidden ${
             somHabilitado
               ? 'bg-amber-500/10 text-amber-400 border-amber-500/20 hover:bg-amber-500/20'
               : 'bg-zinc-800/60 text-zinc-500 border-zinc-700/50 hover:bg-zinc-800'
@@ -358,9 +358,7 @@ export default function ConversationsQueue({
       <div className="grid grid-cols-3 border-b border-zinc-800 bg-zinc-900/30 p-1.5 gap-1">
         <button
           onClick={() => setActiveTab('ia')}
-          className={`flex items-center justify-center py-2 px-1 text-xs font-medium rounded-lg transition-all gap-1.5 cursor-pointer relative ${
-            activeTab === 'ia'
-              ? 'bg-zinc-800 text-amber-400 shadow-sm border border-zinc-700/60 font-semibold'
+          className={`flex items-center justify-center py-2 px-1 text-xs font-medium rounded-lg transition-all gap-1.5 cursor-pointer relative min-h-11 sm:min-h-9 focus-visible:ring-2 focus-visible:ring-amber-500/40 ${ activeTab === 'ia' ? 'bg-zinc-800 text-amber-400 shadow-sm border border-zinc-700/60 font-semibold'
               : 'text-zinc-400 hover:bg-zinc-900/60 hover:text-zinc-200'
           }`}
         >
@@ -378,9 +376,7 @@ export default function ConversationsQueue({
 
         <button
           onClick={() => setActiveTab('humano')}
-          className={`flex items-center justify-center py-2 px-1 text-xs font-medium rounded-lg transition-all gap-1.5 cursor-pointer relative ${
-            activeTab === 'humano'
-              ? 'bg-zinc-800 text-amber-400 shadow-sm border border-zinc-700/60 font-semibold'
+          className={`flex items-center justify-center py-2 px-1 text-xs font-medium rounded-lg transition-all gap-1.5 cursor-pointer relative min-h-11 sm:min-h-9 focus-visible:ring-2 focus-visible:ring-amber-500/40 ${ activeTab === 'humano' ? 'bg-zinc-800 text-amber-400 shadow-sm border border-zinc-700/60 font-semibold'
               : 'text-zinc-400 hover:bg-zinc-900/60 hover:text-zinc-200'
           }`}
         >
@@ -404,9 +400,7 @@ export default function ConversationsQueue({
 
         <button
           onClick={() => setActiveTab('fechada')}
-          className={`flex items-center justify-center py-2 px-1 text-xs font-medium rounded-lg transition-all gap-1.5 cursor-pointer ${
-            activeTab === 'fechada'
-              ? 'bg-zinc-800 text-amber-400 shadow-sm border border-zinc-700/60 font-semibold'
+          className={`flex items-center justify-center py-2 px-1 text-xs font-medium rounded-lg transition-all gap-1.5 cursor-pointer min-h-11 sm:min-h-9 focus-visible:ring-2 focus-visible:ring-amber-500/40 ${ activeTab === 'fechada' ? 'bg-zinc-800 text-amber-400 shadow-sm border border-zinc-700/60 font-semibold'
               : 'text-zinc-400 hover:bg-zinc-900/60 hover:text-zinc-200'
           }`}
         >

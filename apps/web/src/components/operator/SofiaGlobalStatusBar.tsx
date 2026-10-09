@@ -101,7 +101,7 @@ function ChannelCard({
           onClick={() => onToggleChannel(channel, !status.enabled)}
           disabled={!canToggle || disabled}
           aria-label={`${status.enabled ? 'Disable' : 'Enable'} Sofia for ${CHANNEL_LABELS[channel]}`}
-          className={`flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-[11px] font-bold transition-all ${
+          className={`flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 min-h-11 sm:min-h-9 text-[11px] font-bold transition-all focus-visible:ring-2 focus-visible:ring-amber-500/40 focus-visible:outline-hidden ${
             status.enabled
               ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20'
               : 'border-red-500/30 bg-red-500/10 text-red-300 hover:bg-red-500/20'
@@ -184,7 +184,7 @@ export default function SofiaGlobalStatusBar({
                 onClick={onRefresh}
                 disabled={refreshing}
                 aria-label="Refresh Sofia global status"
-                className="rounded-lg border border-zinc-700 bg-zinc-900/60 p-2 text-zinc-300 transition-colors hover:border-amber-500/50 hover:text-amber-400 disabled:cursor-not-allowed disabled:opacity-50"
+                className="rounded-lg border border-zinc-700 bg-zinc-900/60 p-2 min-h-11 min-w-11 focus-visible:ring-2 focus-visible:ring-amber-500/40 focus-visible:outline-hidden transition-colors hover:border-amber-500/50 hover:text-amber-400 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`} />
               </button>

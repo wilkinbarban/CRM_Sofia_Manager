@@ -542,7 +542,7 @@ export default function OperatorInboxContainer({
                 <button
                   type="button"
                   onClick={() => handleSelectConversa(urgentToast.conversaId)}
-                  className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-900/90 hover:bg-zinc-900 text-amber-400 hover:text-amber-300 text-xs font-bold border border-amber-500/40 transition-all cursor-pointer shadow-sm active:scale-95"
+                  className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 min-h-11 sm:min-h-9 rounded-lg bg-zinc-900/90 hover:bg-zinc-900 text-amber-400 hover:text-amber-300 text-xs font-bold border border-amber-500/40 transition-all cursor-pointer shadow-sm active:scale-95 focus-visible:ring-2 focus-visible:ring-amber-500/40"
                 >
                   <span>Atender Agora</span>
                   <ArrowRight className="h-3.5 w-3.5" />
@@ -553,7 +553,7 @@ export default function OperatorInboxContainer({
             <button
               type="button"
               onClick={() => setUrgentToast(null)}
-              className="p-1 rounded-lg hover:bg-black/20 text-zinc-400 hover:text-zinc-200 transition-colors shrink-0 cursor-pointer"
+              className="p-1 min-h-11 min-w-11 rounded-lg hover:bg-black/20 text-zinc-400 hover:text-zinc-200 transition-colors focus-visible:ring-2 focus-visible:ring-amber-500/40 focus-visible:outline-hidden shrink-0 cursor-pointer"
               title="Fechar notificação"
             >
               <X className="h-4 w-4" />

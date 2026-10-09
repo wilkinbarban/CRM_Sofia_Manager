@@ -1,6 +1,27 @@
-import { fireEvent, render, screen } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import ConversationsQueue, { type Conversa } from '@/components/operator/ConversationsQueue'
+
+describe('ConversationsQueue polish contract', () => {
+  afterEach(cleanup)
+
+  it('labels the queue with a level-two heading and keeps touch-sized filter controls', () => {
+    render(
+      <ConversationsQueue
+        conversas={[baseConversation]}
+        selectedConversaId={null}
+        onSelectConversa={vi.fn()}
+        onToggleSofiaSleep={vi.fn()}
+      />
+    )
+
+    expect(screen.getByRole('heading', { level: 2, name: /Fila de Atendimento/i })).toBeInTheDocument()
+
+    for (const name of [/Fila IA/i, /Humana/i, /Fechada/i]) {
+      expect(screen.getByRole('button', { name }).className).toContain('min-h-11')
+    }
+  })
+})
 
 const baseConversation: Conversa = {
   id: 'conversation-1',
