@@ -36,6 +36,15 @@ if (($#)); then
   done
 fi
 
+readonly supabase_bin="$root/node_modules/.bin/supabase"
+readonly vitest_bin="$root/node_modules/.bin/vitest"
+for executable in "$supabase_bin" "$vitest_bin"; do
+  [[ -x "$executable" ]] || {
+    printf 'Required local executable is missing or not executable: %s\n' "$executable" >&2
+    exit 1
+  }
+done
+
 docker info >/dev/null 2>&1 || {
   printf '%s\n' 'Docker is unavailable; refusing to run service-backed tests.' >&2
   exit 1
@@ -47,7 +56,7 @@ cleanup() {
   code=$?
   trap - EXIT HUP INT TERM
   if [[ "$started_by_runner" == true ]]; then
-    npx supabase stop --workdir "$work/project" --no-backup >/dev/null 2>&1 || true
+    "$supabase_bin" stop --workdir "$work/project" --no-backup >/dev/null 2>&1 || true
   fi
   rm -rf "$work"
   exit "$code"
@@ -56,11 +65,6 @@ trap cleanup EXIT
 trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
-
-if npx supabase status >/dev/null 2>&1; then
-  printf '%s\n' 'A local Supabase stack is already running. Refusing to reset shared developer state.' >&2
-  exit 1
-fi
 
 # The production runner applies migrations as supabase_admin. Supabase CLI reserves
 # that role and migrates as postgres, so ownership transfers cannot run locally.
@@ -72,10 +76,18 @@ python3 - "$work/project/supabase" <<'PY'
 from pathlib import Path
 import re
 import sys
+import uuid
 
 supabase_root = Path(sys.argv[1])
 config_path = supabase_root / 'config.toml'
 config = config_path.read_text()
+config, project_count = re.subn(
+    r'(?m)^project_id[ \t]*=[ \t]*"[^"\n]*"[ \t]*$',
+    f'project_id = "st-{uuid.uuid4().hex}"',
+    config,
+)
+if project_count != 1:
+    raise SystemExit(f'expected one project_id, found {project_count}')
 ports = {54321: 55321, 54322: 55322, 54329: 55329, 54323: 55323, 54324: 55324, 54327: 55327}
 for source, target in ports.items():
     config, count = re.subn(rf'(?m)^port = {source}$', f'port = {target}', config)
@@ -203,20 +215,25 @@ report_failure_log() {
   return 0
 }
 
+if "$supabase_bin" status --workdir "$work/project" >/dev/null 2>&1; then
+  printf '%s\n' 'A local Supabase stack is already running. Refusing to reset shared developer state.' >&2
+  exit 1
+fi
+
 export SUPABASE_AUTH_SMS_TWILIO_AUTH_TOKEN='local-test-only'
-if ! npx supabase start --workdir "$work/project" >"$work/start.log" 2>&1; then
+if ! "$supabase_bin" start --workdir "$work/project" >"$work/start.log" 2>&1; then
   printf '%s\n' 'Disposable local Supabase failed to start.' >&2
   report_failure_log "$work/start.log"
   exit 1
 fi
 started_by_runner=true
 
-if ! npx supabase db reset --local --workdir "$work/project" >"$work/reset.log" 2>&1; then
+if ! "$supabase_bin" db reset --local --workdir "$work/project" >"$work/reset.log" 2>&1; then
   printf '%s\n' 'Disposable local Supabase reset or seed failed.' >&2
   report_failure_log "$work/reset.log"
   exit 1
 fi
-npx supabase status --workdir "$work/project" -o env >"$work/status.env" 2>"$work/status.err"
+"$supabase_bin" status --workdir "$work/project" -o env >"$work/status.env" 2>"$work/status.err"
 
 status_value() {
   local name=$1
@@ -240,7 +257,7 @@ receipt_test="$work/project/supabase/tests/sales_receipt_issuance.sql"
   printf '%s\n' 'Disposable receipt pgTAP test is missing or unsafe.' >&2
   exit 1
 }
-if ! npx supabase test db --local --workdir "$work/project" "$receipt_test" >"$work/receipt-test.log" 2>&1; then
+if ! "$supabase_bin" test db --local --workdir "$work/project" "$receipt_test" >"$work/receipt-test.log" 2>&1; then
   printf '%s\n' 'Disposable local receipt pgTAP test failed.' >&2
   exit 1
 fi
@@ -250,7 +267,7 @@ export NEXT_PUBLIC_SUPABASE_ANON_KEY="$anon_key"
 export SUPABASE_SERVICE_ROLE_KEY="$service_key"
 export SUPABASE_INTERNAL_URL="$api_url"
 
-LOCAL_SUPABASE_SERVICE_RUNNER=1 scripts/workspace-preflight.sh run -- npx vitest run \
+LOCAL_SUPABASE_SERVICE_RUNNER=1 scripts/workspace-preflight.sh run -- "$vitest_bin" run \
   --config vitest.supabase.config.mts \
   "${tests_to_run[@]}" \
   --fileParallelism=false \

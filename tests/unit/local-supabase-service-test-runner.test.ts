@@ -1,5 +1,6 @@
 import { execFileSync, spawnSync } from 'node:child_process'
-import { existsSync, readFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { loadConfigFromFile } from 'vite'
@@ -81,7 +82,7 @@ describe('service-backed suite segregation', () => {
 
   it('passes the opt-in marker only to the final test invocation', () => {
     expect(runner.includes(`export ${marker}`)).toBe(false)
-    expect(runner.includes(`${marker}=1 scripts/workspace-preflight.sh run -- npx vitest run`)).toBe(true)
+    expect(runner.includes(`${marker}=1 scripts/workspace-preflight.sh run -- "$vitest_bin" run`)).toBe(true)
   })
 
   it('distinguishes fallback initializers from multi-condition guards', () => {
@@ -112,6 +113,91 @@ describe('service-backed suite segregation', () => {
   })
 })
 
+describe('pinned executables and disposable project identity', () => {
+  const canonical = readFileSync(join(root, 'supabase/config.toml'), 'utf8')
+
+  function probe(bin = '', state = '') {
+    const sandbox = mkdtempSync(join(tmpdir(), 'supabase-runner-'))
+    const write = (path: string, source: string, mode = 0o755) => writeFileSync(join(sandbox, path), source, { mode })
+    try {
+      for (const dir of ['scripts', 'node_modules/.bin', 'poison', 'tmp', 'supabase/migrations', 'supabase/tests']) {
+        mkdirSync(join(sandbox, dir), { recursive: true })
+      }
+      copyFileSync(runnerPath, join(sandbox, 'scripts/run-local-supabase-service-tests.sh'))
+      write('supabase/config.toml', canonical, 0o600)
+      write('supabase/migrations/20250101000000_fixture.sql', 'alter function public.fixture() owner to supabase_admin;\n'.repeat(8))
+      write('supabase/tests/sales_receipt_issuance.sql', '-- synthetic receipt fixture\n')
+      write('scripts/workspace-preflight.sh', '#!/bin/bash\nshift 2\nexec "$@"\n')
+      const reject = '#!/bin/bash\nprintf "%s\\n" "$0 $*" >> "$SANDBOX/trace"\nexit 93\n'
+      for (const command of ['npx', 'supabase', 'vitest', 'docker']) write(`poison/${command}`, reject)
+      if (!bin) write('poison/docker', '#!/bin/bash\nprintf "%s\\n" "$0 $*" >> "$SANDBOX/trace"\n[[ "$#" == 1 && "$1" == info ]]\n')
+      write('poison/git', '#!/bin/bash\nprintf "%s\\n" "$SANDBOX"\n')
+      const fake = `#!/usr/bin/python3
+import os, re, sys
+from pathlib import Path
+args = sys.argv[1:]
+wd = args[args.index('--workdir') + 1] if '--workdir' in args else ''
+config = Path(wd) / 'supabase/config.toml'
+pid = re.search(r'^project_id = "([^"]+)"$', config.read_text(), re.M).group(1) if config.is_file() else ''
+with open(os.environ['SANDBOX'] + '/calls', 'a') as log:
+    log.write('|'.join([sys.argv[0], ' '.join(args), wd, pid, os.environ.get('LOCAL_SUPABASE_SERVICE_RUNNER', '')]) + '\\n')
+if sys.argv[0].endswith('/vitest'):
+    sys.exit(0)
+if not wd.startswith(os.environ['SANDBOX'] + '/tmp/') or not wd.endswith('/project'):
+    sys.exit(92)
+if args[0] == 'status':
+    if '-o' not in args:
+        sys.exit(1)
+    print('API_URL="http://127.0.0.1:55321"\\nANON_KEY="local-anon"\\nSERVICE_ROLE_KEY="local-service"')
+`
+      for (const command of ['supabase', 'vitest']) {
+        if (command !== bin || state !== 'missing') write(`node_modules/.bin/${command}`, fake, command === bin ? 0o644 : 0o755)
+      }
+      const result = spawnSync('/bin/bash', [join(sandbox, 'scripts/run-local-supabase-service-tests.sh')], {
+        cwd: sandbox, encoding: 'utf8', timeout: 10000,
+        env: { NODE_ENV: 'test', HOME: sandbox, TMPDIR: join(sandbox, 'tmp'), SANDBOX: sandbox, PATH: `${sandbox}/poison:/usr/bin:/bin` },
+      })
+      const log = (name: string) => existsSync(join(sandbox, name)) ? readFileSync(join(sandbox, name), 'utf8') : ''
+      expect(readFileSync(join(sandbox, 'supabase/config.toml'), 'utf8')).toBe(canonical)
+      expect(readFileSync(join(root, 'supabase/config.toml'), 'utf8')).toBe(canonical)
+      return { result, sandbox, trace: log('trace'), calls: log('calls').trim().split('\n').filter(Boolean).map((line) => line.split('|')) }
+    } finally {
+      rmSync(sandbox, { recursive: true, force: true })
+    }
+  }
+
+  it.each([['supabase', 'missing'], ['supabase', 'nonexecutable'], ['vitest', 'missing'], ['vitest', 'nonexecutable']])('rejects %s %s before any service command', (bin, state) => {
+    const { result, trace, calls } = probe(bin, state)
+    expect(result.error).toBeUndefined()
+    expect(result.status).toBe(1)
+    expect(result.stderr).toContain(bin)
+    expect(trace).toBe('')
+    expect(calls).toEqual([])
+  })
+
+  it('uses root-local binaries despite hostile PATH and scopes every CLI call to a unique copied project', () => {
+    const runs = [probe(), probe()]
+    expect(readFileSync(runnerPath, 'utf8')).not.toMatch(/\bnpx\b/)
+    for (const { result, sandbox, trace, calls } of runs) {
+      expect(result.error).toBeUndefined()
+      expect(result.status).toBe(0)
+      expect(trace).toBe(`${sandbox}/poison/docker info\n`)
+      expect(calls.map((call) => call[1].split(' ').slice(0, 2).join(' '))).toEqual(expect.arrayContaining(['status --workdir', 'start --workdir', 'db reset', 'test db', 'stop --workdir', 'run --config']))
+      for (const [executable, , workdir, id, marker] of calls) {
+        expect(executable).toBe(join(sandbox, 'node_modules/.bin', executable.endsWith('/vitest') ? 'vitest' : 'supabase'))
+        expect(marker).toBe(executable.endsWith('/vitest') ? '1' : '')
+        if (executable.endsWith('/vitest')) continue
+        expect(workdir).toMatch(new RegExp(`^${sandbox}/tmp/[^/]+/project$`))
+        expect(workdir).not.toBe(sandbox)
+        expect(id).toMatch(/^[a-z][a-z0-9-]{0,39}$/)
+        expect(id).not.toBe('Asados')
+        expect(id).toBe(calls.find((call) => call[0].endsWith('/supabase'))?.[3])
+      }
+    }
+    expect(runs[0].calls.find((call) => call[0].endsWith('/supabase'))?.[3]).not.toBe(runs[1].calls.find((call) => call[0].endsWith('/supabase'))?.[3])
+  })
+})
+
 describe('local Supabase service-backed test runner', () => {
   it('is executable and has dedicated package and CI entry points', () => {
     expect(existsSync(runnerPath)).toBe(true)
@@ -132,8 +218,8 @@ describe('local Supabase service-backed test runner', () => {
     expect(runner).toContain("'tests/unit/roles-authentication-e2e.test.ts'")
     expect(runner).toContain("'tests/unit/web-client-operator-cart-flow.test.ts'")
     expect(runner).toContain('--fileParallelism=false')
-    expect(runner).toContain('npx supabase db reset --local --workdir "$work/project"')
-    expect(runner).toContain('npx supabase stop --workdir "$work/project" --no-backup')
+    expect(runner).toContain('"$supabase_bin" db reset --local --workdir "$work/project"')
+    expect(runner).toContain('"$supabase_bin" stop --workdir "$work/project" --no-backup')
     expect(runner).toContain("pattern = re.compile(r'^alter function public\\.[^;]+ owner to supabase_admin;")
     expect(runner).toContain("if changed != 8:")
     expect(runner).toContain("trap cleanup EXIT")
@@ -412,16 +498,16 @@ describe('local Supabase service-backed test runner', () => {
 
   it('runs only the copied receipt pgTAP file locally after safety gates and before Vitest and teardown', () => {
     const runner = readFileSync(runnerPath, 'utf8')
-    const reset = runner.indexOf('npx supabase db reset --local --workdir "$work/project"')
+    const reset = runner.indexOf('"$supabase_bin" db reset --local --workdir "$work/project"')
     const safety = runner.indexOf('Safety gate rejected missing or placeholder local Supabase credentials.')
     const pathGuard = runner.indexOf('[[ -f "$receipt_test" && ! -L "$receipt_test" && ! -L "$work/project/supabase/tests" ]]')
-    const pgTap = runner.indexOf('npx supabase test db --local --workdir "$work/project" "$receipt_test"')
-    const vitest = runner.indexOf('scripts/workspace-preflight.sh run -- npx vitest run')
+    const pgTap = runner.indexOf('"$supabase_bin" test db --local --workdir "$work/project" "$receipt_test"')
+    const vitest = runner.indexOf('scripts/workspace-preflight.sh run -- "$vitest_bin" run')
 
     expect(runner).toContain('receipt_test="$work/project/supabase/tests/sales_receipt_issuance.sql"')
     expect(runner).toContain('cp -a supabase "$work/project/supabase"')
-    expect(runner).toContain('npx supabase stop --workdir "$work/project" --no-backup')
-    expect(runner).not.toMatch(/supabase test db[^\n]*(?:--linked|--db-url)/)
+    expect(runner).toContain('"$supabase_bin" stop --workdir "$work/project" --no-backup')
+    expect(runner).not.toMatch(/test db[^\n]*(?:--linked|--db-url)/)
     expect(reset).toBeGreaterThan(-1)
     expect(safety).toBeGreaterThan(reset)
     expect(pathGuard).toBeGreaterThan(safety)
