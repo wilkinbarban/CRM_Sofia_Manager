@@ -5,7 +5,89 @@ import { describe, expect, it } from 'vitest'
 const root = process.cwd()
 const read = (...parts: string[]) => readFileSync(join(root, ...parts), 'utf8')
 
+function shellFunction(source: string, name: string) {
+  const body = source.match(new RegExp(`^${name}\\(\\) \\{\\n([\\s\\S]*?)^\\}`, 'm'))
+  expect(body, `missing deploy function: ${name}`).not.toBeNull()
+  return body![1]
+}
+
+function projectBoundComposeCalls(source: string) {
+  // Join shell continuations before discovery, including env prefixes and Docker host options.
+  const lines = source.replace(/\\\r?\n/g, ' ').split('\n')
+    .filter(line => !line.trimStart().startsWith('#'))
+  const calls = lines.flatMap(line => {
+    // Require command-token whitespace: docker-compose.yml is an argument, not another call.
+    const starts = [...line.matchAll(/\bdocker(?=[ \t])[^\n]*?[ \t]compose(?=[ \t]|$)/g)]
+    // Fail closed rather than borrowing a binding from another command on the same line.
+    expect(starts.length, `multiple Compose calls on one logical line: ${line}`).toBeLessThanOrEqual(1)
+    return starts.map(start => line.slice(start.index).split(/\|\||&&|;/, 1)[0])
+  })
+  expect(calls.length, 'expected at least one Compose invocation').toBeGreaterThan(0)
+  for (const call of calls) {
+    expect(call).toMatch(/\bcompose\b.*--project-name "\$compose_project"(?:\s|$)/)
+  }
+  return calls
+}
+
 describe('Phase 8 operational artifacts', () => {
+  it('distinguishes Compose commands from filenames and rejects missing project bindings', () => {
+    const binding = '--project-name "$compose_project"'
+    const direct = `docker compose -f "$root/docker-compose.yml" ${binding} up -d web`
+    expect(projectBoundComposeCalls(direct)).toEqual([direct])
+    expect(() => projectBoundComposeCalls(direct.replace(binding, ''))).toThrow()
+    expect(() => projectBoundComposeCalls(`${direct}; ${direct}`)).toThrow()
+
+    const hostEnv = [
+      'env "${env_args[@]}"',
+      'CRM_SOFIA_WEB_IMAGE="$ref"',
+      'ASADOS_WEB_IMAGE="$ref" docker --host "$docker_endpoint" compose',
+      `-f "$root/docker-compose.yml" ${binding} up -d web`,
+    ].join(' \\\n  ')
+    const hostCalls = projectBoundComposeCalls(hostEnv)
+    expect(hostCalls).toHaveLength(1)
+    expect(hostCalls[0]).toContain('docker --host "$docker_endpoint" compose')
+    expect(() => projectBoundComposeCalls(hostEnv.replace(binding, ''))).toThrow()
+    expect(() => projectBoundComposeCalls('')).toThrow()
+    expect(() => projectBoundComposeCalls('printf "%s" "$root/docker-compose.yml"')).toThrow()
+  })
+
+  it('binds each deployment and recovery route to the resolved Compose project', () => {
+    const deploy = read('scripts', 'deploy-web.sh')
+    const standard = shellFunction(deploy, 'recreate_and_verify')
+    const branches = standard.match(/if \[\[ "\$close_operational_gates" == true \]\]; then\n([\s\S]*?)\n  else\n([\s\S]*?)\n  fi/)
+    expect(branches, 'standard closed/open gate branches').not.toBeNull()
+    for (const branch of [branches![1], branches![2]]) {
+      expect(projectBoundComposeCalls(branch).join('\n')).toContain('up -d --no-deps --force-recreate web')
+    }
+
+    const webOnly = shellFunction(deploy, 'recreate_and_verify_web_only')
+    expect(webOnly).toContain('env "${env_args[@]}"')
+    expect(projectBoundComposeCalls(webOnly).join('\n')).toContain('up -d --no-deps --force-recreate web')
+    const bundle = shellFunction(deploy, 'recreate_and_verify_bundle')
+    const bundleCalls = projectBoundComposeCalls(bundle).join('\n')
+    expect(bundleCalls).toContain('compose -f "$compose_file"')
+    expect(bundleCalls).toContain('up -d --no-deps --force-recreate web')
+
+    const state = shellFunction(deploy, 'load_state')
+    const configCalls = projectBoundComposeCalls(state).join('\n')
+    expect(configCalls).toContain('docker --host "$docker_endpoint" compose')
+    expect(configCalls).toContain('config --format json')
+    const preflight = shellFunction(deploy, 'validate_web_only_preflight')
+    expect(preflight).toContain('"$root/scripts/web-only-target-preflight.py"')
+    expect(preflight).toContain('--root "$root" --project "$compose_project"')
+
+    const rollbackStart = deploy.lastIndexOf('\n  rollback)\n')
+    expect(rollbackStart).toBeGreaterThan(0)
+    const rollback = deploy.slice(rollbackStart)
+    const legacyStart = rollback.indexOf('\n    require_immutable_local_image')
+    expect(legacyStart).toBeGreaterThan(0)
+    const v2Rollback = rollback.slice(0, legacyStart)
+    expect(v2Rollback).toContain('if [[ "${STATE_VERSION:-}" == "2" ]]; then')
+    const rollbackCalls = projectBoundComposeCalls(v2Rollback).join('\n')
+    expect(rollbackCalls).toContain('compose -f "$V2_ROLLBACK_COMPOSE"')
+    expect(rollbackCalls).toContain('up -d --no-deps --force-recreate web')
+  })
+
   it('restores only current Supabase services and makes globals explicit', () => {
     const restore = read('ops', 'supabase', 'restore.sh')
 
@@ -68,7 +150,7 @@ describe('Phase 8 operational artifacts', () => {
     expect(deploy).toContain('ASADOS_COMPOSE_PROJECT')
     expect(deploy).toContain('{{index .Config.Labels "com.docker.compose.project"}}')
     expect(deploy).not.toContain('--project-name asados')
-    expect(deploy.match(/--project-name "\$compose_project"/g)).toHaveLength(4)
+    projectBoundComposeCalls(deploy)
     expect(deploy).toContain('ASADOS_EXPECTED_IMAGE_ID="$expected_id"')
     expect(deploy).toContain('Promotion failed; restoring the retained previous image')
     expect(deploy).toContain('recreate_and_verify "$rollback_ref" "$previous_id" true')
