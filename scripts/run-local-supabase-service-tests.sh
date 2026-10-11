@@ -17,6 +17,25 @@ readonly -a target_tests=(
   'tests/unit/web-client-operator-cart-flow.test.ts'
 )
 
+# Images the pinned Supabase CLI 2.109.1 manifest requires for the enabled services
+# of supabase/config.toml (PostgreSQL 17, pooler/analytics/imgproxy disabled, deno 2).
+# Presence in the local cache is required before startup so the CLI never reaches the
+# network; a CLI upgrade that changes tags fails closed here instead of pulling.
+readonly -a required_images=(
+  'supabase/postgres:17.6.1.143'
+  'library/kong:2.8.1'
+  'supabase/gotrue:v2.192.0'
+  'postgrest/postgrest:v14.14'
+  'supabase/realtime:v2.112.6'
+  'supabase/storage-api:v1.62.5'
+  'supabase/postgres-meta:v0.96.6'
+  'supabase/studio:2026.07.06-sha-66cf431'
+  'axllent/mailpit:v1.30.2'
+  'supabase/edge-runtime:v1.74.2'
+)
+# Only ports the enabled services publish; disabled services are never probed.
+readonly -a required_ports=(55321 55322 55323 55324)
+
 tests_to_run=("${target_tests[@]}")
 if (($#)); then
   tests_to_run=()
@@ -239,6 +258,22 @@ if "$supabase_bin" status --workdir "$work/project" >/dev/null 2>&1; then
 fi
 
 export SUPABASE_AUTH_SMS_TWILIO_AUTH_TOKEN='local-test-only'
+# Fail closed before startup: a missing cached image or a port already published by
+# another container would otherwise surface reactively after the CLI tried the network.
+# The port probe sees Docker-published conflicts only, and every probe keeps a TOCTOU
+# window between this check and the daemon binding the port.
+for image in "${required_images[@]}"; do
+  docker image inspect "$image" >/dev/null 2>&1 || {
+    printf 'missing-image: %s\n' "$image" >&2
+    exit 1
+  }
+done
+for port in "${required_ports[@]}"; do
+  if [[ -n "$(docker ps -q --filter "publish=$port" 2>/dev/null)" ]]; then
+    printf 'port-conflict-preflight: %s\n' "$port" >&2
+    exit 1
+  fi
+done
 startup_attempted=true
 if ! "$supabase_bin" start --workdir "$work/project" >"$work/start.log" 2>&1; then
   printf '%s\n' 'Disposable local Supabase failed to start.' >&2

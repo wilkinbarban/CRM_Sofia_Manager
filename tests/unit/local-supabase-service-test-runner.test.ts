@@ -116,7 +116,7 @@ describe('service-backed suite segregation', () => {
 describe('pinned executables and disposable project identity', () => {
   const canonical = readFileSync(join(root, 'supabase/config.toml'), 'utf8')
 
-  type ProbeBehavior = { start?: number | 'signal'; stop?: number; leftovers?: string[]; residual?: boolean }
+  type ProbeBehavior = { start?: number | 'signal'; stop?: number; leftovers?: string[]; residual?: boolean; missingImage?: string; published?: string[] }
 
   function probe(bin = '', state = '', behavior: ProbeBehavior = {}) {
     const sandbox = mkdtempSync(join(tmpdir(), 'supabase-runner-'))
@@ -136,7 +136,15 @@ describe('pinned executables and disposable project identity', () => {
 printf '%s\\n' "$0 $*" >> "$SANDBOX/trace"
 case "$1" in
   info) exit 0 ;;
-  ps) cat "$SANDBOX/leftovers" 2>/dev/null; exit 0 ;;
+  image) [[ -f "$SANDBOX/missing-image" ]] && printf '%s' "\${3:-}" | grep -Fqf "$SANDBOX/missing-image" && exit 1; exit 0 ;;
+  ps)
+    for arg in "$@"; do
+      case "$arg" in
+        label=*) cat "$SANDBOX/leftovers" 2>/dev/null ;;
+        publish=*) port=\${arg#publish=}; [[ -f "$SANDBOX/published" ]] && grep -qx "$port" "$SANDBOX/published" && printf '%s\n' 'published-container' ;;
+      esac
+    done
+    exit 0 ;;
   rm) [[ -f "$SANDBOX/residual" ]] || : > "$SANDBOX/leftovers"; exit 0 ;;
 esac
 exit 91
@@ -146,6 +154,8 @@ exit 91
       if (typeof behavior.stop === 'number') write('behavior-stop', String(behavior.stop))
       if (behavior.leftovers) write('leftovers', `${behavior.leftovers.join('\n')}\n`)
       if (behavior.residual) write('residual', '')
+      if (behavior.missingImage) write('missing-image', `${behavior.missingImage}\n`)
+      if (behavior.published) write('published', `${behavior.published.join('\n')}\n`)
       write('poison/git', '#!/bin/bash\nprintf "%s\\n" "$SANDBOX"\n')
       const fake = `#!/usr/bin/python3
 import os, re, sys
@@ -209,7 +219,7 @@ if behavior.is_file():
     for (const { result, sandbox, trace, calls } of runs) {
       expect(result.error).toBeUndefined()
       expect(result.status).toBe(0)
-      expect(trace).toBe(`${sandbox}/poison/docker info\n`)
+      expect(trace).toMatch(new RegExp(`^${sandbox}/poison/docker info\\n(?:${sandbox}/poison/docker (?:image inspect \\S+|ps -q --filter publish=\\d+)\\n)+$`))
       expect(calls.map((call) => call[1].split(' ').slice(0, 2).join(' '))).toEqual(expect.arrayContaining(['status --workdir', 'start --workdir', 'db reset', 'test db', 'stop --workdir', 'run --config']))
       for (const [executable, , workdir, id, marker] of calls) {
         expect(executable).toBe(join(sandbox, 'node_modules/.bin', executable.endsWith('/vitest') ? 'vitest' : 'supabase'))
@@ -265,6 +275,29 @@ if behavior.is_file():
     expect(result.status).not.toBe(0)
     expect(result.stderr).toContain('cleanup-residual-containers')
     expect(workdirRemoved).toBe(true)
+  })
+
+  it('aborts before startup when a required image is missing from the local cache', () => {
+    const { result, trace, calls, workdirRemoved } = probe('', '', { missingImage: 'supabase/postgres:17.6.1.143' })
+    expect(result.error).toBeUndefined()
+    expect(result.status).toBe(1)
+    expect(result.stderr).toContain('missing-image: supabase/postgres:17.6.1.143')
+    expect(calls.some((call) => call[1].startsWith('start'))).toBe(false)
+    expect(trace).not.toContain('pull')
+    expect(workdirRemoved).toBe(true)
+  })
+
+  it('aborts before startup when a required port is already published', () => {
+    const { result, calls, workdirRemoved } = probe('', '', { published: ['55321'] })
+    expect(result.error).toBeUndefined()
+    expect(result.status).toBe(1)
+    expect(result.stderr).toContain('port-conflict-preflight: 55321')
+    expect(calls.some((call) => call[1].startsWith('start'))).toBe(false)
+    expect(workdirRemoved).toBe(true)
+  })
+
+  it('never downloads images', () => {
+    expect(readFileSync(runnerPath, 'utf8')).not.toMatch(/\bpull\b/)
   })
 })
 
