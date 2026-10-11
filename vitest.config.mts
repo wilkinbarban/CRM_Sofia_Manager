@@ -6,12 +6,13 @@ export default defineConfig({
   plugins: [react()],
   resolve: {
     tsconfigPaths: true,
-    dedupe: ['next', 'react', 'react-dom'],
+    dedupe: ['next', 'react', 'react-dom', '@supabase/ssr'],
     alias: {
       '@': path.resolve(import.meta.dirname, 'apps/web/src'),
       react: path.resolve(import.meta.dirname, 'apps/web/node_modules/react'),
       'react-dom': path.resolve(import.meta.dirname, 'apps/web/node_modules/react-dom'),
       next: path.resolve(import.meta.dirname, 'apps/web/node_modules/next'),
+      '@supabase/ssr': path.resolve(import.meta.dirname, 'apps/web/node_modules/@supabase/ssr'),
     },
   },
   test: {
