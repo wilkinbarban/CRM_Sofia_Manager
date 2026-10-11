@@ -116,7 +116,7 @@ describe('service-backed suite segregation', () => {
 describe('pinned executables and disposable project identity', () => {
   const canonical = readFileSync(join(root, 'supabase/config.toml'), 'utf8')
 
-  type ProbeBehavior = { start?: number | 'signal'; stop?: number; leftovers?: string[]; residual?: boolean; missingImage?: string; published?: string[] }
+  type ProbeBehavior = { start?: number | 'signal'; stop?: number; leftovers?: string[]; residual?: boolean; missingImage?: string; mirrorOnly?: string[]; published?: string[] }
 
   function probe(bin = '', state = '', behavior: ProbeBehavior = {}) {
     const sandbox = mkdtempSync(join(tmpdir(), 'supabase-runner-'))
@@ -136,7 +136,11 @@ describe('pinned executables and disposable project identity', () => {
 printf '%s\\n' "$0 $*" >> "$SANDBOX/trace"
 case "$1" in
   info) exit 0 ;;
-  image) [[ -f "$SANDBOX/missing-image" ]] && printf '%s' "\${3:-}" | grep -Fqf "$SANDBOX/missing-image" && exit 1; exit 0 ;;
+  image)
+    ref=\${3:-}
+    if [[ -f "$SANDBOX/mirror-only" ]] && [[ "$ref" != public.ecr.aws/supabase/* ]] && printf '%s' "$ref" | grep -Fqf "$SANDBOX/mirror-only"; then exit 1; fi
+    if [[ -f "$SANDBOX/missing-image" ]] && printf '%s' "$ref" | grep -Fqf "$SANDBOX/missing-image"; then exit 1; fi
+    exit 0 ;;
   ps)
     for arg in "$@"; do
       case "$arg" in
@@ -155,6 +159,7 @@ exit 91
       if (behavior.leftovers) write('leftovers', `${behavior.leftovers.join('\n')}\n`)
       if (behavior.residual) write('residual', '')
       if (behavior.missingImage) write('missing-image', `${behavior.missingImage}\n`)
+      if (behavior.mirrorOnly) write('mirror-only', `${behavior.mirrorOnly.join('\n')}\n`)
       if (behavior.published) write('published', `${behavior.published.join('\n')}\n`)
       write('poison/git', '#!/bin/bash\nprintf "%s\\n" "$SANDBOX"\n')
       const fake = `#!/usr/bin/python3
@@ -293,6 +298,16 @@ if behavior.is_file():
     expect(result.status).toBe(1)
     expect(result.stderr).toContain('port-conflict-preflight: 55321')
     expect(calls.some((call) => call[1].startsWith('start'))).toBe(false)
+    expect(workdirRemoved).toBe(true)
+  })
+
+  it('accepts a cached image under the canonical or the ecr-mirrored tag', () => {
+    const { result, trace, calls, workdirRemoved } = probe('', '', { mirrorOnly: ['postgres:17.6.1.143', 'kong:2.8.1'] })
+    expect(result.error).toBeUndefined()
+    expect(result.status).toBe(0)
+    expect(trace).toContain('public.ecr.aws/supabase/postgres:17.6.1.143')
+    expect(trace).toContain('public.ecr.aws/supabase/kong:2.8.1')
+    expect(calls.some((call) => call[1].startsWith('start'))).toBe(true)
     expect(workdirRemoved).toBe(true)
   })
 

@@ -260,13 +260,21 @@ fi
 export SUPABASE_AUTH_SMS_TWILIO_AUTH_TOKEN='local-test-only'
 # Fail closed before startup: a missing cached image or a port already published by
 # another container would otherwise surface reactively after the CLI tried the network.
-# The port probe sees Docker-published conflicts only, and every probe keeps a TOCTOU
-# window between this check and the daemon binding the port.
+# Each image is accepted under the canonical manifest tag or the ECR mirror the CLI
+# resolves first; the port probe sees Docker-published conflicts only, and every probe
+# keeps a TOCTOU window between this check and the daemon binding the port.
 for image in "${required_images[@]}"; do
-  docker image inspect "$image" >/dev/null 2>&1 || {
+  image_cached=false
+  for candidate in "$image" "public.ecr.aws/supabase/${image##*/}"; do
+    if docker image inspect "$candidate" >/dev/null 2>&1; then
+      image_cached=true
+      break
+    fi
+  done
+  if [[ "$image_cached" != true ]]; then
     printf 'missing-image: %s\n' "$image" >&2
     exit 1
-  }
+  fi
 done
 for port in "${required_ports[@]}"; do
   if [[ -n "$(docker ps -q --filter "publish=$port" 2>/dev/null)" ]]; then
