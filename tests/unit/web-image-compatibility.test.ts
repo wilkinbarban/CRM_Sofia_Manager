@@ -75,7 +75,7 @@ function setupMockDeployEnvironment(options?: {
   ;[sandboxRoot, sandboxScripts, sandboxState].forEach((d) => chmodSync(d, 0o700))
   populateSafeBin(sandboxBin)
 
-  for (const s of ['web_only_state.py', 'web_only_bundle_consumer.py', 'web_only_bundle_writer.py']) {
+  for (const s of ['web_only_state.py', 'web_only_bundle_consumer.py', 'web_only_bundle_writer.py', 'web_only_bundle_lifecycle.py', 'web_only_dir.py', 'web-only-target-preflight.py', 'web_only_state_publisher.py', 'web_only_state_serializer.py']) {
     const sp = join(root, 'scripts', s)
     if (existsSync(sp)) writeFileSync(join(sandboxScripts, s), readFileSync(sp), { mode: 0o755 })
   }
@@ -175,6 +175,8 @@ STATE_DIR="${sandboxState}"
 TAGS_FILE="${tagsFile}"
 CONTAINER_FILE="${containerImageFile}"
 ENV_FILE="${containerEnvFile}"
+CONTAINER_ID="${'a'.repeat(64)}"
+NETWORK_ID="${'b'.repeat(64)}"
 
 if [[ "\${1:-}" == "--host" ]]; then
   if [[ "\${2:-}" != "unix:///var/run/docker.sock" ]]; then
@@ -188,6 +190,22 @@ cmd="\${1:-}"
 shift || true
 
 case "\$cmd" in
+  ps)
+    if [[ \$# -ne 5 || "\$1" != "-aq" || "\$2" != "--filter" || "\$3" != "label=com.docker.compose.project=asados" || "\$4" != "--filter" || "\$5" != "label=com.docker.compose.service=web" ]]; then
+      echo "Error: invalid ps arguments: \$*" >&2
+      exit 1
+    fi
+    if [[ -s "\$CONTAINER_FILE" ]]; then echo "\$CONTAINER_ID"; fi
+    exit 0
+    ;;
+  network)
+    if [[ \$# -eq 2 && "\$1" == "inspect" && "\$2" == "\$NETWORK_ID" ]]; then
+      printf '[{"Id":"%s","Name":"asados-app-private","Labels":{}}]\\n' "\$NETWORK_ID"
+      exit 0
+    fi
+    echo "Error: unknown network arguments: \$*" >&2
+    exit 1
+    ;;
   image)
     sub="\${1:-}"
     shift || true
@@ -200,7 +218,10 @@ case "\$cmd" in
           echo "Error: No such image: \$ref" >&2
           exit 1
         fi
-        if [[ \$# -eq 0 ]]; then exit 0; fi
+        if [[ \$# -eq 0 ]]; then
+          printf '[{"Id":"%s","Architecture":"amd64","Os":"linux"}]\\n' "\$id"
+          exit 0
+        fi
         if [[ \$# -eq 2 && "\$1" == "--format" && "\$2" == "{{.Id}}" ]]; then
           echo "\$id"
           exit 0
@@ -233,18 +254,32 @@ case "\$cmd" in
     target="\${1:-}"
     shift || true
     case "\$target" in
-      crm-sofia-web|asados-web)
+      crm-sofia-web|asados-web|"\$CONTAINER_ID")
         if [[ ! -f "\$CONTAINER_FILE" || ! -s "\$CONTAINER_FILE" ]]; then
           exit 1
         fi
-        if [[ -f "${sandboxState}/fail_health" ]]; then
-          echo "unhealthy"
-          exit 0
-        fi
         if [[ \$# -eq 0 ]]; then
-          exit 0
+          python3 -B - "\$CONTAINER_FILE" "\$ENV_FILE" "\$CONTAINER_ID" "\$NETWORK_ID" "${sandboxRoot}" <<'PY'
+import json, pathlib, sys
+image_file, env_file, cid, nid, root = sys.argv[1:]
+image = pathlib.Path(image_file).read_text().strip()
+env = pathlib.Path(env_file).read_text().splitlines() if pathlib.Path(env_file).is_file() else []
+ports = {"3000/tcp": [{"HostIp": "127.0.0.1", "HostPort": "3020"}]}
+labels = {"com.docker.compose.project": "asados", "com.docker.compose.service": "web",
+          "com.docker.compose.project.working_dir": root,
+          "com.docker.compose.project.config_files": root + "/docker-compose.yml"}
+print(json.dumps([{"Id": cid, "Name": "/crm-sofia-web", "Image": image,
+    "Config": {"Image": image, "Env": env, "Labels": labels},
+    "HostConfig": {"PortBindings": ports, "Binds": []}, "Mounts": [],
+    "NetworkSettings": {"Ports": ports, "Networks": {"asados-app-private": {
+        "NetworkID": nid, "Aliases": ["asados-web", "crm-sofia-web"]}}}}]))
+PY
+          exit $?
         elif [[ \$# -eq 2 && "\$1" == "--format" ]]; then
           case "\$2" in
+            '{{.Id}}')
+              echo "\$CONTAINER_ID"
+              exit 0 ;;
             '{{index .Config.Labels "com.docker.compose.project"}}')
               echo "asados"
               exit 0 ;;
@@ -259,7 +294,11 @@ case "\$cmd" in
               fi
               exit 1 ;;
             '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}')
-              echo "healthy"
+              if [[ -f "${sandboxState}/fail_health" ]]; then
+                echo "unhealthy"
+              else
+                echo "healthy"
+              fi
               exit 0 ;;
             *)
               echo "Error: unknown inspect format: \$2" >&2
@@ -297,6 +336,14 @@ case "\$cmd" in
       echo "Error: invalid compose \$1 arguments" >&2
       exit 1
     fi
+    # Preflight uses this exact env-file form; deploy uses the existing -f form.
+    if [[ \$# -eq 11 && "\$1" == "--project-directory" && "\$3" == "--env-file" && "\$5" == "-f" && "\$7" == "--project-name" && "\$8" == "asados" && "\$9" == "config" && "\${10}" == "--format" && "\${11}" == "json" ]]; then
+      if [[ "\$2" != "${sandboxRoot}" || "\$4" != "${sandboxRoot}/.env" || "\$6" != "${sandboxRoot}/docker-compose.yml" ]]; then
+        echo "Error: invalid compose preflight paths" >&2
+        exit 1
+      fi
+      set -- -f "\$6" --project-directory "\$2" --project-name "\$8" config --format json
+    fi
     if [[ \$# -eq 9 && "\$1" == "-f" && "\$3" == "--project-directory" && "\$5" == "--project-name" && "\$6" == "asados" && "\$7" == "config" && "\$8" == "--format" && "\$9" == "json" ]]; then
       if [[ "\$2" != "${sandboxRoot}/docker-compose.yml" ]]; then
         echo "Error: invalid compose file path" >&2
@@ -316,11 +363,24 @@ case "\$cmd" in
         cat "${sandboxState}/config_output"
         exit 0
       fi
-      printf '%s\n' '{"services":{"web":{"networks":{"app-private":{"aliases":["asados-web","crm-sofia-web"]}}}},"networks":{"app-private":{"name":"asados-app-private","external":true}}}'
+      python3 -B - "\$ENV_FILE" <<'PY' || exit 1
+import json, pathlib, sys
+path = pathlib.Path(sys.argv[1])
+env = dict(line.split("=", 1) for line in path.read_text().splitlines() if "=" in line) if path.is_file() else {}
+doc = {
+    "services": {"web": {
+        "ports": [{"target": 3000, "published": 3020, "host_ip": "127.0.0.1", "protocol": "tcp"}],
+        "environment": env,
+        "networks": {"app-private": {"aliases": ["asados-web", "crm-sofia-web"]}},
+    }},
+    "networks": {"app-private": {"name": "asados-app-private", "external": True}},
+}
+print(json.dumps(doc))
+PY
       exit 0
     fi
     if [[ \$# -eq 11 && "\$1" == "-f" && "\$3" == "--project-directory" && "\$5" == "--project-name" && "\$6" == "asados" && "\$7" == "up" && "\$8" == "-d" && "\$9" == "--no-deps" && "\${10}" == "--force-recreate" ]]; then
-      if [[ "\$2" != "${sandboxRoot}/docker-compose.yml" && "\$2" != *rollback-compose.json ]]; then
+      if [[ "\$2" != "${sandboxRoot}/docker-compose.yml" && "\$2" != *rollback-compose.json && "\$2" != *candidate-compose.json ]]; then
         echo "Error: invalid compose file path" >&2
         exit 1
       fi
@@ -331,10 +391,29 @@ case "\$cmd" in
       target_svc="\${11}"
       case "\$target_svc" in
         web)
-          if [[ "\$2" == *rollback-compose.json ]]; then
-            requested="\$(grep -o '"image": *"[^"]*"' "\$2" | head -n 1 | cut -d'"' -f4)"
+          if [[ \$2 == *rollback-compose.json || \$2 == *candidate-compose.json ]]; then
+            requested="\$(python3 -B -c 'import json, sys; print(json.load(open(sys.argv[1]))["services"]["web"]["image"])' "\$2")"
           else
             requested="\${CRM_SOFIA_WEB_IMAGE:-}"
+          fi
+          if [[ "\$2" != "${sandboxRoot}/docker-compose.yml" ]]; then
+            python3 -B - "\$2" "\$ENV_FILE" "${commandsLog}" <<'PY' || exit 1
+import json, pathlib, sys
+compose, env_file, log = sys.argv[1:]
+raw = json.loads(pathlib.Path(compose).read_text())["services"]["web"].get("environment", {})
+if isinstance(raw, list):
+    env = dict(item.split("=", 1) for item in raw if "=" in item)
+elif isinstance(raw, dict):
+    env = raw
+else:
+    raise ValueError("invalid bundle environment")
+lines = [str(k) + "=" + str(v) for k, v in env.items()]
+pathlib.Path(env_file).write_text(("\\n".join(lines) + "\\n") if lines else "")
+enabled = sorted(line for line in lines if "_ENABLED=" in line)
+if enabled:
+    with open(log, "a") as stream:
+        stream.write("\\n".join(enabled) + "\\n")
+PY
           fi
           if [[ -n "\$requested" ]]; then
             resolved_id="\$(awk -v r="\$requested" '\$1 == r { print \$2; exit } \$2 == r { print \$2; exit }' "\$TAGS_FILE")"
@@ -375,7 +454,8 @@ esac
   const dockerPath = join(sandboxBin, 'docker')
   writeFileSync(dockerPath, dockerScript, { mode: 0o755 })
 
-  const env: Record<string, string> = {
+  const env: Record<string, string> & { NODE_ENV: 'test' } = {
+    NODE_ENV: 'test',
     PATH: sandboxBin,
     HOME: sandboxRoot,
     TMPDIR: sandboxRoot,
@@ -754,10 +834,10 @@ describe('Web Image Compatibility & Dual Tagging', () => {
 
         const stateFile = join(sandboxState, 'release.env')
         const stateContent = readFileSync(stateFile, 'utf8')
+        expect(stateContent).toMatch(/STATE_VERSION=['"]?2['"]?/)
         expect(stateContent).toMatch(/DEPLOY_MODE=['"]?web-only['"]?/)
-        for (const [gate, expectedVal] of Object.entries(heterogeneousGates)) {
-          expect(stateContent).toMatch(new RegExp(`PRESERVED_GATE_${gate}=['"]?${expectedVal}['"]?`))
-        }
+        // A web-only promotion publishes the v2 bundle schema; v1 PRESERVED_GATE_* keys are not part of it.
+        expect(stateContent).not.toContain('PRESERVED_GATE_')
       } finally {
         harness.cleanup()
       }
@@ -1526,6 +1606,7 @@ describe('Web Image Compatibility & Dual Tagging', () => {
         try {
           expect(harness.env.SHELL).toBeUndefined()
           expect(harness.env.USER).toBeUndefined()
+          expect(harness.env.NODE_ENV).toBe('test')
 
           const resCurl = spawnSync('curl', ['--help'], { env: harness.env, encoding: 'utf8' })
           expect(resCurl.status).not.toBe(0)
