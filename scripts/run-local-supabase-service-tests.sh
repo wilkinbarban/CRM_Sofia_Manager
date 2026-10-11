@@ -51,12 +51,26 @@ docker info >/dev/null 2>&1 || {
 }
 
 work="$(mktemp -d "${TMPDIR:-/tmp}/asados-supabase-tests.XXXXXX")"
-started_by_runner=false
+startup_attempted=false
+project_id=''
 cleanup() {
   code=$?
   trap - EXIT HUP INT TERM
-  if [[ "$started_by_runner" == true ]]; then
-    "$supabase_bin" stop --workdir "$work/project" --no-backup >/dev/null 2>&1 || true
+  if [[ "$startup_attempted" == true ]]; then
+    stop_status=0
+    timeout 15s "$supabase_bin" stop --workdir "$work/project" --no-backup >/dev/null 2>&1 || stop_status=$?
+    if (( stop_status != 0 )); then
+      printf 'cleanup-stop-failed: %s\n' "$stop_status" >&2
+      mapfile -t leftovers < <(docker ps -aq --filter "label=com.supabase.cli.project=$project_id" 2>/dev/null)
+      if (( ${#leftovers[@]} )); then
+        docker rm -f "${leftovers[@]}" >/dev/null 2>&1 || true
+        mapfile -t remaining < <(docker ps -aq --filter "label=com.supabase.cli.project=$project_id" 2>/dev/null)
+        if (( ${#remaining[@]} )); then
+          printf '%s\n' 'cleanup-residual-containers' >&2
+          code=1
+        fi
+      fi
+    fi
   fi
   rm -rf "$work"
   exit "$code"
@@ -88,6 +102,7 @@ config, project_count = re.subn(
 )
 if project_count != 1:
     raise SystemExit(f'expected one project_id, found {project_count}')
+project_id = re.search(r'^project_id = "([^"]+)"$', config, re.M).group(1)
 ports = {54321: 55321, 54322: 55322, 54329: 55329, 54323: 55323, 54324: 55324, 54327: 55327}
 for source, target in ports.items():
     config, count = re.subn(rf'(?m)^port = {source}$', f'port = {target}', config)
@@ -111,6 +126,7 @@ config, provider_count = re.subn(
 if expose_count != 1 or phone_count != 1 or provider_count != 1:
     raise SystemExit('expected local API grant and phone-auth settings')
 config_path.write_text(config)
+(supabase_root.parent.parent / 'project-id').write_text(project_id + '\n')
 
 pattern = re.compile(r'^alter function public\.[^;]+ owner to supabase_admin;\n?', re.MULTILINE)
 changed = 0
@@ -123,6 +139,8 @@ for path in (supabase_root / 'migrations').glob('*.sql'):
 if changed != 8:
     raise SystemExit(f'expected 8 local-only ownership transfers, found {changed}')
 PY
+
+project_id="$(cat "$work/project-id" 2>/dev/null || true)"
 
 # Deterministic, bounded classification of disposable startup and reset failures.
 # Only fixed category labels, the last five migration filenames validated against a
@@ -221,12 +239,12 @@ if "$supabase_bin" status --workdir "$work/project" >/dev/null 2>&1; then
 fi
 
 export SUPABASE_AUTH_SMS_TWILIO_AUTH_TOKEN='local-test-only'
+startup_attempted=true
 if ! "$supabase_bin" start --workdir "$work/project" >"$work/start.log" 2>&1; then
   printf '%s\n' 'Disposable local Supabase failed to start.' >&2
   report_failure_log "$work/start.log"
   exit 1
 fi
-started_by_runner=true
 
 if ! "$supabase_bin" db reset --local --workdir "$work/project" >"$work/reset.log" 2>&1; then
   printf '%s\n' 'Disposable local Supabase reset or seed failed.' >&2

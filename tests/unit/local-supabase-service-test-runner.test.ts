@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from 'node:child_process'
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -116,7 +116,9 @@ describe('service-backed suite segregation', () => {
 describe('pinned executables and disposable project identity', () => {
   const canonical = readFileSync(join(root, 'supabase/config.toml'), 'utf8')
 
-  function probe(bin = '', state = '') {
+  type ProbeBehavior = { start?: number | 'signal'; stop?: number; leftovers?: string[]; residual?: boolean }
+
+  function probe(bin = '', state = '', behavior: ProbeBehavior = {}) {
     const sandbox = mkdtempSync(join(tmpdir(), 'supabase-runner-'))
     const write = (path: string, source: string, mode = 0o755) => writeFileSync(join(sandbox, path), source, { mode })
     try {
@@ -130,7 +132,20 @@ describe('pinned executables and disposable project identity', () => {
       write('scripts/workspace-preflight.sh', '#!/bin/bash\nshift 2\nexec "$@"\n')
       const reject = '#!/bin/bash\nprintf "%s\\n" "$0 $*" >> "$SANDBOX/trace"\nexit 93\n'
       for (const command of ['npx', 'supabase', 'vitest', 'docker']) write(`poison/${command}`, reject)
-      if (!bin) write('poison/docker', '#!/bin/bash\nprintf "%s\\n" "$0 $*" >> "$SANDBOX/trace"\n[[ "$#" == 1 && "$1" == info ]]\n')
+      if (!bin) write('poison/docker', `#!/bin/bash
+printf '%s\\n' "$0 $*" >> "$SANDBOX/trace"
+case "$1" in
+  info) exit 0 ;;
+  ps) cat "$SANDBOX/leftovers" 2>/dev/null; exit 0 ;;
+  rm) [[ -f "$SANDBOX/residual" ]] || : > "$SANDBOX/leftovers"; exit 0 ;;
+esac
+exit 91
+`)
+      if (typeof behavior.start === 'number') write('behavior-start', String(behavior.start))
+      if (behavior.start === 'signal') write('behavior-start', 'signal')
+      if (typeof behavior.stop === 'number') write('behavior-stop', String(behavior.stop))
+      if (behavior.leftovers) write('leftovers', `${behavior.leftovers.join('\n')}\n`)
+      if (behavior.residual) write('residual', '')
       write('poison/git', '#!/bin/bash\nprintf "%s\\n" "$SANDBOX"\n')
       const fake = `#!/usr/bin/python3
 import os, re, sys
@@ -149,6 +164,14 @@ if args[0] == 'status':
     if '-o' not in args:
         sys.exit(1)
     print('API_URL="http://127.0.0.1:55321"\\nANON_KEY="local-anon"\\nSERVICE_ROLE_KEY="local-service"')
+behavior = Path(os.environ['SANDBOX']) / ('behavior-' + args[0])
+if behavior.is_file():
+    value = behavior.read_text().strip()
+    if value == 'signal':
+        import signal
+        os.kill(os.getppid(), signal.SIGTERM)
+        sys.exit(1)
+    sys.exit(int(value))
 `
       for (const command of ['supabase', 'vitest']) {
         if (command !== bin || state !== 'missing') write(`node_modules/.bin/${command}`, fake, command === bin ? 0o644 : 0o755)
@@ -160,7 +183,12 @@ if args[0] == 'status':
       const log = (name: string) => existsSync(join(sandbox, name)) ? readFileSync(join(sandbox, name), 'utf8') : ''
       expect(readFileSync(join(sandbox, 'supabase/config.toml'), 'utf8')).toBe(canonical)
       expect(readFileSync(join(root, 'supabase/config.toml'), 'utf8')).toBe(canonical)
-      return { result, sandbox, trace: log('trace'), calls: log('calls').trim().split('\n').filter(Boolean).map((line) => line.split('|')) }
+      return {
+        result, sandbox,
+        trace: log('trace'),
+        calls: log('calls').trim().split('\n').filter(Boolean).map((line) => line.split('|')),
+        workdirRemoved: readdirSync(join(sandbox, 'tmp')).length === 0,
+      }
     } finally {
       rmSync(sandbox, { recursive: true, force: true })
     }
@@ -195,6 +223,48 @@ if args[0] == 'status':
       }
     }
     expect(runs[0].calls.find((call) => call[0].endsWith('/supabase'))?.[3]).not.toBe(runs[1].calls.find((call) => call[0].endsWith('/supabase'))?.[3])
+  })
+
+  it('never runs a global prune or a global stop', () => {
+    const runner = readFileSync(runnerPath, 'utf8')
+    expect(runner).not.toMatch(/docker[^\n]*\bprune\b/)
+    expect(runner).not.toMatch(/supabase[^\n]*stop[^\n]*--all/)
+    expect(runner).toMatch(/timeout [0-9]+s "\$supabase_bin" stop --workdir/)
+  })
+
+  it('stops the disposable stack and removes the workdir after a partial start failure', () => {
+    const { result, calls, workdirRemoved } = probe('', '', { start: 1 })
+    expect(result.error).toBeUndefined()
+    expect(result.status).toBe(1)
+    expect(result.stderr).toContain('failed to start')
+    expect(calls.map((call) => call[1].split(' ').slice(0, 2).join(' '))).toContain('stop --workdir')
+    expect(workdirRemoved).toBe(true)
+  })
+
+  it('runs the bounded stop when terminated during startup', () => {
+    const { result, calls, workdirRemoved } = probe('', '', { start: 'signal' })
+    expect(result.error).toBeUndefined()
+    expect(result.status).toBe(143)
+    expect(calls.map((call) => call[1].split(' ').slice(0, 2).join(' '))).toContain('stop --workdir')
+    expect(workdirRemoved).toBe(true)
+  })
+
+  it('audits and removes labeled leftovers when the scoped stop fails', () => {
+    const { result, trace, workdirRemoved } = probe('', '', { start: 1, stop: 1, leftovers: ['c0ffee01'] })
+    expect(result.error).toBeUndefined()
+    expect(result.status).toBe(1)
+    expect(result.stderr).toContain('cleanup-stop-failed')
+    expect(trace).toContain('label=com.supabase.cli.project=')
+    expect(trace).toMatch(/docker.* rm -f c0ffee01/)
+    expect(workdirRemoved).toBe(true)
+  })
+
+  it('fails closed and reports residue when labeled leftovers survive removal', () => {
+    const { result, workdirRemoved } = probe('', '', { start: 1, stop: 1, leftovers: ['c0ffee02'], residual: true })
+    expect(result.error).toBeUndefined()
+    expect(result.status).not.toBe(0)
+    expect(result.stderr).toContain('cleanup-residual-containers')
+    expect(workdirRemoved).toBe(true)
   })
 })
 
@@ -516,13 +586,14 @@ describe('local Supabase service-backed test runner', () => {
     expect(runner).toContain('exit "$code"')
   })
 
-  it('keeps the cleanup and exit paths of the runner unchanged', () => {
+  it('keeps the bounded cleanup and exit paths of the runner', () => {
     const runner = readFileSync(runnerPath, 'utf8')
 
     expect(runner).toContain('trap cleanup EXIT')
     expect(runner).toContain('rm -rf "$work"')
     expect(runner).toContain('exit "$code"')
-    expect(runner).toContain('started_by_runner=true')
+    expect(runner.indexOf('startup_attempted=true')).toBeGreaterThan(-1)
+    expect(runner.indexOf('startup_attempted=true')).toBeLessThan(runner.indexOf('"$supabase_bin" start --workdir'))
     expect(runner).toContain('Disposable local Supabase failed to start.')
     expect(runner).toContain('Disposable local Supabase reset or seed failed.')
     expect(runner).not.toMatch(/tail -n \d+/)
