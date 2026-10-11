@@ -1,5 +1,5 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync, symlinkSync, existsSync } from 'node:fs'
-import { spawnSync } from 'node:child_process'
+import { spawnSync, type SpawnSyncReturns } from 'node:child_process'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 
@@ -18,8 +18,8 @@ export const DEFAULT_NETWORK_SETTINGS = {
 
 export interface Sandbox {
   dir: string; opRoot: string; spyLog: string
-  runHelper: (args: string[], env?: Record<string, string>) => ReturnType<typeof spawnSync>
-  runDocker: (args: string[], env?: Record<string, string>) => ReturnType<typeof spawnSync>
+  runHelper: (args: string[], env?: Record<string, string>) => SpawnSyncReturns<string>
+  runDocker: (args: string[], env?: Record<string, string>) => SpawnSyncReturns<string>
   cleanup: () => void
 }
 
