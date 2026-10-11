@@ -1,22 +1,28 @@
 import { describe, expect, it } from 'vitest'
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'http://127.0.0.1:8000'
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiIsImlzcyI6InN1cGFiYXNlIiwiaWF0IjoxNzg2NjMxMzM5LCJleHAiOjE5NDQzMTEzMzl9._X-OI8hh_bFU-7iYDjOnXfHFFoPl6ybpD5-mfuogNys'
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIiwiaXNzIjoic3VwYWJhc2UiLCJpYXQiOjE3ODY2MzEzMzksImV4cCI6MTk0NDMxMTMzOX0.5CELS8sD90H8mWVfZ_kGoHDtTQfAfZvvlb8lavwkKdM'
+// Runner opt-in is a safety check, not proof of authentication.
+if (
+  process.env.LOCAL_SUPABASE_SERVICE_RUNNER !== '1' ||
+  process.env.NEXT_PUBLIC_SUPABASE_URL !== 'http://127.0.0.1:55321' ||
+  process.env.SUPABASE_INTERNAL_URL !== 'http://127.0.0.1:55321' ||
+  !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
+  !process.env.SUPABASE_SERVICE_ROLE_KEY
+) {
+  throw new Error('Use npm run test:unit:supabase with the disposable local stack.')
+}
 
-process.env.NEXT_PUBLIC_SUPABASE_URL = supabaseUrl
-process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = supabaseAnonKey
-process.env.SUPABASE_SERVICE_ROLE_KEY = supabaseServiceKey
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
 
-import {
+const {
   obterOuCriarCarrinhoAtivo,
   adicionarItemAoCarrinho,
   atualizarQuantidadeItemCarrinho,
   removerItemDoCarrinho,
   limparCarrinho,
   converterCarrinhoEmPedido,
-} from '@/lib/carrinho/service'
-import { createClient } from '@supabase/supabase-js'
+} = await import('@/lib/carrinho/service')
+const { createClient } = await import('@supabase/supabase-js')
 
 describe('Web Client & Operator Unified Cart Management Flow', () => {
   const supabase = createClient(supabaseUrl, supabaseServiceKey)

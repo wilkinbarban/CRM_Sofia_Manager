@@ -1,9 +1,20 @@
 import { describe, expect, it } from 'vitest'
-import { createClient } from '@supabase/supabase-js'
 import { getRoleRedirectPath } from '@/lib/auth/safe-redirect'
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'http://127.0.0.1:8000'
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiIsImlzcyI6InN1cGFiYXNlIiwiaWF0IjoxNzg2NjMxMzM5LCJleHAiOjE5NDQzMTEzMzl9._X-OI8hh_bFU-7iYDjOnXfHFFoPl6ybpD5-mfuogNys'
+// Runner opt-in is a safety check, not proof of authentication.
+if (
+  process.env.LOCAL_SUPABASE_SERVICE_RUNNER !== '1' ||
+  process.env.NEXT_PUBLIC_SUPABASE_URL !== 'http://127.0.0.1:55321' ||
+  process.env.SUPABASE_INTERNAL_URL !== 'http://127.0.0.1:55321' ||
+  !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
+  !process.env.SUPABASE_SERVICE_ROLE_KEY
+) {
+  throw new Error('Use npm run test:unit:supabase with the disposable local stack.')
+}
+
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+const { createClient } = await import('@supabase/supabase-js')
 
 describe('End-to-End Roles Authentication & Authorization Suite', () => {
   it('authenticates admin and resolves admin role redirect', async () => {

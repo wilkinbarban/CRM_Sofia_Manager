@@ -2,6 +2,7 @@ import { execFileSync, spawnSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { loadConfigFromFile } from 'vite'
 
 const root = process.cwd()
 const runnerPath = join(root, 'scripts/run-local-supabase-service-tests.sh')
@@ -38,6 +39,78 @@ function expectDiagnosticsAreSafe(stderr: string) {
   for (const line of lines) expect(line).toMatch(allowedDiagnostic)
   expect(stderr).not.toMatch(/[/@?&=]/)
 }
+
+describe('service-backed suite segregation', () => {
+  const suites = [
+    'tests/unit/roles-authentication-e2e.test.ts',
+    'tests/unit/web-client-operator-cart-flow.test.ts',
+  ]
+  const runner = readFileSync(runnerPath, 'utf8')
+  const marker = 'LOCAL_SUPABASE_SERVICE_RUNNER'
+  const fallback = /(?:^|[;\n])\s*(?:(?:const|let|var)\s+)?\w+\s*=\s*process\.env\.(?:NEXT_PUBLIC_SUPABASE_\w+|SUPABASE_SERVICE_ROLE_KEY)\s*(?:\|\||\?\?)/
+
+  function testPatterns(config: object | undefined, key: 'include' | 'exclude'): string[] {
+    const test = config && 'test' in config ? config.test : undefined
+    if (!test || typeof test !== 'object') throw new Error('Missing test options')
+    const value = key === 'include'
+      ? ('include' in test ? test.include : undefined)
+      : ('exclude' in test ? test.exclude : undefined)
+    if (!Array.isArray(value) || !value.every((entry) => typeof entry === 'string')) throw new Error('Invalid test patterns')
+    return value
+  }
+
+  it('excludes exactly the two service suites alongside the existing base exclusions', async () => {
+    const loaded = await loadConfigFromFile({ command: 'serve', mode: 'test' }, join(root, 'vitest.config.mts'))
+    expect(loaded).not.toBeNull()
+    expect(new Set(testPatterns(loaded?.config, 'exclude'))).toEqual(new Set(['tests/e2e/**', 'node_modules/**', ...suites]))
+  })
+
+  it('selects a dedicated config whose include and exclude arrays replace the base arrays', async () => {
+    const configArgument = runner.match(/--config\s+['"]?([\w./-]+)/)?.[1]
+    expect(configArgument).toBeTruthy()
+    const configPath = join(root, configArgument!)
+    expect(configPath).not.toBe(join(root, 'vitest.config.mts'))
+    expect(readFileSync(configPath, 'utf8')).not.toMatch(/\bmergeConfig\b/)
+    const loaded = await loadConfigFromFile({ command: 'serve', mode: 'test' }, configPath)
+    expect(loaded).not.toBeNull()
+    const include = testPatterns(loaded?.config, 'include')
+    expect(include).toHaveLength(2)
+    expect(new Set(include)).toEqual(new Set(suites))
+    expect(testPatterns(loaded?.config, 'exclude')).toEqual([])
+  })
+
+  it('passes the opt-in marker only to the final test invocation', () => {
+    expect(runner.includes(`export ${marker}`)).toBe(false)
+    expect(runner.includes(`${marker}=1 scripts/workspace-preflight.sh run -- npx vitest run`)).toBe(true)
+  })
+
+  it('distinguishes fallback initializers from multi-condition guards', () => {
+    for (const operator of ['||', '??']) {
+      expect(fallback.test(`const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ${operator} 'synthetic'`)).toBe(true)
+      expect(fallback.test(`key = process.env.SUPABASE_SERVICE_ROLE_KEY ${operator} 'synthetic'`)).toBe(true)
+      expect(fallback.test(`const url = process.env.NEXT_PUBLIC_SUPABASE_URL ${operator} 'synthetic'`)).toBe(true)
+    }
+    expect(fallback.test("if (process.env.NEXT_PUBLIC_SUPABASE_URL !== 'synthetic' || !process.env.SUPABASE_SERVICE_ROLE_KEY) {}")).toBe(false)
+  })
+
+  it.each(suites)('fails closed before creating clients in %s', (suite) => {
+    const source = readFileSync(join(root, suite), 'utf8')
+    const firstClient = source.indexOf('createClient(')
+    expect(firstClient).toBeGreaterThan(-1)
+    const guard = source.slice(0, firstClient)
+    expect(marker).toBeTruthy()
+    // Boolean assertions keep source (including legacy credentials) out of failure output.
+    expect(new RegExp(`process\\.env\\.${marker}\\s*!==\\s*['"]1['"]`).test(guard)).toBe(true)
+    expect(/process\.env\.NEXT_PUBLIC_SUPABASE_URL\s*!==\s*['"]http:\/\/127\.0\.0\.1:55321['"]/.test(guard)).toBe(true)
+    expect(/process\.env\.SUPABASE_INTERNAL_URL\s*!==\s*['"]http:\/\/127\.0\.0\.1:55321['"]/.test(guard)).toBe(true)
+    expect(guard.includes('!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY')).toBe(true)
+    expect(guard.includes('!process.env.SUPABASE_SERVICE_ROLE_KEY')).toBe(true)
+    expect(/throw new Error\(/.test(guard)).toBe(true)
+    expect(guard.indexOf('throw new Error(')).toBeLessThan(guard.indexOf('await import('))
+    expect(/from\s+['"](?:@supabase\/supabase-js|@\/lib\/carrinho\/service)['"]/.test(source)).toBe(false)
+    expect(fallback.test(source)).toBe(false)
+  })
+})
 
 describe('local Supabase service-backed test runner', () => {
   it('is executable and has dedicated package and CI entry points', () => {

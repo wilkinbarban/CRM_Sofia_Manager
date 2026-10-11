@@ -20,7 +20,12 @@ export default defineConfig({
     environment: 'jsdom',
     setupFiles: ['./tests/setup/vitest.setup.ts'],
     include: ['tests/**/*.test.{ts,tsx}'],
-    exclude: ['tests/e2e/**', 'node_modules/**'],
+    exclude: [
+      'tests/e2e/**',
+      'node_modules/**',
+      'tests/unit/roles-authentication-e2e.test.ts',
+      'tests/unit/web-client-operator-cart-flow.test.ts',
+    ],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json-summary'],

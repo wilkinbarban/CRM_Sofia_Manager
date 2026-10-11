@@ -250,7 +250,8 @@ export NEXT_PUBLIC_SUPABASE_ANON_KEY="$anon_key"
 export SUPABASE_SERVICE_ROLE_KEY="$service_key"
 export SUPABASE_INTERNAL_URL="$api_url"
 
-scripts/workspace-preflight.sh run -- npx vitest run \
+LOCAL_SUPABASE_SERVICE_RUNNER=1 scripts/workspace-preflight.sh run -- npx vitest run \
+  --config vitest.supabase.config.mts \
   "${tests_to_run[@]}" \
   --fileParallelism=false \
   --allowOnly=false
