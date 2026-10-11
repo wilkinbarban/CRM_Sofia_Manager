@@ -32,9 +32,10 @@ readonly -a required_images=(
   'supabase/studio:2026.07.06-sha-66cf431'
   'axllent/mailpit:v1.30.2'
   'supabase/edge-runtime:v1.74.2'
+  'supabase/pg_prove:3.36'
 )
 # Only ports the enabled services publish; disabled services are never probed.
-readonly -a required_ports=(55321 55322 55323 55324)
+readonly -a required_ports=(55321 55322 55324)
 
 tests_to_run=("${target_tests[@]}")
 if (($#)); then
@@ -132,6 +133,7 @@ config, expose_count = re.subn(
     'auto_expose_new_tables = true',
     config,
 )
+config = re.sub(r'(?m)^\[studio\]\nenabled = true', '[studio]\nenabled = false', config)
 config, phone_count = re.subn(
     r'(?ms)(^\[auth\.sms\]\n.*?^enable_signup = )false$',
     r'\1true',
@@ -258,6 +260,7 @@ if "$supabase_bin" status --workdir "$work/project" >/dev/null 2>&1; then
 fi
 
 export SUPABASE_AUTH_SMS_TWILIO_AUTH_TOKEN='local-test-only'
+export SUPABASE_TELEMETRY_DISABLED='1'
 # Fail closed before startup: a missing cached image or a port already published by
 # another container would otherwise surface reactively after the CLI tried the network.
 # Each image is accepted under the canonical manifest tag or the ECR mirror the CLI
@@ -283,7 +286,7 @@ for port in "${required_ports[@]}"; do
   fi
 done
 startup_attempted=true
-if ! "$supabase_bin" start --workdir "$work/project" >"$work/start.log" 2>&1; then
+if ! "$supabase_bin" start --ignore-health-check --workdir "$work/project" >"$work/start.log" 2>&1; then
   printf '%s\n' 'Disposable local Supabase failed to start.' >&2
   report_failure_log "$work/start.log"
   exit 1

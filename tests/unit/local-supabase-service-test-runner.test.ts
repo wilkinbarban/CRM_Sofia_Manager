@@ -225,7 +225,7 @@ if behavior.is_file():
       expect(result.error).toBeUndefined()
       expect(result.status).toBe(0)
       expect(trace).toMatch(new RegExp(`^${sandbox}/poison/docker info\\n(?:${sandbox}/poison/docker (?:image inspect \\S+|ps -q --filter publish=\\d+)\\n)+$`))
-      expect(calls.map((call) => call[1].split(' ').slice(0, 2).join(' '))).toEqual(expect.arrayContaining(['status --workdir', 'start --workdir', 'db reset', 'test db', 'stop --workdir', 'run --config']))
+      expect(calls.map((call) => call[1].split(' ').slice(0, 2).join(' '))).toEqual(expect.arrayContaining(['status --workdir', 'start --ignore-health-check', 'db reset', 'test db', 'stop --workdir', 'run --config']))
       for (const [executable, , workdir, id, marker] of calls) {
         expect(executable).toBe(join(sandbox, 'node_modules/.bin', executable.endsWith('/vitest') ? 'vitest' : 'supabase'))
         expect(marker).toBe(executable.endsWith('/vitest') ? '1' : '')
@@ -313,6 +313,15 @@ if behavior.is_file():
 
   it('never downloads images', () => {
     expect(readFileSync(runnerPath, 'utf8')).not.toMatch(/\bpull\b/)
+  })
+
+  it('disables studio, ignores startup health check race, and preflights pg_prove', () => {
+    const runner = readFileSync(runnerPath, 'utf8')
+    expect(runner).toContain("'supabase/pg_prove:3.36'")
+    expect(runner).toMatch(/required_ports=\([^)]*55321[^)]*55322[^)]*55324[^)]*\)/)
+    expect(runner).not.toMatch(/required_ports=\([^)]*55323/)
+    expect(runner).toContain('"$supabase_bin" start --ignore-health-check --workdir "$work/project"')
+    expect(runner).toContain('[studio]\\nenabled = false')
   })
 })
 
@@ -641,7 +650,7 @@ describe('local Supabase service-backed test runner', () => {
     expect(runner).toContain('rm -rf "$work"')
     expect(runner).toContain('exit "$code"')
     expect(runner.indexOf('startup_attempted=true')).toBeGreaterThan(-1)
-    expect(runner.indexOf('startup_attempted=true')).toBeLessThan(runner.indexOf('"$supabase_bin" start --workdir'))
+    expect(runner.indexOf('startup_attempted=true')).toBeLessThan(runner.indexOf('"$supabase_bin" start'))
     expect(runner).toContain('Disposable local Supabase failed to start.')
     expect(runner).toContain('Disposable local Supabase reset or seed failed.')
     expect(runner).not.toMatch(/tail -n \d+/)
