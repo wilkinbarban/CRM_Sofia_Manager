@@ -35,12 +35,21 @@ What it proves, and what it does not:
 - proves the recorded command order (validation before tagging, rollback tags before promotion, promotion from the candidate bundle with an explicit Compose project, publication after promotion, state version 2 retaining its bundle);
 - proves the rollback path runs from the bundle's `rollback-compose.json` with the same project binding, and that a failed rollout leaves the recorded state bytes unchanged;
 - proves the procedure targets only the `web` service and never runs a broad prune or an automatic bundle deletion;
+- proves two consecutive web-only promotions succeed without intervening standard deploys, verifying that the preflight correctly recognizes and accepts the active bundle's compose configuration (H-11);
 - proves the surface check has teeth: it detects a deviant copy of the deploy script rather than passing blindly;
 - does not prove real daemon behavior, real health timing, real network reachability or visual acceptance. Those require a human on the authorized rollout.
 
 ## Rollout
 
-1. Build the candidate image from the reviewed HEAD, then record its immutable image ID. Do not reuse a mutable tag as the candidate reference.
+1. **Pre-build verification for the legacy Docker builder (H-9)**:
+   The build host operates with the legacy Docker builder (without `buildx` or containerd image store). In this environment, repeated image builds can fail during layer export (`CreateDiff: ... mount callback failed on /var/lib/containerd/tmpmounts/...`) when stopped anonymous intermediate build containers and dangling layers accumulate. `docker image prune -f` reclaims zero bytes while stopped containers reference those layers.
+   Execute this checklist before running `docker build`:
+   a. Check free disk space: `df -h /` (verify at least 8 GB free space before starting).
+   b. Remove stopped anonymous build containers: `docker rm $(docker ps -aq --filter status=exited --filter status=created)` (strictly targeting exited/created containers; never touch running services).
+   c. Prune dangling builder layers: `docker image prune -f` (verify space is reclaimed).
+   d. Build the candidate image from the reviewed `HEAD`:
+      `docker build -t crm-sofia-web:<recorded-tag> .`
+   e. Record its immutable image ID: `docker inspect crm-sofia-web:<recorded-tag> --format '{{.Id}}'`. Do not reuse a mutable tag as the candidate reference.
 2. Confirm the preconditions table once more, including that the rollback image is still present.
 3. Run the authorized web-only deploy, with the image reference recorded in the window ledger:
 
@@ -101,4 +110,5 @@ Record, and store outside the repository if it contains host paths:
 - The rehearsal is a hermetic sandbox, not OS isolation: it proves command order and contracts, never real daemon behavior.
 - A passing rehearsal is a precondition, not an authorization.
 - The active bundle must survive a successful rollout; the version 2 rollback path depends on it.
+- The build host uses the legacy Docker engine builder without `buildx`; the pre-build checklist in step 1 is required to prevent layer export failures from accumulated anonymous containers.
 - Rollback tags and orphaned image layers are out of scope here and belong to a separate cleanup unit.

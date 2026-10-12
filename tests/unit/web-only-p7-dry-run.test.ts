@@ -73,26 +73,45 @@ function createSandbox(): Sandbox {
   writeFileSync(join(pb.opRoot, 'docker-compose.yml'), 'services:\n  web:\n    image: crm-sofia-web:latest\n')
   writeFileSync(join(pb.opRoot, '.env'), 'PORT=3000\n')
   const stateFile = join(pb.dir, 'docker-state.json'), bridgeScript = join(pb.dir, 'docker-bridge.cjs')
+  const cand2Ref = 'crm-sofia-web:candidate-2', cand2Id = 'sha256:3333333333333333333333333333333333333333333333333333333333333333'
   const bridgeCode = `const fs = require('node:fs'), path = require('node:path'), state = JSON.parse(fs.readFileSync(${JSON.stringify(stateFile)}, 'utf8'))
-const commandsLog = ${JSON.stringify(pb.commandsLog)}, opRoot = ${JSON.stringify(pb.opRoot)}, project = ${JSON.stringify(FIXTURE_PROJECT)}, service = ${JSON.stringify(FIXTURE_SERVICE)}, containerId = ${JSON.stringify(FIXTURE_CONTAINER_ID)}, netId = ${JSON.stringify(FIXTURE_NETWORK_ID)}, currentImg = ${JSON.stringify(FIXTURE_INITIAL_IMAGE_ID)}, candImg = ${JSON.stringify(FIXTURE_CANDIDATE_IMAGE_ID)}, currentCfg = ${JSON.stringify(FIXTURE_INITIAL_CONFIG_IMAGE)}, candCfg = ${JSON.stringify(FIXTURE_CANDIDATE_CONFIG_IMAGE)}, gates = ${JSON.stringify(GATES)}
+const commandsLog = ${JSON.stringify(pb.commandsLog)}, opRoot = ${JSON.stringify(pb.opRoot)}, project = ${JSON.stringify(FIXTURE_PROJECT)}, service = ${JSON.stringify(FIXTURE_SERVICE)}, containerId = ${JSON.stringify(FIXTURE_CONTAINER_ID)}, netId = ${JSON.stringify(FIXTURE_NETWORK_ID)}, currentImg = ${JSON.stringify(FIXTURE_INITIAL_IMAGE_ID)}, candImg = ${JSON.stringify(FIXTURE_CANDIDATE_IMAGE_ID)}, currentCfg = ${JSON.stringify(FIXTURE_INITIAL_CONFIG_IMAGE)}, candCfg = ${JSON.stringify(FIXTURE_CANDIDATE_CONFIG_IMAGE)}, cand2Cfg = ${JSON.stringify(cand2Ref)}, cand2Img = ${JSON.stringify(cand2Id)}, gates = ${JSON.stringify(GATES)}
+const imageIdMap = { [currentCfg]: currentImg, [currentImg]: currentImg, [candCfg]: candImg, [candImg]: candImg, [cand2Cfg]: cand2Img, [cand2Img]: cand2Img }
 fs.appendFileSync(commandsLog, JSON.stringify({ command: 'docker', args: process.argv.slice(2) }) + '\\n')
 let args = process.argv.slice(2)
 if (args[0] === '--host') { if (args[1] !== 'unix:///var/run/docker.sock') { process.stderr.write('deny host\\n'); process.exit(1) }; args = args.slice(2) }
 if (args[0] === 'inspect' && args.length === 4 && args[2] === '--format') {
-  const map = { '{{index .Config.Labels "com.docker.compose.project"}}': project, '{{range .Config.Env}}{{println .}}{{end}}': gates.map(g => g + '=true').join('\\n'), '{{.Id}}': containerId, '{{.Image}}': currentImg }
+  const activeImg = state.currentImageId || currentImg
+  const map = { '{{index .Config.Labels "com.docker.compose.project"}}': project, '{{range .Config.Env}}{{println .}}{{end}}': gates.map(g => g + '=true').join('\\n'), '{{.Id}}': containerId, '{{.Image}}': activeImg }
   if (map[args[3]]) { process.stdout.write(map[args[3]] + '\\n'); process.exit(0) }
   if (args[3].includes('.State')) { process.stdout.write('healthy\\n'); process.exit(0) }
 }
 if (args[0] === 'inspect' && args.length === 2 && (args[1] === containerId || args[1] === 'crm-sofia-web' || args[1] === 'asados-web')) {
-  process.stdout.write(JSON.stringify([{ Id: containerId, Name: '/crm-sofia-web', Image: currentImg, Config: { Image: currentCfg, Labels: { 'com.docker.compose.project': project, 'com.docker.compose.service': service, 'com.docker.compose.project.working_dir': opRoot, 'com.docker.compose.project.config_files': path.join(opRoot, 'docker-compose.yml') } }, HostConfig: { PortBindings: { '3000/tcp': [{ HostIp: '127.0.0.1', HostPort: '3020' }] }, Binds: [] }, NetworkSettings: { Ports: { '3000/tcp': [{ HostIp: '127.0.0.1', HostPort: '3020' }] }, Networks: { [project + '_default']: { NetworkID: netId, Aliases: ['asados-web', 'crm-sofia-web'] } } }, Mounts: [] }]) + '\\n')
+  const activeImg = state.currentImageId || currentImg, activeCfg = state.currentConfigImage || currentCfg, activeCfgFile = state.currentConfigFile || path.join(opRoot, 'docker-compose.yml')
+  process.stdout.write(JSON.stringify([{ Id: containerId, Name: '/crm-sofia-web', Image: activeImg, Config: { Image: activeCfg, Labels: { 'com.docker.compose.project': project, 'com.docker.compose.service': service, 'com.docker.compose.project.working_dir': opRoot, 'com.docker.compose.project.config_files': activeCfgFile } }, HostConfig: { PortBindings: { '3000/tcp': [{ HostIp: '127.0.0.1', HostPort: '3020' }] }, Binds: [] }, NetworkSettings: { Ports: { '3000/tcp': [{ HostIp: '127.0.0.1', HostPort: '3020' }] }, Networks: { [project + '_default']: { NetworkID: netId, Aliases: ['asados-web', 'crm-sofia-web'] } } }, Mounts: [] }]) + '\\n')
   process.exit(0)
 }
 if (args[0] === 'image' && args[1] === 'inspect') {
-  const t = args[2], id = (t === candCfg || t === candImg) ? candImg : currentImg
+  const t = args[2], id = imageIdMap[t] || state.currentImageId || currentImg
   if (args.length === 5 && args[3] === '--format' && args[4] === '{{.Id}}') { process.stdout.write(id + '\\n'); process.exit(0) }
   if (args.length === 3) { process.stdout.write(JSON.stringify([{ Id: id, Architecture: 'amd64', Os: 'linux' }]) + '\\n'); process.exit(0) }
 }
-if ((args[0] === 'image' && args[1] === 'tag') || args[0] === 'tag' || (args[0] === 'compose' && args.includes('up'))) process.exit(0)
+if ((args[0] === 'image' && args[1] === 'tag') || args[0] === 'tag') process.exit(0)
+if (args[0] === 'compose' && args.includes('up')) {
+  const fIdx = args.indexOf('-f')
+  if (fIdx !== -1 && args[fIdx + 1]) {
+    state.currentConfigFile = args[fIdx + 1]
+    try {
+      const doc = JSON.parse(fs.readFileSync(args[fIdx + 1], 'utf8'))
+      if (doc.services && doc.services[service] && doc.services[service].image) {
+        state.currentConfigImage = doc.services[service].image
+        state.currentImageId = imageIdMap[state.currentConfigImage] || state.currentImageId
+      }
+    } catch (e) {}
+  }
+  fs.writeFileSync(${JSON.stringify(stateFile)}, JSON.stringify(state))
+  process.exit(0)
+}
 ${dispatcherCjs}
 const dispatcher = exports.createDockerDispatcher({ opRoot, project, service })
 dispatcher.setCurrentImageId(state.currentImageId); dispatcher.setCurrentConfigImage(state.currentConfigImage)
@@ -100,7 +119,7 @@ const res = dispatcher.runDocker(args)
 if (res.status === 0 && args[0] === 'compose' && args.includes('config')) {
   const doc = JSON.parse(res.stdout); doc.services[service].ports[0].host_ip = '127.0.0.1'; res.stdout = JSON.stringify(doc)
 }
-fs.writeFileSync(${JSON.stringify(stateFile)}, JSON.stringify({ currentImageId: dispatcher.getCurrentImageId(), currentConfigImage: dispatcher.getCurrentConfigImage() }))
+fs.writeFileSync(${JSON.stringify(stateFile)}, JSON.stringify({ currentImageId: dispatcher.getCurrentImageId(), currentConfigImage: dispatcher.getCurrentConfigImage(), currentConfigFile: state.currentConfigFile }))
 if (res.stdout) process.stdout.write(res.stdout); if (res.stderr) process.stderr.write(res.stderr); process.exit(res.status)
 `
   writeFileSync(bridgeScript, bridgeCode)
@@ -233,4 +252,32 @@ describe('web-only-p7-dry-run rollout and rollback rehearsal contracts', () => {
       expect(line).not.toContain(process.cwd())
     }
   })
+
+  it('case 7: two consecutive web-only promotions succeed without intervening standard deploy (H-11)', () => {
+    sb = createSandbox()
+    const CANDIDATE_2_REF = 'crm-sofia-web:candidate-2'
+    const CANDIDATE_2_ID = 'sha256:3333333333333333333333333333333333333333333333333333333333333333'
+
+    // First web-only promotion: from initial baseline to candidate 1
+    const res1 = sb.runDeploy(['deploy', '--web-only', FIXTURE_CANDIDATE_CONFIG_IMAGE])
+    expect(res1.status, `Deploy 1 failed: ${res1.stderr}`).toBe(0)
+
+    const state1 = readFileSync(join(sb.stateRoot, 'release.env'), 'utf8')
+    expect(state1).toContain(FIXTURE_CANDIDATE_IMAGE_ID)
+    const bundles1 = readdirSync(sb.stateRoot).filter((f) => f.startsWith('bundle-'))
+    expect(bundles1).toHaveLength(1)
+    const firstBundleDir = join(sb.stateRoot, bundles1[0])
+
+    // Second consecutive web-only promotion: preflight must accept active bundle-1 compose
+    const res2 = sb.runDeploy(['deploy', '--web-only', CANDIDATE_2_REF])
+    expect(res2.status, `Deploy 2 failed: ${res2.stderr}`).toBe(0)
+
+    const state2 = readFileSync(join(sb.stateRoot, 'release.env'), 'utf8')
+    expect(state2).toContain(CANDIDATE_2_ID)
+    expect(state2).toContain(`PREVIOUS_ID='${FIXTURE_CANDIDATE_IMAGE_ID}'`)
+    expect(state2).not.toContain(`BUNDLE_DIR='${firstBundleDir}'`)
+
+    const bundles2 = readdirSync(sb.stateRoot).filter((f) => f.startsWith('bundle-'))
+    expect(bundles2.length).toBeGreaterThanOrEqual(2)
+  }, 25000)
 })
