@@ -1426,6 +1426,154 @@ sys.exit(status)
 PY
 }
 
+# Official bootstrap for the isolated database. The reserved roles are unlocked by the
+# image's own superuser and the real GoTrue migration runner applies the auth schema
+# inside a disposable container that shares the database's none-namespace: no published
+# port, no pull, no hand-written DDL. Secrets reach the container only through 0600 files.
+db_only_bootstrap() {
+  python3 - "$@" <<'PY'
+import os, re, subprocess, sys, uuid
+exe, container, temp_root, auth_image = sys.argv[1:5]
+name = 'sofia-auth-' + uuid.uuid4().hex[:12]
+status, phase, cleanup, residue = 1, 'roles', 'not-created', 'not-created'
+created = []
+
+def docker(*args, timeout=90, stdin=None):
+    return subprocess.run([exe, *args], input=stdin, capture_output=True, text=True, timeout=timeout)
+
+def sql(statement, timeout=60):
+    return docker('exec', '-i', container, 'psql', '-h', '127.0.0.1', '-U', 'supabase_admin',
+                  '-d', 'postgres', '-v', 'ON_ERROR_STOP=1', '-q', '-f', '-', stdin=statement, timeout=timeout)
+
+try:
+    role_secret, jwt_secret, operator_secret = (uuid.uuid4().hex + uuid.uuid4().hex for _ in range(3))
+    result = sql("alter user supabase_auth_admin with password '%s';\n"
+                 "grant supabase_admin to postgres;\n" % role_secret)
+    if result.returncode:
+        raise ValueError('reserved role setup failed')
+    phase = 'auth'
+    values = {
+        'API_EXTERNAL_URL': 'http://127.0.0.1:9999', 'GOTRUE_API_HOST': '127.0.0.1',
+        'GOTRUE_API_PORT': '9999', 'GOTRUE_SITE_URL': 'http://127.0.0.1:3000',
+        'GOTRUE_DB_DRIVER': 'postgres', 'GOTRUE_DB_MIGRATIONS_PATH': '/usr/local/etc/auth/migrations',
+        'GOTRUE_DB_DATABASE_URL': 'postgres://supabase_auth_admin:%s@127.0.0.1:5432/postgres' % role_secret,
+        'GOTRUE_JWT_SECRET': jwt_secret, 'GOTRUE_JWT_EXP': '3600', 'GOTRUE_JWT_AUD': 'authenticated',
+        'GOTRUE_JWT_DEFAULT_GROUP_NAME': 'authenticated', 'GOTRUE_OPERATOR_TOKEN': operator_secret,
+        'GOTRUE_MAILER_AUTOCONFIRM': 'true', 'GOTRUE_EXTERNAL_EMAIL_ENABLED': 'true',
+        'GOTRUE_LOG_LEVEL': 'warn',
+    }
+    env_path = os.path.join(temp_root, 'auth.env')
+    with os.fdopen(os.open(env_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), 'w') as handle:
+        for key in sorted(values):
+            handle.write('%s=%s\n' % (key, values[key]))
+    result = docker('create', '--pull', 'never', '--network', 'container:' + container,
+                    '--name', name, '--label', 'org.sofia.sql-tests.owner=' + name,
+                    '--env-file', env_path, '--entrypoint', 'auth', auth_image, 'migrate')
+    cid = result.stdout.strip()
+    if result.returncode or not re.fullmatch(r'[0-9a-f]{64}', cid):
+        raise ValueError('auth container not created')
+    created.append(cid)
+    if docker('start', cid, timeout=600).returncode:
+        raise ValueError('auth migrations failed')
+    status = 0
+except Exception:
+    pass  # Never echo Docker output, migration logs or generated secrets.
+finally:
+    if created:
+        cleanup = 'removed'
+        for cid in created:
+            if docker('rm', '-f', '-v', cid).returncode:
+                status, cleanup = 1, 'failed'
+            inventory = docker('ps', '-aq', '--no-trunc', '--filter', 'id=' + cid)
+            if inventory.returncode or inventory.stdout.strip():
+                status, residue = 1, 'remaining'
+            else:
+                residue = 'absent-observed'
+print('db_only_bootstrap: operation=%s status=%s cleanup=%s container_residue=%s'
+      % (phase, 'ok' if status == 0 else 'failed', cleanup, residue))
+sys.exit(status)
+PY
+}
+
+# Hermetic bootstrap contract: a dedicated fake proves the argv, the 0600 env file and the
+# failure/cleanup paths without ever touching a daemon.
+db_only_bootstrap_self_check() {
+  local fake="$work/run/bootstrap-docker" case_name status
+  cat >"$fake" <<'PY'
+#!/usr/bin/python3
+import json, os, sys
+from pathlib import Path
+args = sys.argv[1:]
+log = Path(os.environ['DB_FAKE_LOG'])
+with log.open('a') as stream:
+    stream.write(json.dumps(args) + '\n')
+case = os.environ['DB_FAKE_CASE']
+cid = 'e' * 64
+if args[0] == 'exec':
+    body = sys.stdin.read()
+    assert args == ['exec', '-i', 'b' * 64, 'psql', '-h', '127.0.0.1', '-U', 'supabase_admin',
+                    '-d', 'postgres', '-v', 'ON_ERROR_STOP=1', '-q', '-f', '-'], args
+    assert 'alter user supabase_auth_admin with password' in body
+    assert 'grant supabase_admin to postgres;' in body
+    assert 'POSTGRES_PASSWORD' not in body
+    sys.exit(1 if case == 'roles-fail' else 0)
+elif args[0] == 'create':
+    envfile = Path(args[args.index('--env-file') + 1])
+    assert envfile.stat().st_mode & 0o777 == 0o600
+    body = envfile.read_text()
+    assert body.startswith('API_EXTERNAL_URL=http://127.0.0.1:9999\n')
+    assert 'postgres://supabase_auth_admin:' in body and 'GOTRUE_JWT_SECRET=' in body
+    assert body.count('GOTRUE_DB_MIGRATIONS_PATH=/usr/local/etc/auth/migrations') == 1
+    assert args[1:5] == ['--pull', 'never', '--network', 'container:' + 'b' * 64]
+    assert args[args.index('--entrypoint') + 1] == 'auth' and args[-1] == 'migrate'
+    assert '--tmpfs' not in args and '-p' not in args and '--publish' not in args
+    if case == 'create-fail': sys.exit(1)
+    print(cid)
+elif args[0] == 'start':
+    assert args == ['start', cid]
+    sys.exit(3 if case == 'auth-fail' else 0)
+elif args[0] == 'rm':
+    assert args == ['rm', '-f', '-v', cid]
+    sys.exit(1 if case == 'rm-fail' else 0)
+else:
+    assert args == ['ps', '-aq', '--no-trunc', '--filter', 'id=' + cid]
+    print(cid if case == 'residue' else '')
+PY
+  chmod +x "$fake"
+  declare -F db_only_bootstrap >/dev/null || die 'DB-only bootstrap helper missing'
+  for case_name in ok roles-fail create-fail auth-fail rm-fail residue; do
+    export DB_FAKE_CASE="$case_name" DB_FAKE_LOG="$work/run/bootstrap-$case_name.jsonl"
+    : >"$DB_FAKE_LOG"
+    status=0
+    db_only_bootstrap "$fake" "$(printf 'b%.0s' {1..64})" "$work/run" local-auth-image \
+      >"$work/run/bootstrap-output" 2>&1 || status=$?
+    python3 - "$DB_FAKE_LOG" "$case_name" "$status" "$work/run/bootstrap-output" <<'PY'
+import json, re, sys
+from pathlib import Path
+rows = [json.loads(line) for line in Path(sys.argv[1]).read_text().splitlines()]
+case, status = sys.argv[2], int(sys.argv[3])
+ops = [row[0] for row in rows]
+report = Path(sys.argv[4]).read_text()
+match = re.fullmatch(
+    r'db_only_bootstrap: operation=(roles|auth) status=(ok|failed) '
+    r'cleanup=(not-created|removed|failed) container_residue=(not-created|absent-observed|remaining)\n', report)
+assert match, 'bootstrap report leaked output or omitted metadata'
+assert (status == 0) == (case == 'ok'), (case, status, report)
+assert match.group(1) == ('roles' if case == 'roles-fail' else 'auth'), (case, report)
+assert ('create' in ops) == (case != 'roles-fail'), (case, ops)
+assert ('start' in ops) == (case in ('ok', 'auth-fail', 'rm-fail', 'residue')), (case, ops)
+expected = {'ok': ('removed', 'absent-observed'), 'roles-fail': ('not-created', 'not-created'),
+            'create-fail': ('not-created', 'not-created'), 'auth-fail': ('removed', 'absent-observed'),
+            'rm-fail': ('failed', 'absent-observed'), 'residue': ('removed', 'remaining')}[case]
+assert match.groups()[2:] == expected, (case, report)
+assert all('postgres://' not in arg and 'PASSWORD' not in arg.upper() for row in rows for arg in row), 'bootstrap argv leaked a secret'
+assert ('rm' in ops) == (case in ('ok', 'auth-fail', 'rm-fail', 'residue'))
+PY
+  done
+  unset DB_FAKE_CASE DB_FAKE_LOG
+  log 'db_only_bootstrap_self_check=pass (fake-only: reserved-role SQL, auth migrate exit, 0600 env argv, own-container cleanup and residue classification)'
+}
+
 # Hermetic DB-only lifecycle contract; these fixtures never contact a daemon.
 db_only_self_check() {
   local fake="$work/run/db-only-docker" case_name status deadline
@@ -1675,6 +1823,7 @@ PY
 
 environment_self_check
 db_only_self_check
+db_only_bootstrap_self_check
 tap_self_check
 redact_self_check
 normalization_self_check
