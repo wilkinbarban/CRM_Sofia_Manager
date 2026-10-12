@@ -1336,6 +1336,27 @@ def inspect_owned():
         raise ValueError('ownership mismatch')
     return doc
 
+def validate_lifecycle(doc, running):
+    host, state = doc['HostConfig'], doc['State']
+    if state['Status'] != ('running' if running else 'created') or state['Running'] is not running:
+        raise ValueError('unexpected lifecycle state')
+    if (host['Tmpfs'] != {data: ''} or host.get('Binds') not in (None, [])
+            or host.get('Mounts') not in (None, [])
+            or doc['Config'].get('Volumes') not in (None, {}, {data: {}})):
+        raise ValueError('unexpected data mount declaration')
+    mounts = doc['Mounts']
+    if not isinstance(mounts, list): raise ValueError('invalid effective mounts')
+    # Docker create may defer the requested tmpfs; only the stopped gate permits [].
+    # Never infer an effective post-start mount from HostConfig alone.
+    if mounts or running:
+        mount, = mounts
+        if (mount['Type'] != 'tmpfs' or mount['Destination'] != data
+                or mount['Source'] != '' or mount['RW'] is not True):
+            raise ValueError('only the planned temporary data mount is permitted')
+    if (doc['Id'] != cid or doc['Image'] != image or host['NetworkMode'] != 'none'
+            or host['PortBindings'] not in (None, {}) or host['PublishAllPorts'] is not False):
+        raise ValueError('isolation mismatch')
+
 def interrupted(signum, frame):
     raise RuntimeError('interrupted')
 
@@ -1367,21 +1388,11 @@ try:
     if result.returncode or not re.fullmatch(r'[0-9a-f]{64}', cid):
         raise ValueError('create failed')
     phase = 'inspect'
-    doc = inspect_owned()
-    host = doc['HostConfig']
-    state = doc['State']
-    if state['Status'] != 'created' or state['Running'] is not False:
-        raise ValueError('container must be stopped and newly created')
-    mount, = doc['Mounts']
-    if (mount['Type'] != 'tmpfs' or mount['Destination'] != data
-            or mount['Source'] != '' or mount['RW'] is not True
-            or host['Tmpfs'] != {data: ''}):
-        raise ValueError('only the planned temporary data mount is permitted')
-    if (doc['Id'] != cid or doc['Image'] != image or host['NetworkMode'] != 'none'
-            or host['PortBindings'] not in (None, {}) or host['PublishAllPorts'] is not False):
-        raise ValueError('isolation mismatch')
+    validate_lifecycle(inspect_owned(), False)
     phase = 'start'
     if docker('start', cid).returncode: raise ValueError('start failed')
+    phase = 'post-start-inspect'
+    validate_lifecycle(inspect_owned(), True)
     phase = 'readiness'
     wait_ready(readiness_seconds)
     if body:
@@ -1633,10 +1644,12 @@ if args[0] == 'inspect':
     print(json.dumps([{
         'Id': 'b' * 64, 'Name': '/' + name, 'Image': 'sha256:' + 'a' * 64,
         'Config': {'Labels': {'org.sofia.sql-tests.owner': name}},
-        'HostConfig': {'NetworkMode': 'none', 'PortBindings': None,
+        'HostConfig': {'NetworkMode': 'none', 'PortBindings': None, 'Binds': None, 'Mounts': None,
                        'PublishAllPorts': False, 'Tmpfs': {'/var/lib/postgresql/data': ''}},
-        'State': {'Status': 'created', 'Running': False},
-        'Mounts': [{'Type': 'tmpfs', 'Source': '', 'Destination': '/var/lib/postgresql/data', 'RW': True}]}]))
+        'State': {'Status': 'running' if any(row['argv'][0] == 'start' for row in history) else 'created',
+                  'Running': any(row['argv'][0] == 'start' for row in history)},
+        'Mounts': ([{'Type': 'tmpfs', 'Source': '', 'Destination': '/var/lib/postgresql/data', 'RW': True}]
+                   if any(row['argv'][0] == 'start' for row in history) else [])}]))
 if any('select 1 from pg_roles' in arg for arg in args): print('1')
 if "to_regclass('storage.buckets')" in stdin: print('t')
 if 'select current_database()' in stdin: print('postgres')
@@ -2089,13 +2102,26 @@ elif args[0] == 'inspect':
     label = create[create.index('--label') + 1].split('=', 1)
     doc = {'Id': cid, 'Name': '/' + create[create.index('--name') + 1],
            'Image': image, 'Config': {'Labels': dict([label])},
-           'HostConfig': {'NetworkMode': 'none', 'PortBindings': None,
+           'HostConfig': {'NetworkMode': 'none', 'PortBindings': None, 'Binds': None, 'Mounts': None,
                           'PublishAllPorts': False,
                           'Tmpfs': {'/var/lib/postgresql/data': ''}},
            'State': {'Status': 'created', 'Running': False},
            'Mounts': [{'Type': 'tmpfs', 'Source': '', 'Destination': '/var/lib/postgresql/data', 'RW': True}]}
-    # Only the first inspect is the start gate; cleanup must recheck ownership.
-    if not any(row[0] == 'inspect' for row in history):
+    started = any(row[0] == 'start' for row in history)
+    if started: doc['State'] = {'Status': 'running', 'Running': True}
+    post_gate = started and sum(row[0] == 'inspect' for row in history) == 1
+    pre_gate = not any(row[0] == 'inspect' for row in history)
+    if pre_gate and case not in ('bind', 'volume', 'pre-tmpfs') and not case.startswith('mount-'):
+        doc['Mounts'] = []  # Observed Docker create: requested tmpfs is not yet effective.
+    # Inject lifecycle faults at their gate only; cleanup separately rechecks ownership.
+    if (pre_gate and not case.startswith('post-')) or (post_gate and case.startswith('post-')):
+        original_case = case
+        case = case.removeprefix('post-')
+        if case == 'mount-empty': doc['Mounts'] = []
+        if case == 'mount-null': doc['Mounts'] = None
+        if case == 'binds': doc['HostConfig']['Binds'] = ['/host:/var/lib/postgresql/data']
+        if case == 'host-mounts': doc['HostConfig']['Mounts'] = [{'Type': 'volume', 'Target': '/extra'}]
+        if case == 'volumes': doc['Config']['Volumes'] = {'/extra': {}}
         if case == 'empty': doc['HostConfig']['PortBindings'] = {}
         if case == 'ports': doc['HostConfig']['PortBindings'] = {'5432/tcp': [{'HostPort': '5432'}]}
         if case == 'network': doc['HostConfig']['NetworkMode'] = 'host'
@@ -2104,7 +2130,7 @@ elif args[0] == 'inspect':
         if case == 'pinned': doc['Image'] = 'sha256:' + 'c' * 64
         if case == 'name': doc['Name'] = '/foreign'
         if case == 'missing': del doc['HostConfig']['PortBindings']
-        if case == 'running': doc['State'] = {'Status': 'created', 'Running': True}
+        if case == 'running': doc['State']['Running'] = not started
         if case == 'state-missing': del doc['State']
         if case == 'state-type': doc['State'] = []
         if case == 'status-missing': del doc['State']['Status']
@@ -2120,7 +2146,9 @@ elif args[0] == 'inspect':
         if case == 'mount-source': doc['Mounts'][0]['Source'] = '/host'
         if case == 'mount-rw': doc['Mounts'][0]['RW'] = False
         if case == 'tmpfs': doc['HostConfig']['Tmpfs'] = {}
-    if case == 'owner' or (case == 'ready-owner' and any(row[0] == 'exec' for row in history)):
+        case = original_case
+    if (case == 'owner' or (case == 'post-owner' and started)
+            or (case == 'ready-owner' and any(row[0] == 'exec' for row in history))):
         doc['Config']['Labels'] = {'foreign': 'owner'}
     print('malformed' if case == 'malformed' else json.dumps([doc]))
 elif args[0] == 'start' and case == 'start':
@@ -2157,6 +2185,11 @@ PY
   chmod +x "$fake"
   declare -F db_only_session >/dev/null || die 'DB-only lifecycle helper missing'
   local cases=(good empty running state-missing state-type status-missing running-missing running-type status
+    pre-tmpfs binds host-mounts volumes mount-null
+    post-bind post-volume post-mount-missing post-mount-type post-mount-path post-mount-empty post-mount-null
+    post-owner post-network post-pinned post-id post-name post-running post-status post-ports post-publish post-tmpfs
+    post-state-missing post-state-type post-status-missing post-running-missing post-running-type
+    post-binds post-host-mounts post-volumes post-mount-extra post-mount-source post-mount-rw
     volnull volempty volbad volmissing voltype volvalues voljson
     configmissing confignull configlist configstring confignumber configbool bind volume mount-extra mount-missing
     mount-type mount-path mount-source mount-rw tmpfs ports network publish owner malformed id pinned name missing create partial start remove image residue inventory
@@ -2169,6 +2202,7 @@ PY
     if [[ "$case_name" == good ]]; then readiness_args=(); fi
     # Multi-probe cases need a cap that survives several fake process spawns.
     case "$case_name" in ready-retry | ready-sentinel | ready-refused) readiness_args=(5) ;; ready-hang) readiness_args=(20) ;; esac
+    if [[ "$case_name" == post-* ]]; then readiness_args+=("printf called >'$work/run/$case_name-body'"); fi
     db_only_session "$fake" local-postgres "$work/run" - ${readiness_args[@]+"${readiness_args[@]}"} \
       >"$work/run/db-only-output" 2>&1 || status=$?
     [[ -s "$work/run/db-only-output" ]] || die 'DB-only helper omitted its bounded report'
@@ -2178,17 +2212,20 @@ from pathlib import Path
 rows = [json.loads(line) for line in Path(sys.argv[1]).read_text().splitlines()]
 case, status = sys.argv[2], int(sys.argv[3])
 ops = [row[0] for row in rows]
-accepted = ('good', 'empty', 'volnull', 'volempty', 'volmissing', 'ready-retry', 'ready-sentinel', 'ready-refused')
+accepted = ('good', 'empty', 'pre-tmpfs', 'volnull', 'volempty', 'volmissing', 'ready-retry', 'ready-sentinel', 'ready-refused')
 readiness_failed = ('ready-reject', 'ready-offline', 'ready-invalid', 'ready-unexpected', 'ready-hang')
-started = accepted + readiness_failed + ('start', 'remove', 'residue', 'inventory', 'ready-owner')
+post_rejected = case.startswith('post-')
+started = accepted + readiness_failed + ('start', 'remove', 'residue', 'inventory', 'ready-owner') + ((case,) if post_rejected else ())
+if post_rejected: assert not Path(sys.argv[1]).with_name(case + '-body').exists(), 'unsafe callback ran'
+probe_expected = case in started and case != 'start' and not post_rejected
 image_rejected = ('image', 'volbad', 'voltype', 'volvalues', 'voljson',
                   'configmissing', 'confignull', 'configlist', 'configstring', 'confignumber', 'configbool')
 assert (status == 0) == (case in accepted), (case, status)
 assert ('start' in ops) == (case in started), (case, ops)
-assert ('exec' in ops) == (case in started and case != 'start'), ('readiness probe missing', case, ops)
+assert ('exec' in ops) == probe_expected, ('readiness probe missing', case, ops)
 report = Path(sys.argv[4]).read_text()
 match = re.fullmatch(
-    r'db_only: operation=(image|create|inspect|start|readiness) status=(ok|failed) '
+    r'db_only: operation=(image|create|inspect|start|post-start-inspect|readiness) status=(ok|failed) '
     r'cleanup=(not-created|unverified|removed|failed) container_residue=(not-created|unknown|remaining|absent-observed) '
     r'readiness=(not-checked|ready|deadline|probe-failed|probe-timeout)\n', report)
 assert match, 'report leaked output or omitted metadata'
@@ -2198,6 +2235,8 @@ elif case in ('create', 'partial'):
     expected_phase = 'create'
 elif case == 'start':
     expected_phase = 'start'
+elif post_rejected:
+    expected_phase = 'post-start-inspect'
 elif case in started:
     expected_phase = 'readiness'
 else:
@@ -2206,22 +2245,23 @@ assert match.groups()[:2] == (expected_phase, 'ok' if status == 0 else 'failed')
 expected_cleanup = {
     'owner': ('unverified', 'unknown'),
     'ready-owner': ('unverified', 'unknown'),
+    'post-owner': ('unverified', 'unknown'),
     'malformed': ('unverified', 'unknown'),
     'remove': ('failed', 'remaining'),
     'inventory': ('removed', 'unknown'),
     'residue': ('removed', 'remaining'),
 }.get(case, ('not-created', 'not-created') if case in image_rejected else ('removed', 'absent-observed'))
 assert match.groups()[2:4] == expected_cleanup, (case, report)
-expected_ready = ('not-checked' if case not in started or case == 'start' else {
+expected_ready = ('not-checked' if not probe_expected else {
     'ready-offline': 'deadline', 'ready-hang': 'probe-timeout',
     'ready-reject': 'probe-failed', 'ready-invalid': 'probe-failed', 'ready-unexpected': 'probe-failed',
 }.get(case, 'ready'))
 assert match.group(5) == expected_ready, (case, report)
 probes = [row for row in rows if row[0] == 'exec']
-assert bool(probes) == (case in started and case != 'start'), (case, ops)
+assert bool(probes) == probe_expected, (case, ops)
+if case in started and case != 'start': assert ops[3:5] == ['start', 'inspect'], (case, ops)
 if probes:
-    assert ops[3:5] == ['start', 'exec'], (case, ops)
-    assert ops[4:4 + len(probes)] == ['exec'] * len(probes)
+    assert ops[5:5 + len(probes)] == ['exec'] * len(probes)
     assert all(row == ['exec', 'b' * 64, 'psql', '-h', '127.0.0.1', '-p', '5432',
                        '-U', 'supabase_admin', '-d', 'postgres', '-Atc',
                        "select 1 from pg_roles where rolname = 'supabase_auth_admin'"]
@@ -2241,7 +2281,7 @@ else:
     assert create[7:10] == ['--label', 'org.sofia.sql-tests.owner=' + create[6], '--env-file']
     assert create[11:] == ['--tmpfs', '/var/lib/postgresql/data', 'sha256:' + 'a' * 64]
     assert ops[:3] == ['image', 'create', 'inspect']
-    assert ('rm' in ops) == (case not in ('owner', 'malformed', 'ready-owner'))
+    assert ('rm' in ops) == (case not in ('owner', 'malformed', 'ready-owner', 'post-owner'))
     if 'start' in ops: assert rows[3] == ['start', 'b' * 64]
     if 'rm' in ops: assert next(row for row in rows if row[0] == 'rm') == ['rm', '-f', '-v', 'b' * 64]
 PY
@@ -2323,7 +2363,7 @@ PY
 import json, sys
 from pathlib import Path
 ops = [json.loads(line)[0] for line in Path(sys.argv[1]).read_text().splitlines()]
-assert ops == ['image', 'create', 'inspect', 'start', 'exec', 'inspect', 'rm', 'ps'], ops
+assert ops == ['image', 'create', 'inspect', 'start', 'inspect', 'exec', 'inspect', 'rm', 'ps'], ops
 PY
   export DB_FAKE_CASE=ready-owner DB_FAKE_LOG="$work/run/db-only-body-owner.jsonl"
   : >"$DB_FAKE_LOG"
@@ -2333,7 +2373,7 @@ PY
   [[ "$status" == 1 && "$(<"$work/run/db-only-output")" == 'db_only: operation=body status=failed cleanup=unverified container_residue=unknown readiness=ready' ]] \
     || die 'a body failure hid an unverified cleanup'
   unset DB_FAKE_CASE DB_FAKE_LOG
-  log 'db_only_self_check=pass (fake-only: bootstrap-sentinel readiness/order/deadline, caller-owned-credentials, bounded-body, pinned-image/volumes, argv, stopped-state, tmpfs-only, pre-start-isolation, exact-owned-cleanup, bounded-reporting; not real residue proof, body timeout untested)'
+  log 'db_only_self_check=pass (fake-only: bootstrap-sentinel readiness/order/deadline, caller-owned-credentials, bounded-body, pinned-image/volumes, argv, stopped-state, tmpfs-only, deferred-prestart-mounts, post-start-effective-mount/isolation-gate-before-SQL/body, exact-owned-cleanup, bounded-reporting; not real residue proof, body timeout untested)'
 }
 
 # The session captures callback output; preserve only a private report and emit strict
