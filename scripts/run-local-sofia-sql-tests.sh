@@ -67,15 +67,12 @@ repo_root="$(cd -- "$(dirname -- "$0")/.." && pwd -P)"
 readonly repo_root
 cli="$repo_root/node_modules/.bin/supabase"
 readonly tests_dir_rel='supabase/tests'
-readonly protected_project_ref='xvzdxoktwnzmxsfizkxo'
 
 # The hosted migration runner applies ownership transfers to supabase_admin. The local
 # CLI migrates as postgres, so the temporary copy drops exactly these statements. The
 # expected count is asserted so a new transfer cannot change the local chain silently.
 readonly expected_owner_transfers=8
 
-readonly start_timeout_seconds=1200
-readonly reset_timeout_seconds=900
 readonly psql_timeout_seconds=300
 readonly stop_timeout_seconds=300
 readonly docker_query_timeout_seconds=15
@@ -2399,7 +2396,17 @@ legacy_helpers_self_check() {
   log 'legacy_helpers_self_check: obsolete staging/loopback helpers absent'
 }
 
+# Reject executable legacy CLI start/reset commands, not shared diagnostic fixtures.
+legacy_execution_self_check() {
+  if grep -Eq '^[[:space:]]*[^#]*"\$cli"[[:space:]]+(start|db[[:space:]]+reset)([[:space:]]|$)' \
+    "$repo_root/scripts/run-local-sofia-sql-tests.sh"; then
+    die 'obsolete Supabase CLI start/reset execution remains in the runner'
+  fi
+  log 'legacy_execution_self_check: obsolete Supabase CLI start/reset execution absent'
+}
+
 legacy_helpers_self_check
+legacy_execution_self_check
 environment_self_check
 db_only_self_check
 db_only_bootstrap_self_check
@@ -2424,9 +2431,6 @@ exit $?
 # Legacy execution is deliberately unreachable pending bounded deletion slices.
 [[ "$(git rev-parse --show-toplevel 2>/dev/null)" == "$repo_root" ]] \
   || die 'repository root mismatch; refusing to run'
-[[ -x "$cli" ]] || die "missing pinned Supabase CLI binary: $cli"
-readonly cli
-[[ -f "$repo_root/supabase/config.toml" ]] || die 'missing supabase/config.toml'
 for suite in "${suites[@]}"; do
   [[ -f "$repo_root/$suite" ]] || die "missing suite file: $suite"
 done
@@ -2448,140 +2452,6 @@ stage_temporary_inputs "$repo_root" "$work/project" "${suites[@]}"
 normalize_temporary_tree "$work/project" "$project_id" "$expected_owner_transfers" \
   "api=$api_port" "db=$db_port" "shadow=$shadow_port" "pooler=$pooler_port" \
   "studio=$studio_port" "smtp=$smtp_port" "analytics=$analytics_port" "inspector=$inspector_port"
-
-# ---------------------------------------------------------------------------
-# Start, migrate, and seed the disposable stack.
-# ---------------------------------------------------------------------------
-log "starting disposable stack (project_id=$project_id, db_port=$db_port)"
-if ! run_bounded 'supabase start' "$start_timeout_seconds" "$cli" start --workdir "$work/project" \
-  --exclude studio,edge-runtime \
-  >"$work/start.log" 2>&1; then
-  log 'error: operation=supabase_start status=failed' >&2
-  die 'disposable local Supabase failed to start'
-fi
-stack_started=true
-
-if ! run_bounded 'initial supabase db reset' "$reset_timeout_seconds" \
-  "$cli" db reset --local --workdir "$work/project" >"$work/reset.log" 2>&1; then
-  log 'error: operation=initial_supabase_db_reset status=failed' >&2
-  die 'product migration chain or seed failed during the initial local reset'
-fi
-
-if ! timeout -k 5 "$docker_query_timeout_seconds" "$cli" status --workdir "$work/project" -o env >"$work/status.env" 2>/dev/null; then
-  log 'error: operation=supabase_status status=failed' >&2
-  die 'could not read disposable stack status'
-fi
-
-status_value() {
-  sed -n "s/^${1}=\"\{0,1\}\([^\"[:space:]]*\)\"\{0,1\}$/\1/p" "$work/status.env" | head -1
-}
-api_url="$(status_value API_URL)"
-db_url="$(status_value DB_URL)"
-
-if [[ "$api_url" != "http://127.0.0.1:$api_port" || "$db_url" != *"@127.0.0.1:$db_port/postgres"* ]]; then
-  die 'safety gate rejected a non-disposable local target'
-fi
-grep -Fq "$protected_project_ref" "$work/status.env" \
-  && die 'safety gate rejected a protected hosted project reference'
-
-db_container="$(timeout -k 5 "$docker_query_timeout_seconds" docker ps \
-  --filter "label=com.supabase.cli.project=$project_id" \
-  --format '{{.Names}}' 2>/dev/null | grep -x "supabase_db_$project_id" || true)"
-[[ -n "$db_container" ]] || die "could not find the disposable database container for $project_id"
-
-owner_label="$(timeout -k 5 "$docker_query_timeout_seconds" docker inspect --format '{{index .Config.Labels "com.supabase.cli.project"}}' "$db_container" 2>/dev/null || true)"
-[[ "$owner_label" == "$project_id" ]] || die 'database container ownership check failed'
-
-db_image="$(timeout -k 5 "$docker_query_timeout_seconds" docker inspect --format '{{.Config.Image}}' "$db_container" 2>/dev/null || true)"
-grep -q 'supabase/postgres:' <<<"$db_image" || die 'disposable database container is not a local Supabase postgres image'
-
-# The connection string is built here, kept in this process, and passed only to psql
-# (as its connection target and as the dblink variable). It never reaches stdout, and
-# every failure excerpt is redacted before printing.
-db_password="$(timeout -k 5 "$docker_query_timeout_seconds" docker exec "$db_container" printenv POSTGRES_PASSWORD 2>/dev/null || true)"
-[[ -n "$db_password" ]] || die 'could not read the disposable database password'
-conninfo="$(python3 -c 'import sys, urllib.parse; print("postgresql://postgres:%s@127.0.0.1:5432/postgres" % urllib.parse.quote(sys.argv[1], safe=""))' "$db_password")"
-unset db_password
-
-container_work="/tmp/sofia-sql-suites-$project_id"
-
-# Fail fast when the disposable connection string cannot reach its own database.
-# Without this probe every suite would abort before its first assertion and the run
-# would report zero-assertion results instead of a clear connection failure.
-if ! run_bounded 'disposable db connectivity probe' 60 docker exec "$db_container" \
-  psql --no-psqlrc --quiet --pset pager=off -d "$conninfo" -tAc 'select 1' \
-  >/dev/null 2>&1; then
-  log 'error: operation=db_connectivity_probe status=failed' >&2
-  die 'the disposable database connection string did not connect; refusing to run suites'
-fi
-
-# ---------------------------------------------------------------------------
-# Run each suite against its own freshly reset database.
-# ---------------------------------------------------------------------------
-total_tests=0
-total_failed=0
-failed_suites=()
-
-for suite in "${suites[@]}"; do
-  name="$(basename -- "$suite")"
-  log "== suite: $name"
-
-  if ! run_bounded "supabase db reset before $name" "$reset_timeout_seconds" \
-    "$cli" db reset --local --workdir "$work/project" >"$work/run/$name.reset.log" 2>&1; then
-    log "error: operation=suite_db_reset suite=$name status=failed" >&2
-    die "product migration chain or seed failed before $name"
-  fi
-
-  raw="$work/run/$name.raw"
-  tap="$work/run/$name.tap"
-  set +e
-  # psql needs its own connection target: without -d it falls back to the container's
-  # local socket as root, which fails peer authentication before any assertion runs.
-  # -t -A keeps pgTAP's TAP lines free of psql headers and padding; ON_ERROR_STOP still aborts.
-  run_bounded "psql $name" "$psql_timeout_seconds" docker exec "$db_container" \
-    psql --no-psqlrc --quiet --tuples-only --no-align --pset pager=off -v ON_ERROR_STOP=1 \
-    -d "$conninfo" \
-    -v "runtime_dblink_conninfo=$conninfo" \
-    -f "$container_work/supabase/tests/$name" >"$raw" 2>&1
-  psql_status=$?
-  set -e
-
-  filter_tap "$raw" >"$tap"
-
-  set +e
-  tap_output="$(validate_tap "$tap" 2>"$work/run/$name.tap.err")"
-  tap_status=$?
-  set -e
-
-  tests="$(sed -nE 's/^TAP_RESULT tests=([0-9]+) failed=([0-9]+) plan=([0-9]+) problems=([0-9]+)$/\1/p' <<<"$tap_output" | head -1)"
-  failed="$(sed -nE 's/^TAP_RESULT tests=[0-9]+ failed=([0-9]+) .*$/\1/p' <<<"$tap_output" | head -1)"
-  tests="${tests:-0}"
-  failed="${failed:-0}"
-  total_tests=$((total_tests + tests))
-  total_failed=$((total_failed + failed))
-
-  if [[ "$psql_status" -eq 0 && "$tap_status" -eq 0 ]]; then
-    log "PASS $name (assertions=$tests failed=0 psql_exit=0)"
-  else
-    failed_suites+=("$name")
-    log "FAIL $name (assertions=$tests failed=$failed psql_exit=$psql_status tap_exit=$tap_status)"
-    if [[ "$psql_status" -ne 0 ]]; then
-      log "error: operation=psql suite=$name status=failed exit=$psql_status" >&2
-      log "note: psql exit $psql_status aborts this suite only; later suites still run"
-    fi
-    if [[ -s "$work/run/$name.tap.err" ]]; then
-      log "tap diagnostics:"
-      cat "$work/run/$name.tap.err"
-    fi
-  fi
-done
-
-log "summary: suites=${#suites[@]} assertions=$total_tests failed_assertions=$total_failed failing_suites=${#failed_suites[@]}"
-if ((${#failed_suites[@]})); then
-  printf 'failing suites: %s\n' "${failed_suites[*]}" >&2
-  exit 1
-fi
-log 'all selected suites passed'
 }
 
 sanitized_exec /nonexistent /tmp /bin/bash --noprofile --norc -c \
