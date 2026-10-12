@@ -33,9 +33,6 @@
 # `owner to supabase_admin` transfers that the hosted runner applies but the local CLI
 # cannot reproduce. See the printed normalization line for the exact counts.
 #
-# Inside its own container the disposable database also gets one ephemeral loopback password
-# rule (see ensure_loopback_password_rule); it never reaches the host or the repository.
-
 # Supported: execute with trusted Bash startup hooks and exported functions.
 # For clean Bash startup, launch from a trusted caller with an empty environment:
 # /usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/bin /bin/bash --noprofile --norc \
@@ -2393,6 +2390,16 @@ PY
   return "$status"
 }
 
+# Guard this deletion slice against reintroducing legacy definitions or direct calls.
+legacy_helpers_self_check() {
+  if grep -Eq '^[[:space:]]*(stage_supabase_tree|suite_staged_paths|ensure_staged_suite|ensure_loopback_password_rule)([[:space:]]|\(\))' \
+    "$repo_root/scripts/run-local-sofia-sql-tests.sh"; then
+    die 'obsolete staging/loopback helpers remain in the runner'
+  fi
+  log 'legacy_helpers_self_check: obsolete staging/loopback helpers absent'
+}
+
+legacy_helpers_self_check
 environment_self_check
 db_only_self_check
 db_only_bootstrap_self_check
@@ -2496,123 +2503,7 @@ db_password="$(timeout -k 5 "$docker_query_timeout_seconds" docker exec "$db_con
 conninfo="$(python3 -c 'import sys, urllib.parse; print("postgresql://postgres:%s@127.0.0.1:5432/postgres" % urllib.parse.quote(sys.argv[1], safe=""))' "$db_password")"
 unset db_password
 
-# ---------------------------------------------------------------------------
-# Staged suite tree. psql runs inside the database container and resolves a relative
-# `\ir` against the including file, so selected suites and their includes must exist there.
-# `supabase db reset` may replace the database container, and a replaced container
-# starts with an empty writable layer, so the tree is staged, verified, and staged again
-# whenever a reset discarded it. The copy names the source directory contents (SRC/.)
-# into a pre-created destination, because `docker cp DIR DEST` nests DIR under DEST once
-# DEST exists and a second staging would then land one level too deep.
-# ---------------------------------------------------------------------------
 container_work="/tmp/sofia-sql-suites-$project_id"
-readonly stage_timeout_seconds=120
-readonly preflight_timeout_seconds=60
-
-stage_supabase_tree() {
-  run_bounded 'stage supabase tree' "$stage_timeout_seconds" docker exec "$db_container" \
-    mkdir -p "$container_work/supabase" >/dev/null 2>&1 \
-    || die "could not prepare $container_work inside $db_container"
-  run_bounded 'stage supabase tree' "$stage_timeout_seconds" docker cp \
-    "$work/project/supabase/." "$db_container:$container_work/supabase" >/dev/null 2>&1 \
-    || die "could not copy the supabase tree into $db_container"
-}
-
-# Prints the in-container paths a suite needs: the suite file itself plus every relative
-# `\ir` include it pulls in, because psql resolves those next to the including file.
-suite_staged_paths() {
-  local repo_suite=$1 name=$2 target resolved
-  printf '%s\n' "$container_work/supabase/tests/$name"
-  while read -r target; do
-    [[ -n "$target" ]] || continue
-    [[ "$target" != /* ]] || die "suite $name uses an absolute include: $target"
-    resolved="$(realpath -m --relative-to="$repo_root" "$(dirname -- "$repo_suite")/$target")"
-    [[ "$resolved" == supabase/* ]] || die "suite $name includes a path outside supabase/: $resolved"
-    printf '%s\n' "$container_work/$resolved"
-  done < <(sed -nE 's/^[[:space:]]*\\ir[[:space:]]+([^[:space:]]+).*$/\1/p' "$repo_suite")
-}
-
-# Bounded existence preflight before psql. A missing file makes psql abort on its first
-# statement, and the suite would then report zero assertions instead of naming the real
-# problem. One restaging attempt covers a container replaced by the previous reset;
-# `restaged=` records whether that staging was actually needed.
-# shellcheck disable=SC2016 # the in-container sh expands these, never the host bash
-ensure_staged_suite() {
-  local suite=$1 name=$2 attempt log_file
-  log_file="$work/run/$name.staged.log"
-  local -a paths=()
-  mapfile -t paths < <(suite_staged_paths "$repo_root/$suite" "$name")
-  for attempt in initial restaged; do
-    if run_bounded "staged files $name" "$preflight_timeout_seconds" docker exec "$db_container" \
-      sh -c '
-        for path in "$@"; do
-          [ -f "$path" ] || exit 1
-        done
-      ' staged-files "${paths[@]}" >/dev/null 2>&1; then
-      log "preflight $name staged_files=${#paths[@]} restaged=$([[ "$attempt" == initial ]] && echo no || echo yes)"
-      return 0
-    fi
-    [[ "$attempt" == initial ]] || break
-    log "preflight $name staged_tree=incomplete action=restaging"
-    stage_supabase_tree
-  done
-  log "error: operation=ensure_staged_suite suite=$name status=missing_files" >&2
-  die 'staged suite files are missing inside container after restaging'
-}
-
-# One ephemeral loopback password rule for this disposable database only: the image lists
-# `host all all 127.0.0.1/32 trust` before its scram rules, so an in-container loopback
-# connection never exchanges a password and dblink_connect then refuses it for the
-# non-superuser `postgres` role the suites run as. The prepended rule covers exactly
-# postgres->postgres on loopback and leaves every other HBA line, role and service untouched;
-# it lives only in this container and is re-applied idempotently after each reset.
-readonly loopback_rule_marker='# sofia-sql-local-tests: loopback password authentication'
-readonly loopback_rule="$loopback_rule_marker"$'\n'"host postgres postgres 127.0.0.1/32 scram-sha-256"
-
-# shellcheck disable=SC2016 # the in-container sh expands these, never the host bash
-ensure_loopback_password_rule() {
-  local paths hba_file data_directory proof
-  paths="$(timeout -k 5 "$docker_query_timeout_seconds" docker exec "$db_container" psql --no-psqlrc -X -tA -d "$conninfo" -c \
-    "select current_setting('hba_file')||'|'||current_setting('data_directory')" 2>/dev/null || true)"
-  IFS='|' read -r hba_file data_directory <<<"$paths"
-  [[ -n "$hba_file" && -n "$data_directory" ]] || die 'could not read the disposable hba_file and data_directory'
-
-  if timeout -k 5 "$docker_query_timeout_seconds" docker exec "$db_container" grep -qF "$loopback_rule_marker" "$hba_file" >/dev/null 2>&1; then
-    log "loopback_password_rule=already-present hba=$hba_file"
-  else
-    run_bounded 'loopback password rule' "$preflight_timeout_seconds" docker exec -u postgres "$db_container" \
-      sh -c '
-        set -e
-        hba="$1"
-        tmp="$hba.sofia-sql-local-tests.new"
-        printf "%s\n" "$2" >"$tmp"
-        cat "$hba" >>"$tmp"
-        mv "$tmp" "$hba"
-        pg_ctl reload -D "$3"
-      ' sofia-loopback-rule "$hba_file" "$loopback_rule" "$data_directory" >/dev/null 2>&1 \
-      || die 'could not apply and reload the loopback password rule'
-    log "loopback_password_rule=applied hba=$hba_file reload=ok"
-  fi
-  # Positive proof: this loopback path now exchanges a password as the non-superuser postgres role.
-  proof="$(run_bounded 'loopback password probe' "$preflight_timeout_seconds" docker exec "$db_container" \
-    psql --no-psqlrc -X -tA -F'|' -d "$conninfo" -c \
-    "select current_user, (select rolsuper from pg_roles where rolname = current_user), 1" 2>/dev/null || true)"
-  [[ "$proof" == 'postgres|f|1' ]] \
-    || die 'the suite session must stay the non-superuser postgres role'
-  # Negative proof: the same rule must reject a wrong password at the container-local 5432 port.
-  run_bounded 'loopback wrong-password probe' "$preflight_timeout_seconds" docker exec \
-    -e PGPASSWORD=sofia-sql-local-tests-wrong-password "$db_container" \
-    psql --no-psqlrc -X -tA -h 127.0.0.1 -p 5432 -U postgres -d postgres -c 'select 1' \
-    >/dev/null 2>&1 \
-    && die 'the loopback password rule accepted a wrong password; refusing to run suites'
-  log 'loopback_password_proof=password-accepted,wrong-password-rejected session=postgres|f|1'
-}
-
-# Staged and verified before the loop, so the per-suite preflight can tell "a reset
-# discarded the staged tree" apart from "staging never reached the container".
-stage_supabase_tree
-ensure_staged_suite "${suites[0]}" "$(basename -- "${suites[0]}")"
-ensure_loopback_password_rule
 
 # Fail fast when the disposable connection string cannot reach its own database.
 # Without this probe every suite would abort before its first assertion and the run
@@ -2640,12 +2531,6 @@ for suite in "${suites[@]}"; do
     log "error: operation=suite_db_reset suite=$name status=failed" >&2
     die "product migration chain or seed failed before $name"
   fi
-
-  # The reset above may have replaced the database container, whose fresh writable layer
-  # holds neither the staged tree nor the ephemeral loopback password rule, so both are
-  # re-verified idempotently immediately before psql.
-  ensure_staged_suite "$suite" "$name"
-  ensure_loopback_password_rule
 
   raw="$work/run/$name.raw"
   tap="$work/run/$name.tap"
