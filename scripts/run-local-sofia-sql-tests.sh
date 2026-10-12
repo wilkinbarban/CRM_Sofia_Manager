@@ -1336,6 +1336,52 @@ def inspect_owned():
         raise ValueError('ownership mismatch')
     return doc
 
+def prove_effective_tmpfs():
+    result = docker('exec', cid, 'cat', '/proc/self/mountinfo')
+    if result.returncode or not result.stdout.endswith('\n'):
+        raise ValueError('mountinfo unavailable')
+    def decode(value):
+        if re.search(r'\\(?!040|011|012|134)', value):
+            raise ValueError('invalid kernel path escape')
+        return re.sub(r'\\(040|011|012|134)', lambda m: chr(int(m[1], 8)), value)
+    def path(value):
+        value = decode(value)
+        if not value.startswith('/') or (value != '/' and any(
+                part in ('', '.', '..') for part in value[1:].split('/'))):
+            raise ValueError('ambiguous mount path')
+        return value
+    found, ids = [], set()
+    for line in result.stdout.split('\n')[:-1]:
+        fields = line.split(' ')
+        if (any(not field or any(ord(c) < 33 for c in field) for field in fields)
+                or fields.count('-') != 1):
+            raise ValueError('malformed mountinfo')
+        separator = fields.index('-')
+        if (separator < 6 or len(fields) != separator + 4
+                or not all(re.fullmatch(r'[1-9][0-9]*', field) for field in fields[:2])
+                or not re.fullmatch(r'[0-9]+:[0-9]+', fields[2])
+                or fields[0] in ids):
+            raise ValueError('malformed or duplicate mountinfo')
+        ids.add(fields[0])
+        root, target = path(fields[3]), path(fields[4])
+        decode(fields[separator + 2])  # Sources need not be absolute paths.
+        options, super_options = fields[5].split(','), fields[-1].split(',')
+        if (any(not option for option in options + super_options)
+                or any(sum(option in ('rw', 'ro') for option in group) != 1
+                       for group in (options, super_options))
+                or any(not re.fullmatch(r'(shared|master|propagate_from):[1-9][0-9]*|unbindable',
+                                        field) for field in fields[6:separator])):
+            raise ValueError('malformed mount options')
+        if target.startswith(data + '/'):
+            raise ValueError('nested data mount')
+        if target == data:
+            if (root != '/' or fields[separator + 1] != 'tmpfs'
+                    or 'rw' not in options or 'ro' in options + super_options):
+                raise ValueError('unexpected effective data mount')
+            found.append(target)
+    if len(found) != 1: raise ValueError('missing or ambiguous data mount')
+
+
 def validate_lifecycle(doc, running):
     host, state = doc['HostConfig'], doc['State']
     if state['Status'] != ('running' if running else 'created') or state['Running'] is not running:
@@ -1346,9 +1392,8 @@ def validate_lifecycle(doc, running):
         raise ValueError('unexpected data mount declaration')
     mounts = doc['Mounts']
     if not isinstance(mounts, list): raise ValueError('invalid effective mounts')
-    # Docker create may defer the requested tmpfs; only the stopped gate permits [].
-    # Never infer an effective post-start mount from HostConfig alone.
-    if mounts or running:
+    # Nonempty inspect mounts must still match exactly; [] needs runtime proof.
+    if mounts:
         mount, = mounts
         if (mount['Type'] != 'tmpfs' or mount['Destination'] != data
                 or mount['Source'] != '' or mount['RW'] is not True):
@@ -1356,6 +1401,8 @@ def validate_lifecycle(doc, running):
     if (doc['Id'] != cid or doc['Image'] != image or host['NetworkMode'] != 'none'
             or host['PortBindings'] not in (None, {}) or host['PublishAllPorts'] is not False):
         raise ValueError('isolation mismatch')
+    # Only a validated, owned, running, isolated container may be queried.
+    if running and not mounts: prove_effective_tmpfs()
 
 def interrupted(signum, frame):
     raise RuntimeError('interrupted')
@@ -2110,6 +2157,9 @@ elif args[0] == 'inspect':
     started = any(row[0] == 'start' for row in history)
     if started: doc['State'] = {'Status': 'running', 'Running': True}
     post_gate = started and sum(row[0] == 'inspect' for row in history) == 1
+    if post_gate and (case.startswith('mountinfo-') or (case.startswith('post-') and case not in
+            ('post-bind', 'post-volume', 'post-mount-path', 'post-mount-extra', 'post-mount-source', 'post-mount-rw'))):
+        doc['Mounts'] = []
     pre_gate = not any(row[0] == 'inspect' for row in history)
     if pre_gate and case not in ('bind', 'volume', 'pre-tmpfs') and not case.startswith('mount-'):
         doc['Mounts'] = []  # Observed Docker create: requested tmpfs is not yet effective.
@@ -2155,6 +2205,40 @@ elif args[0] == 'start' and case == 'start':
     print('POSTGRES_PASSWORD=synthetic-must-not-leak', file=sys.stderr)
     sys.exit(1)
 elif args[0] == 'exec':
+    if args[2:] == ['cat', '/proc/self/mountinfo']:
+        assert args == ['exec', cid, 'cat', '/proc/self/mountinfo']
+        line = '42 1 0:42 / /var/lib/postgresql/data rw - tmpfs tmpfs rw'
+        variants = {
+            'missing': line.replace('/var/lib/postgresql/data', '/other'),
+            'duplicate': line + '\n' + line.replace('42 1', '43 1'),
+            'malformed': line.replace(' - ', ' '),
+            'escape-bad': line.replace('/data', r'/da\164a'),
+            'escape-truncated': line.replace('/data', '/data\\'),
+            'id-duplicate': line + '\n' + line.replace('/data', '/other'),
+            'optional': line.replace(' - ', ' invalid - '),
+            'field-missing': line.replace('0:42 ', ''),
+            'options': line.replace(' rw ', ' rw,,nosuid '),
+            'no-rw': line.replace(' rw ', ' nosuid '),
+            'ambiguous': line.replace('/data', '/./data'),
+            'ro': line.replace(' rw ', ' ro '),
+            'super-ro': line[:-2] + 'ro',
+            'filesystem': line.replace('tmpfs', 'ext4'),
+            'root': line.replace(' / /var', ' /sub /var'),
+            'submount': line + '\n43 42 0:43 / /var/lib/postgresql/data/sub rw - tmpfs tmpfs rw',
+            'escaped-submount': line + r'\n43 42 0:43 / /var/lib/postgresql/data/sub\040dir rw - tmpfs tmpfs rw',
+            'escaped': line + r'\n43 1 0:43 / /other\040dir\011tab\012line\134slash rw - tmpfs tmpfs rw',
+        }
+        if case == 'mountinfo-empty': sys.exit(0)
+        if case == 'mountinfo-no-newline':
+            print(line, end='')
+            sys.exit(0)
+        if case == 'mountinfo-command':
+            print('POSTGRES_PASSWORD=synthetic-must-not-leak', file=sys.stderr)
+            sys.exit(1)
+        if case == 'mountinfo-timeout': time.sleep(20)
+        print(variants.get(case.removeprefix('mountinfo-'), line).replace(r'\n43', '\n43')
+              if case.startswith('mountinfo-') else '')
+        sys.exit(0)
     assert args == ['exec', cid, 'psql', '-h', '127.0.0.1', '-p', '5432',
                     '-U', 'supabase_admin', '-d', 'postgres', '-Atc',
                     "select 1 from pg_roles where rolname = 'supabase_auth_admin'"]
@@ -2222,7 +2306,9 @@ image_rejected = ('image', 'volbad', 'voltype', 'volvalues', 'voljson',
                   'configmissing', 'confignull', 'configlist', 'configstring', 'confignumber', 'configbool')
 assert (status == 0) == (case in accepted), (case, status)
 assert ('start' in ops) == (case in started), (case, ops)
-assert ('exec' in ops) == probe_expected, ('readiness probe missing', case, ops)
+mount_reads = [row for row in rows if row[0] == 'exec' and row[2] == 'cat']
+assert bool(mount_reads) == (case == 'post-mount-empty'), (case, rows)
+assert any(row[0] == 'exec' and row[2] == 'psql' for row in rows) == probe_expected, ('readiness probe missing', case, ops)
 report = Path(sys.argv[4]).read_text()
 match = re.fullmatch(
     r'db_only: operation=(image|create|inspect|start|post-start-inspect|readiness) status=(ok|failed) '
@@ -2257,7 +2343,7 @@ expected_ready = ('not-checked' if not probe_expected else {
     'ready-reject': 'probe-failed', 'ready-invalid': 'probe-failed', 'ready-unexpected': 'probe-failed',
 }.get(case, 'ready'))
 assert match.group(5) == expected_ready, (case, report)
-probes = [row for row in rows if row[0] == 'exec']
+probes = [row for row in rows if row[0] == 'exec' and row[2] == 'psql']
 assert bool(probes) == probe_expected, (case, ops)
 if case in started and case != 'start': assert ops[3:5] == ['start', 'inspect'], (case, ops)
 if probes:
@@ -2284,6 +2370,32 @@ else:
     assert ('rm' in ops) == (case not in ('owner', 'malformed', 'ready-owner', 'post-owner'))
     if 'start' in ops: assert rows[3] == ['start', 'b' * 64]
     if 'rm' in ops: assert next(row for row in rows if row[0] == 'rm') == ['rm', '-f', '-v', 'b' * 64]
+PY
+  done
+  # Docker can omit effective tmpfs from Mounts even while running.
+  for case_name in good escaped empty no-newline missing duplicate malformed escape-bad escape-truncated id-duplicate optional field-missing options no-rw ambiguous ro super-ro filesystem root submount escaped-submount command timeout; do
+    export DB_FAKE_CASE="mountinfo-$case_name" DB_FAKE_LOG="$work/run/db-only-mountinfo-$case_name.jsonl"
+    : >"$DB_FAKE_LOG"
+    status=0
+    db_only_session "$fake" local-postgres "$work/run" - 5 \
+      "printf called >'$work/run/mountinfo-$case_name-body'" >"$work/run/db-only-output" 2>&1 || status=$?
+    python3 - "$DB_FAKE_LOG" "$case_name" "$status" "$work/run/db-only-output" <<'PY'
+import json, sys
+from pathlib import Path
+log, case, status, output = sys.argv[1:]
+rows = [json.loads(line) for line in Path(log).read_text().splitlines()]
+accepted = case in ('good', 'escaped')
+assert (int(status) == 0) == accepted, ('effective mount proof', case, status)
+assert rows[5] == ['exec', 'b' * 64, 'cat', '/proc/self/mountinfo'], rows
+assert [row[0] for row in rows[:5]] == ['image', 'create', 'inspect', 'start', 'inspect']
+assert any(row[0] == 'exec' and row[2] == 'psql' for row in rows) == accepted
+assert Path(log).with_name('mountinfo-' + case + '-body').exists() == accepted
+assert rows[-2:] == [['rm', '-f', '-v', 'b' * 64],
+                     ['ps', '-aq', '--no-trunc', '--filter', 'id=' + 'b' * 64]]
+expected = ('body status=ok' if accepted else 'post-start-inspect status=failed')
+assert Path(output).read_text() == ('db_only: operation=' + expected +
+    ' cleanup=removed container_residue=absent-observed readiness=' +
+    ('ready' if accepted else 'not-checked') + '\n'), 'unsafe report'
 PY
   done
   # Invalid internal deadlines fail before any Docker command or resource creation.
@@ -2373,7 +2485,7 @@ PY
   [[ "$status" == 1 && "$(<"$work/run/db-only-output")" == 'db_only: operation=body status=failed cleanup=unverified container_residue=unknown readiness=ready' ]] \
     || die 'a body failure hid an unverified cleanup'
   unset DB_FAKE_CASE DB_FAKE_LOG
-  log 'db_only_self_check=pass (fake-only: bootstrap-sentinel readiness/order/deadline, caller-owned-credentials, bounded-body, pinned-image/volumes, argv, stopped-state, tmpfs-only, deferred-prestart-mounts, post-start-effective-mount/isolation-gate-before-SQL/body, exact-owned-cleanup, bounded-reporting; not real residue proof, body timeout untested)'
+  log 'db_only_self_check=pass (fake-only: bootstrap-sentinel readiness/order/deadline, caller-owned-credentials, bounded-body, pinned-image/volumes, argv, stopped-state, tmpfs-only, deferred-prestart-mounts, post-start-effective-mount/mountinfo-escapes-and-fail-closed-parser/isolation-gate-before-SQL/body, exact-owned-cleanup, bounded-reporting; not real residue proof, body timeout untested)'
 }
 
 # The session captures callback output; preserve only a private report and emit strict
