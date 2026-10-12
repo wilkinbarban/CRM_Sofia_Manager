@@ -99,9 +99,9 @@ die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 
 usage() {
   cat <<'EOF'
-Usage: scripts/run-local-sofia-sql-tests.sh [--self-check | supabase/tests/<suite>.sql ...]
+Usage: scripts/run-local-sofia-sql-tests.sh [--self-check | [--db-only] supabase/tests/<suite>.sql ...]
 
-Runs pgTAP suites inside a disposable local Supabase stack. With no arguments it runs
+Runs pgTAP suites in an isolated database with no published ports. With no suites it runs
 the seven Sofia suites this harness owns. Only files under supabase/tests may be named.
 Use --self-check for offline environment, TAP, redaction, normalization and cleanup checks.
 EOF
@@ -362,15 +362,24 @@ cleanup() {
 # ---------------------------------------------------------------------------
 suites=()
 run_self_check_only=false
+run_db_only=false
 if (($#)); then
   for argument in "$@"; do
     case "$argument" in
       -h | --help)
+        (($# == 1)) || die 'invalid help argument mix'
         usage
         exit 0
         ;;
       --self-check)
         run_self_check_only=true
+        ;;
+      --db-only)
+        [[ "$run_db_only" == false ]] || die 'duplicate db-only option'
+        run_db_only=true
+        ;;
+      -*)
+        die 'invalid option'
         ;;
       *)
         [[ -f "$argument" ]] || die "missing suite file: $argument"
@@ -385,8 +394,10 @@ if (($#)); then
 else
   suites=("${default_suites[@]}")
 fi
-if [[ "$run_self_check_only" == false ]]; then
-  ((${#suites[@]})) || die 'no suites selected'
+if [[ "$run_self_check_only" == true ]]; then
+  [[ "$run_db_only" == false && ${#suites[@]} == 0 && $# == 1 ]] || die 'invalid self-check argument mix'
+elif ((${#suites[@]} == 0)); then
+  suites=("${default_suites[@]}")
 fi
 
 command -v python3 >/dev/null 2>&1 || die 'python3 is required for temporary normalization'
@@ -1250,8 +1261,6 @@ STUB
   log 'environment_self_check=pass (allowlist, private-home/tmp, fixed-local-docker, DO_NOT_TRACK=1-configured, pinned-cli, descendants, no-exported-functions)'
 }
 
-# DB-only runtime INCOMPLETE: not wired to legacy execution. Bootstrap provenance,
-# image data-path compatibility and SQL via docker exec remain separate next slices.
 # Scoped session scaffold: start only after inspection, then discard temporary data.
 # Timeouts can leave daemon work in flight; a second signal can interrupt teardown.
 # Residue reporting is an observation, not a guarantee against those races.
@@ -1407,7 +1416,6 @@ try:
                                    capture_output=True, text=True, timeout=body_timeout)
         if completed.returncode:
             raise ValueError('the isolated body failed')
-    # Still disconnected: no callback, SQL, or bootstrap executes here.
     status = 0
 except Exception:
     pass  # Never expose Docker output, inspect bodies or synthetic credentials.
@@ -1614,8 +1622,8 @@ PY
 # the seed as the non-superuser postgres role, prepares the template and never puts the
 # password in argv.
 db_only_body_self_check() {
-  local fake="$work/run/body-docker" repo="$work/run/body-repo" case_name status
-  mkdir -p "$repo/supabase/migrations"
+  local fake="$work/run/body-bin/docker" repo="$work/run/body-repo" case_name status
+  mkdir -p "$repo/supabase/migrations" "$work/run/body-bin"
   printf 'select 1;\nalter function public.my_func() owner to supabase_admin;\n' >"$repo/supabase/migrations/0001_first.sql"
   printf 'select 2;\n' >"$repo/supabase/migrations/0002_second.sql"
   printf 'select 3;\n' >"$repo/supabase/seed.sql"
@@ -1629,6 +1637,7 @@ import json, os, sys
 from pathlib import Path
 args = sys.argv[1:]
 stdin = sys.stdin.read() if '-i' in args else ''
+history = [json.loads(line) for line in Path(os.environ['DB_FAKE_LOG']).read_text().splitlines()]
 with Path(os.environ['DB_FAKE_LOG']).open('a') as stream:
     stream.write(json.dumps({'argv': args, 'stdin': stdin}) + '\n')
 case = os.environ['DB_FAKE_CASE']
@@ -1636,7 +1645,21 @@ if args[0] == 'cp':
     staged = Path(args[1]) / 'migrations/0001_first.sql'
     original = Path(os.environ['DB_FAKE_LOG']).parent / 'body-repo/supabase/migrations/0001_first.sql'
     assert staged.read_bytes() == original.read_bytes(), 'staging changed the original ownership transfer'
-if args[0] == 'create': print(('e' if '--entrypoint' in args else 'f') * 64)
+if args[:2] == ['image', 'inspect']:
+    print(json.dumps([{'Id': 'sha256:' + 'a' * 64, 'Config': {'Volumes': None}}]))
+if args[0] == 'create':
+    print(('b' if '--tmpfs' in args else 'e' if '--entrypoint' in args else 'f') * 64)
+if args[0] == 'inspect':
+    create = next(row['argv'] for row in history if '--tmpfs' in row['argv'])
+    name = create[create.index('--name') + 1]
+    print(json.dumps([{
+        'Id': 'b' * 64, 'Name': '/' + name, 'Image': 'sha256:' + 'a' * 64,
+        'Config': {'Labels': {'org.sofia.sql-tests.owner': name}},
+        'HostConfig': {'NetworkMode': 'none', 'PortBindings': None,
+                       'PublishAllPorts': False, 'Tmpfs': {'/var/lib/postgresql/data': ''}},
+        'State': {'Status': 'created', 'Running': False},
+        'Mounts': [{'Type': 'tmpfs', 'Source': '', 'Destination': '/var/lib/postgresql/data', 'RW': True}]}]))
+if any('select 1 from pg_roles' in arg for arg in args): print('1')
 if "to_regclass('storage.buckets')" in stdin: print('t')
 if 'select current_database()' in stdin: print('postgres')
 if (case == 'migration-fail' and any('0002_second' in arg for arg in args)
@@ -1647,6 +1670,8 @@ if any(arg.endswith('/tests/first.sql') for arg in args):
     print('1..1\n' + ('not ok' if case == 'tap-fail' else 'ok') + ' 1 - first')
     if case == 'psql-fail': sys.exit(2)
 if any(arg.endswith('/tests/second.sql') for arg in args): print('1..1\nok 1 - second')
+if any('/tests/sofia_' in arg for arg in args): print('1..1\nok 1 - default')
+if 'psql' in args: print('hostile SQL secret log', file=sys.stderr)
 PY
   chmod +x "$fake"
   db_only_credentials "$work/run/body-credentials" || die 'credentials helper failed'
@@ -1686,8 +1711,62 @@ assert any(row[0] == 'cp' and row[-1].endswith(':/tmp/staging/supabase') for row
 assert all('--publish' not in row and '--tmpfs' not in row and (row[0] != 'create' or '-p' not in row) for row in argv), 'the body altered isolation'
 PY
   done
+  # Execute the same CLI function in a fresh shell, replacing Docker discovery only.
+  # Startup self-check calls are omitted in this child to avoid recursive fixtures.
+  local payload argument output expected
+  mkdir -p "$repo/scripts"
+  for argument in "${default_suites[@]}"; do printf 'select 1;\n' >"$repo/$argument"; done
+  payload="$(declare -f runner_main)"
+  payload="$(python3 -c '
+import re, shlex, sys
+code = sys.stdin.read()
+code = re.sub(r"(?m)^\s*[a-z_]+_self_check;?\s*$", "", code)
+print(code.replace("command -v docker", "printf %s " + shlex.quote(sys.argv[1])))
+' "$fake" <<<"$payload")"
+  for case_name in selected default flag-default psql-fail invalid-mix invalid-option invalid-help invalid-suite invalid-duplicate; do
+    local -a arguments=()
+    expected=0
+    case "$case_name" in
+      selected | psql-fail) arguments=(--db-only supabase/tests/first.sql supabase/tests/second.sql) ;;
+      flag-default) arguments=(--db-only) ;;
+      invalid-mix) arguments=(--db-only --self-check); expected=1 ;;
+      invalid-option) arguments=(--db-only --unknown); expected=1 ;;
+      invalid-help) arguments=(--help supabase/tests/first.sql); expected=1 ;;
+      invalid-suite) arguments=(--self-check supabase/tests/first.sql); expected=1 ;;
+      invalid-duplicate) arguments=(--db-only --db-only); expected=1 ;;
+    esac
+    [[ "$case_name" != psql-fail ]] || expected=1
+    export DB_FAKE_CASE="$case_name" DB_FAKE_LOG="$work/run/cli-$case_name.jsonl"
+    : >"$DB_FAKE_LOG"
+    status=0
+    output="$(cd "$repo" && PATH="$work/run/body-bin:$PATH" /bin/bash --noprofile --norc -c "$payload; runner_main \"\$@\"" \
+      "$repo/scripts/runner.sh" "${arguments[@]}" 2>&1)" || status=$?
+    [[ "$status" == "$expected" ]] || die "isolated CLI status mismatch: $case_name ($status)"
+    if [[ "$case_name" == invalid-* ]]; then
+      [[ ! -s "$DB_FAKE_LOG" ]] || die 'invalid CLI arguments contacted Docker'
+      continue
+    fi
+    [[ "$output" == *'db_only: operation=body'*'cleanup=removed'*'summary: suites='* ]] \
+      || die 'CLI report missing after session cleanup'
+    [[ "$output" != *'hostile SQL secret log'* && "$output" != *'Bad file descriptor'* ]] \
+      || die 'CLI leaked logs or failed child progress initialization'
+    python3 - "$DB_FAKE_LOG" "$case_name" "$output" <<'PY'
+import json, sys
+from pathlib import Path
+rows = [json.loads(line)['argv'] for line in Path(sys.argv[1]).read_text().splitlines()]
+case, report = sys.argv[2:]
+assert rows[0] == ['image', 'inspect', '--', 'public.ecr.aws/supabase/postgres:17.6.1.143']
+assert all(row[0] in ('image', 'create', 'inspect', 'start', 'exec', 'cp', 'stop', 'rm', 'ps') for row in rows)
+for image in ('gotrue:v2.192.0', 'storage-api:v1.62.5'):
+    assert any('public.ecr.aws/supabase/' + image in row and '--pull' in row and 'never' in row for row in rows)
+count = 7 if case in ('default', 'flag-default') else 2
+assert 'summary: suites=%d assertions=%d failed_assertions=0 failing_suites=%d' % (count, count, int(case == 'psql-fail')) in report
+assert 'db_only_body: migrations_applied=2 failed=%d' % int(case == 'psql-fail') in report
+assert report.index('cleanup=removed') < report.index('summary: suites=')
+PY
+  done
   unset DB_FAKE_CASE DB_FAKE_LOG
-  log 'db_only_body_self_check=pass (fake-only: pgpass file, staging, migrations and seed through psql, no password in argv)'
+  log 'db_only_body_self_check=pass (fake-only: pgpass file, staging, migrations and seed through psql, no password in argv, isolated CLI dispatch)'
 }
 
 # Per-suite reset: a copy of the prepared template replaces the product database. The
@@ -2273,6 +2352,47 @@ PY
   log 'db_only_self_check=pass (fake-only: bootstrap-sentinel readiness/order/deadline, caller-owned-credentials, bounded-body, pinned-image/volumes, argv, stopped-state, tmpfs-only, pre-start-isolation, exact-owned-cleanup, bounded-reporting; not real residue proof, body timeout untested)'
 }
 
+# The session captures callback output; preserve only a private report and emit strict
+# bounded metadata after its exact-owned cleanup, never raw SQL or container logs.
+db_only_mode() {
+  local exe=$1 script="$work/run/callback.sh" report="$work/run/callback.report" status=0
+  shift
+  local database='public.ecr.aws/supabase/postgres:17.6.1.143'
+  local auth='public.ecr.aws/supabase/gotrue:v2.192.0'
+  local storage='public.ecr.aws/supabase/storage-api:v1.62.5'
+  db_only_credentials "$work/run/credentials" || return 1
+  {
+    printf 'set -Eeuo pipefail\nset +x\numask 077\nexec 3>&2\nticker_pid=\n'
+    declare -p work have_tap_parser psql_timeout_seconds progress_interval_seconds
+    declare -f log stage_temporary_inputs db_only_bootstrap db_only_body db_only_prepare \
+      db_only_reset run_bounded start_progress stop_progress filter_tap validate_tap validate_tap_fallback
+    printf 'db_only_body %q "$SOFIA_DB_CONTAINER" ' "$exe"
+    printf '%q ' "$repo_root" "$work/run" /tmp/sofia-sql-suites "$work/run/credentials" "$auth" "$storage" "$@"
+    printf '\n'
+  } >"$script"
+  local callback
+  printf -v callback '/bin/bash --noprofile --norc %q >%q 2>&1' "$script" "$report"
+  db_only_session "$exe" "$database" "$work/run" "$work/run/credentials" 60 "$callback" || status=$?
+  python3 - "$report" <<'PY'
+import re, sys
+from pathlib import Path
+path = Path(sys.argv[1])
+patterns = (
+    r'(?:PASS|FAIL) [A-Za-z0-9_.-]{1,128} \(assertions=\d+ failed=\d+ psql_exit=\d+(?: tap_exit=\d+)?\)',
+    r'summary: suites=\d+ assertions=\d+ failed_assertions=\d+ failing_suites=\d+',
+    r'db_only_body: migrations_applied=\d+ failed=[01]',
+)
+if path.exists():
+    with path.open() as handle:
+        for index, line in enumerate(handle):
+            if index >= 4096: break
+            line = line.rstrip('\n')
+            if len(line) <= 256 and any(re.fullmatch(pattern, line) for pattern in patterns):
+                print(line)
+PY
+  return "$status"
+}
+
 environment_self_check
 db_only_self_check
 db_only_bootstrap_self_check
@@ -2292,6 +2412,9 @@ if [[ "$run_self_check_only" == true ]]; then
 fi
 
 [[ "$(pwd -P)" == "$repo_root" ]] || die "run this harness from the repository root: $repo_root"
+db_only_mode "$(command -v docker)" "${suites[@]}"
+exit $?
+# Legacy execution is deliberately unreachable pending bounded deletion slices.
 [[ "$(git rev-parse --show-toplevel 2>/dev/null)" == "$repo_root" ]] \
   || die 'repository root mismatch; refusing to run'
 [[ -x "$cli" ]] || die "missing pinned Supabase CLI binary: $cli"
