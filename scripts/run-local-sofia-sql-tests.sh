@@ -1352,7 +1352,10 @@ try:
     image_doc, = json.loads(result.stdout)
     image = image_doc['Id']
     if not re.fullmatch(r'sha256:[0-9a-f]{64}', image): raise ValueError('invalid image')
-    volumes = image_doc['Config']['Volumes']
+    config = image_doc['Config']
+    if not isinstance(config, dict): raise ValueError('invalid image config')
+    # Docker may omit Volumes entirely when the image declares none.
+    volumes = config.get('Volumes')
     if volumes is not None and volumes not in ({}, {data: {}}):
         raise ValueError('unsupported image volumes')
     phase = 'create'
@@ -2064,6 +2067,10 @@ if args[:2] == ['image', 'inspect']:
     if case == 'volempty': doc['Config']['Volumes'] = {}
     if case == 'volbad': doc['Config']['Volumes']['/extra'] = {}
     if case == 'volmissing': del doc['Config']['Volumes']
+    if case == 'configmissing': del doc['Config']
+    invalid_configs = {'confignull': None, 'configlist': [], 'configstring': '',
+                       'confignumber': 0, 'configbool': False}
+    if case in invalid_configs: doc['Config'] = invalid_configs[case]
     if case == 'voltype': doc['Config']['Volumes'] = []
     if case == 'volvalues': doc['Config']['Volumes']['/var/lib/postgresql/data'] = 'bad'
     if case == 'image': doc['Id'] = 'invalid'
@@ -2150,7 +2157,8 @@ PY
   chmod +x "$fake"
   declare -F db_only_session >/dev/null || die 'DB-only lifecycle helper missing'
   local cases=(good empty running state-missing state-type status-missing running-missing running-type status
-    volnull volempty volbad volmissing voltype volvalues voljson bind volume mount-extra mount-missing
+    volnull volempty volbad volmissing voltype volvalues voljson
+    configmissing confignull configlist configstring confignumber configbool bind volume mount-extra mount-missing
     mount-type mount-path mount-source mount-rw tmpfs ports network publish owner malformed id pinned name missing create partial start remove image residue inventory
     ready-retry ready-sentinel ready-refused ready-reject ready-offline ready-invalid ready-unexpected ready-hang ready-owner)
   for case_name in "${cases[@]}"; do
@@ -2170,10 +2178,11 @@ from pathlib import Path
 rows = [json.loads(line) for line in Path(sys.argv[1]).read_text().splitlines()]
 case, status = sys.argv[2], int(sys.argv[3])
 ops = [row[0] for row in rows]
-accepted = ('good', 'empty', 'volnull', 'volempty', 'ready-retry', 'ready-sentinel', 'ready-refused')
+accepted = ('good', 'empty', 'volnull', 'volempty', 'volmissing', 'ready-retry', 'ready-sentinel', 'ready-refused')
 readiness_failed = ('ready-reject', 'ready-offline', 'ready-invalid', 'ready-unexpected', 'ready-hang')
 started = accepted + readiness_failed + ('start', 'remove', 'residue', 'inventory', 'ready-owner')
-image_rejected = ('image', 'volbad', 'volmissing', 'voltype', 'volvalues', 'voljson')
+image_rejected = ('image', 'volbad', 'voltype', 'volvalues', 'voljson',
+                  'configmissing', 'confignull', 'configlist', 'configstring', 'confignumber', 'configbool')
 assert (status == 0) == (case in accepted), (case, status)
 assert ('start' in ops) == (case in started), (case, ops)
 assert ('exec' in ops) == (case in started and case != 'start'), ('readiness probe missing', case, ops)
