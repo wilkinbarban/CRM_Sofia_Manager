@@ -1530,6 +1530,91 @@ sys.exit(status)
 PY
 }
 
+# Per-suite reset: a copy of the prepared template replaces the product database. The
+# postmaster can refuse a connection for a moment after the copy, so the attempt is
+# retried and the session the suites use is verified before anything runs.
+db_only_reset() {
+  python3 - "$@" <<'PY'
+import subprocess, sys, time
+exe, container = sys.argv[1:3]
+status, attempts, verified = 1, 0, False
+
+def docker(*args, timeout=180, stdin=None):
+    return subprocess.run([exe, *args], input=stdin, capture_output=True, text=True, timeout=timeout)
+
+def sql(statement, database, timeout=180):
+    return docker('exec', '-i', container, 'psql', '-h', '127.0.0.1', '-U', 'supabase_admin',
+                  '-d', database, '-v', 'ON_ERROR_STOP=1', '-q', '-f', '-', stdin=statement, timeout=timeout)
+
+for attempt in range(1, 4):
+    attempts = attempt
+    if sql('drop database if exists postgres with (force);\n'
+           'create database postgres template sofia_template owner postgres;\n', 'template1').returncode == 0:
+        verified = True
+        break
+    time.sleep(2)
+if verified:
+    probe = sql('select current_database();\n', 'postgres', timeout=60)
+    status = 0 if probe.returncode == 0 and probe.stdout.strip() == 'postgres' else 1
+print('db_only_reset: operation=reset status=%s attempts=%d'
+      % ('ok' if status == 0 else 'failed', attempts))
+sys.exit(status)
+PY
+}
+
+# Hermetic reset contract: each suite starts from the prepared template, and a postmaster
+# that briefly refuses connections is retried instead of failing the suite.
+db_only_reset_self_check() {
+  local fake="$work/run/reset-docker" case_name status
+  cat >"$fake" <<'PY'
+#!/usr/bin/python3
+import json, os, sys
+from pathlib import Path
+args = sys.argv[1:]
+state = Path(os.environ['DB_FAKE_LOG'])
+previous = state.read_text().splitlines()
+with state.open('a') as stream:
+    stream.write(json.dumps(args) + '\n')
+case = os.environ['DB_FAKE_CASE']
+assert args[:4] == ['exec', '-i', 'b' * 64, 'psql'], args
+assert args[4:6] == ['-h', '127.0.0.1'] and args[8:10] in (['-d', 'template1'], ['-d', 'postgres']), args
+body = sys.stdin.read()
+if 'drop database if exists postgres with (force)' in body:
+    assert args[8:10] == ['-d', 'template1'], args
+    assert 'create database postgres template sofia_template owner postgres' in body
+    if case == 'create-fail': sys.exit(1)
+    if case == 'retry' and not previous: sys.exit(1)
+    sys.exit(0)
+assert args[8:10] == ['-d', 'postgres'], args
+assert 'select current_database()' in body
+if case == 'sentinel-fail': sys.exit(1)
+print('postgres')
+PY
+  chmod +x "$fake"
+  declare -F db_only_reset >/dev/null || die 'DB-only reset helper missing'
+  for case_name in ok retry create-fail sentinel-fail; do
+    export DB_FAKE_CASE="$case_name" DB_FAKE_LOG="$work/run/reset-$case_name.jsonl"
+    : >"$DB_FAKE_LOG"
+    status=0
+    db_only_reset "$fake" "$(printf 'b%.0s' {1..64})" >"$work/run/reset-output" 2>&1 || status=$?
+    python3 - "$DB_FAKE_LOG" "$case_name" "$status" "$work/run/reset-output" <<'PY'
+import json, re, sys
+from pathlib import Path
+rows = [json.loads(line) for line in Path(sys.argv[1]).read_text().splitlines()]
+case, status = sys.argv[2], int(sys.argv[3])
+report = Path(sys.argv[4]).read_text()
+match = re.fullmatch(r'db_only_reset: operation=reset status=(ok|failed) attempts=([1-3])\n', report)
+assert match, 'reset report leaked output or omitted metadata'
+assert (status == 0) == (case in ('ok', 'retry')), (case, status, report)
+assert int(match.group(2)) == ({'ok': 1, 'retry': 2, 'create-fail': 3, 'sentinel-fail': 1}[case]), (case, report)
+assert len(rows) == {'ok': 2, 'retry': 3, 'create-fail': 3, 'sentinel-fail': 2}[case], (case, len(rows))
+assert not any('postgresql://' in arg for row in rows for arg in row), 'reset argv leaked a connection string'
+PY
+  done
+  unset DB_FAKE_CASE DB_FAKE_LOG
+  log 'db_only_reset_self_check=pass (fake-only: template reset retried up to three times, postgres session verified before the suite runs)'
+}
+
 # Hermetic preparation contract: the extensions the suites rely on and the template used
 # for the per-suite reset, including the guarantee that a failure never leaves the
 # database refusing connections.
@@ -1995,6 +2080,7 @@ environment_self_check
 db_only_self_check
 db_only_bootstrap_self_check
 db_only_prepare_self_check
+db_only_reset_self_check
 tap_self_check
 redact_self_check
 normalization_self_check
