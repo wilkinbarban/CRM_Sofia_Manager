@@ -1250,7 +1250,246 @@ STUB
   log 'environment_self_check=pass (allowlist, private-home/tmp, fixed-local-docker, DO_NOT_TRACK=1-configured, pinned-cli, descendants, no-exported-functions)'
 }
 
+# DB-only runtime INCOMPLETE: not wired to legacy execution. Bootstrap provenance,
+# image data-path compatibility and SQL via docker exec remain separate next slices.
+# Scoped session scaffold: start only after inspection, then discard temporary data.
+# Timeouts can leave daemon work in flight; a second signal can interrupt teardown.
+# Residue reporting is an observation, not a guarantee against those races.
+db_only_session() {
+  python3 - "$@" <<'PY'
+import json, re, signal, subprocess, sys, tempfile, uuid
+exe, image_ref, temp_root = sys.argv[1:]
+name = 'sofia-db-' + uuid.uuid4().hex
+label = 'org.sofia.sql-tests.owner'
+cid, attempted, status = '', False, 1
+phase, cleanup_state, residue = 'image', 'not-created', 'not-created'
+data = '/var/lib/postgresql/data'
+
+def docker(*args):
+    return subprocess.run([exe, *args], capture_output=True, text=True, timeout=15)
+
+def inspect_owned():
+    result = docker('inspect', name)
+    if result.returncode: raise ValueError('inspect failed')
+    doc, = json.loads(result.stdout)
+    if (doc['Name'] != '/' + name or doc['Config']['Labels'].get(label) != name
+            or not re.fullmatch(r'[0-9a-f]{64}', doc['Id'])
+            or (re.fullmatch(r'[0-9a-f]{64}', cid) and doc['Id'] != cid)):
+        raise ValueError('ownership mismatch')
+    return doc
+
+def interrupted(signum, frame):
+    raise RuntimeError('interrupted')
+
+for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+    signal.signal(sig, interrupted)
+try:
+    result = docker('image', 'inspect', '--', image_ref)
+    if result.returncode: raise ValueError('local image required')
+    image_doc, = json.loads(result.stdout)
+    image = image_doc['Id']
+    if not re.fullmatch(r'sha256:[0-9a-f]{64}', image): raise ValueError('invalid image')
+    volumes = image_doc['Config']['Volumes']
+    if volumes is not None and volumes not in ({}, {data: {}}):
+        raise ValueError('unsupported image volumes')
+    phase = 'create'
+    with tempfile.NamedTemporaryFile(mode='w', dir=temp_root) as credentials:
+        credentials.write('POSTGRES_PASSWORD=' + uuid.uuid4().hex + '\n')
+        credentials.flush()
+        attempted = True
+        result = docker('create', '--pull', 'never', '--network', 'none', '--name', name,
+                        '--label', label + '=' + name, '--env-file', credentials.name,
+                        '--tmpfs', '/var/lib/postgresql/data', image)
+        cid = result.stdout.strip()
+        if result.returncode or not re.fullmatch(r'[0-9a-f]{64}', cid):
+            raise ValueError('create failed')
+    phase = 'inspect'
+    doc = inspect_owned()
+    host = doc['HostConfig']
+    state = doc['State']
+    if state['Status'] != 'created' or state['Running'] is not False:
+        raise ValueError('container must be stopped and newly created')
+    mount, = doc['Mounts']
+    if (mount['Type'] != 'tmpfs' or mount['Destination'] != data
+            or mount['Source'] != '' or mount['RW'] is not True
+            or host['Tmpfs'] != {data: ''}):
+        raise ValueError('only the planned temporary data mount is permitted')
+    if (doc['Id'] != cid or doc['Image'] != image or host['NetworkMode'] != 'none'
+            or host['PortBindings'] not in (None, {}) or host['PublishAllPorts'] is not False):
+        raise ValueError('isolation mismatch')
+    phase = 'start'
+    if docker('start', cid).returncode: raise ValueError('start failed')
+    status = 0
+except Exception:
+    pass  # Never expose Docker output, inspect bodies or synthetic credentials.
+finally:
+    if attempted:
+        cleanup_state, residue = 'unverified', 'unknown'
+        try:
+            owned = inspect_owned()
+            result = docker('rm', '-f', '-v', owned['Id'])
+            cleanup_state = 'failed' if result.returncode else 'removed'
+            if result.returncode: status = 1
+            inventory = docker('ps', '-aq', '--no-trunc', '--filter', 'id=' + owned['Id'])
+            if inventory.returncode: status = 1
+            else:
+                residue = 'remaining' if inventory.stdout.strip() else 'absent-observed'
+                if residue == 'remaining': status = 1
+        except Exception:
+            status = 1  # Refuse removal without exact ownership evidence.
+print(f'db_only: operation={phase} status={"ok" if status == 0 else "failed"} '
+      f'cleanup={cleanup_state} container_residue={residue}')
+sys.exit(status)
+PY
+}
+
+# Hermetic DB-only lifecycle contract; these fixtures never contact a daemon.
+db_only_self_check() {
+  local fake="$work/run/db-only-docker" case_name status
+  cat >"$fake" <<'PY'
+#!/usr/bin/python3
+import json, os, sys
+from pathlib import Path
+args = sys.argv[1:]
+log = Path(os.environ['DB_FAKE_LOG'])
+history = [json.loads(line) for line in log.read_text().splitlines()]
+with log.open('a') as stream:
+    stream.write(json.dumps(args) + '\n')
+case = os.environ['DB_FAKE_CASE']
+image, cid = 'sha256:' + 'a' * 64, 'b' * 64
+if args[:2] == ['image', 'inspect']:
+    doc = {'Id': image, 'Config': {'Volumes': {'/var/lib/postgresql/data': {}}}}
+    if case == 'volnull': doc['Config']['Volumes'] = None
+    if case == 'volempty': doc['Config']['Volumes'] = {}
+    if case == 'volbad': doc['Config']['Volumes']['/extra'] = {}
+    if case == 'volmissing': del doc['Config']['Volumes']
+    if case == 'voltype': doc['Config']['Volumes'] = []
+    if case == 'volvalues': doc['Config']['Volumes']['/var/lib/postgresql/data'] = 'bad'
+    if case == 'image': doc['Id'] = 'invalid'
+    if '--format' in args: print('invalid' if case == 'image' else image)
+    else: print('malformed' if case == 'voljson' else json.dumps([doc]))
+elif args[0] == 'create':
+    envfile = Path(args[args.index('--env-file') + 1])
+    assert envfile.stat().st_mode & 0o777 == 0o600
+    assert envfile.read_text().startswith('POSTGRES_PASSWORD=')
+    print('' if case == 'partial' else cid)
+    if case in ('create', 'partial'):
+        print(envfile.read_text(), file=sys.stderr)
+        sys.exit(1)
+elif args[0] == 'inspect':
+    create = next(row for row in history if row[0] == 'create')
+    label = create[create.index('--label') + 1].split('=', 1)
+    doc = {'Id': cid, 'Name': '/' + create[create.index('--name') + 1],
+           'Image': image, 'Config': {'Labels': dict([label])},
+           'HostConfig': {'NetworkMode': 'none', 'PortBindings': None,
+                          'PublishAllPorts': False,
+                          'Tmpfs': {'/var/lib/postgresql/data': ''}},
+           'State': {'Status': 'created', 'Running': False},
+           'Mounts': [{'Type': 'tmpfs', 'Source': '', 'Destination': '/var/lib/postgresql/data', 'RW': True}]}
+    # Only the first inspect is the start gate; cleanup must recheck ownership.
+    if not any(row[0] == 'inspect' for row in history):
+        if case == 'empty': doc['HostConfig']['PortBindings'] = {}
+        if case == 'ports': doc['HostConfig']['PortBindings'] = {'5432/tcp': [{'HostPort': '5432'}]}
+        if case == 'network': doc['HostConfig']['NetworkMode'] = 'host'
+        if case == 'publish': doc['HostConfig']['PublishAllPorts'] = True
+        if case == 'id': doc['Id'] = 'c' * 64
+        if case == 'pinned': doc['Image'] = 'sha256:' + 'c' * 64
+        if case == 'name': doc['Name'] = '/foreign'
+        if case == 'missing': del doc['HostConfig']['PortBindings']
+        if case == 'running': doc['State'] = {'Status': 'created', 'Running': True}
+        if case == 'state-missing': del doc['State']
+        if case == 'state-type': doc['State'] = []
+        if case == 'status-missing': del doc['State']['Status']
+        if case == 'running-missing': del doc['State']['Running']
+        if case == 'running-type': doc['State']['Running'] = 0
+        if case == 'status': doc['State']['Status'] = 'exited'
+        if case == 'bind': doc['Mounts'][0]['Type'] = 'bind'
+        if case == 'volume': doc['Mounts'][0]['Type'] = 'volume'
+        if case == 'mount-extra': doc['Mounts'].append(dict(doc['Mounts'][0]))
+        if case == 'mount-missing': del doc['Mounts']
+        if case == 'mount-type': doc['Mounts'] = {}
+        if case == 'mount-path': doc['Mounts'][0]['Destination'] = '/extra'
+        if case == 'mount-source': doc['Mounts'][0]['Source'] = '/host'
+        if case == 'mount-rw': doc['Mounts'][0]['RW'] = False
+        if case == 'tmpfs': doc['HostConfig']['Tmpfs'] = {}
+    if case == 'owner': doc['Config']['Labels'] = {'foreign': 'owner'}
+    print('malformed' if case == 'malformed' else json.dumps([doc]))
+elif args[0] == 'start' and case == 'start':
+    print('POSTGRES_PASSWORD=synthetic-must-not-leak', file=sys.stderr)
+    sys.exit(1)
+elif args[0] == 'ps':
+    assert args == ['ps', '-aq', '--no-trunc', '--filter', 'id=' + cid]
+    if case in ('remove', 'residue'): print(cid)
+    sys.exit(1 if case == 'inventory' else 0)
+elif args[0] != 'start':
+    assert args == ['rm', '-f', '-v', cid]
+    sys.exit(1 if case == 'remove' else 0)
+PY
+  chmod +x "$fake"
+  declare -F db_only_session >/dev/null || die 'DB-only lifecycle helper missing'
+  local cases=(good empty running state-missing state-type status-missing running-missing running-type status
+    volnull volempty volbad volmissing voltype volvalues voljson bind volume mount-extra mount-missing
+    mount-type mount-path mount-source mount-rw tmpfs ports network publish owner malformed id pinned name missing create partial start remove image residue inventory)
+  for case_name in "${cases[@]}"; do
+    export DB_FAKE_CASE="$case_name" DB_FAKE_LOG="$work/run/db-only-$case_name.jsonl"
+    : >"$DB_FAKE_LOG"
+    status=0
+    db_only_session "$fake" local-postgres "$work/run" >"$work/run/db-only-output" 2>&1 || status=$?
+    [[ -s "$work/run/db-only-output" ]] || die 'DB-only helper omitted its bounded report'
+    python3 - "$DB_FAKE_LOG" "$case_name" "$status" "$work/run/db-only-output" <<'PY'
+import json, re, sys
+from pathlib import Path
+rows = [json.loads(line) for line in Path(sys.argv[1]).read_text().splitlines()]
+case, status = sys.argv[2], int(sys.argv[3])
+ops = [row[0] for row in rows]
+accepted = ('good', 'empty', 'volnull', 'volempty')
+started = accepted + ('start', 'remove', 'residue', 'inventory')
+image_rejected = ('image', 'volbad', 'volmissing', 'voltype', 'volvalues', 'voljson')
+assert (status == 0) == (case in accepted), (case, status)
+assert ('start' in ops) == (case in started), (case, ops)
+report = Path(sys.argv[4]).read_text()
+match = re.fullmatch(
+    r'db_only: operation=(image|create|inspect|start) status=(ok|failed) '
+    r'cleanup=(not-created|unverified|removed|failed) container_residue=(not-created|unknown|remaining|absent-observed)\n', report)
+assert match, 'report leaked output or omitted metadata'
+if case in image_rejected:
+    expected_phase = 'image'
+elif case in ('create', 'partial'):
+    expected_phase = 'create'
+elif case in started:
+    expected_phase = 'start'
+else:
+    expected_phase = 'inspect'
+assert match.groups()[:2] == (expected_phase, 'ok' if status == 0 else 'failed')
+expected_cleanup = {
+    'owner': ('unverified', 'unknown'),
+    'malformed': ('unverified', 'unknown'),
+    'remove': ('failed', 'remaining'),
+    'inventory': ('removed', 'unknown'),
+    'residue': ('removed', 'remaining'),
+}.get(case, ('not-created', 'not-created') if case in image_rejected else ('removed', 'absent-observed'))
+assert match.groups()[2:] == expected_cleanup, (case, report)
+if case in image_rejected:
+    assert ops == ['image']
+else:
+    create = rows[1]
+    assert re.fullmatch(r'sofia-db-[0-9a-f]{32}', create[6])
+    assert all(create[6] not in path.read_text() for path in Path(sys.argv[1]).parent.glob('db-only-*.jsonl') if str(path) != sys.argv[1])
+    assert create[:7] == ['create', '--pull', 'never', '--network', 'none', '--name', create[6]]
+    assert create[7:10] == ['--label', 'org.sofia.sql-tests.owner=' + create[6], '--env-file']
+    assert create[11:] == ['--tmpfs', '/var/lib/postgresql/data', 'sha256:' + 'a' * 64]
+    assert ops[:3] == ['image', 'create', 'inspect']
+    assert ('rm' in ops) == (case not in ('owner', 'malformed'))
+    if 'start' in ops: assert rows[3] == ['start', 'b' * 64]
+    if 'rm' in ops: assert next(row for row in rows if row[0] == 'rm') == ['rm', '-f', '-v', 'b' * 64]
+PY
+  done
+  unset DB_FAKE_CASE DB_FAKE_LOG
+  log 'db_only_self_check=pass (fake-only: pinned-image/volumes, argv, stopped-state, tmpfs-only, pre-start-isolation, exact-owned-cleanup, bounded-reporting; not real residue proof)'
+}
+
 environment_self_check
+db_only_self_check
 tap_self_check
 redact_self_check
 normalization_self_check
