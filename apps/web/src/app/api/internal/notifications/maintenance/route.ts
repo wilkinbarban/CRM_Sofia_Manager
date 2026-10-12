@@ -8,10 +8,12 @@ import { createAdminClient } from '@/lib/supabase/admin'
 
 export const dynamic = 'force-dynamic'
 
+type Channel = 'web' | 'whatsapp' | 'telegram'
+
 type Claim = Readonly<{
   id: number | string
   event_type: string
-  channel: 'web' | 'whatsapp' | 'telegram'
+  channel: Channel
   payload: unknown
   delivery_key: string
   conversation_id: string | null
@@ -32,17 +34,26 @@ function claimedRow(value: unknown): unknown {
   return value.length === 1 ? value[0] : undefined
 }
 
-function validClaim(value: unknown): value is Claim {
+function validClaim(value: unknown, allowedChannels: readonly Channel[]): value is Claim {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false
   const row = value as Record<string, unknown>
   return ((typeof row.id === 'number' && Number.isSafeInteger(row.id) && row.id > 0) ||
     (typeof row.id === 'string' && /^[1-9]\d*$/.test(row.id))) &&
     typeof row.event_type === 'string' &&
-    (row.channel === 'web' || row.channel === 'whatsapp' || row.channel === 'telegram') &&
+    typeof row.channel === 'string' &&
+    allowedChannels.includes(row.channel as Channel) &&
     typeof row.delivery_key === 'string' && row.delivery_key.length > 0 &&
     (typeof row.conversation_id === 'string' || row.conversation_id === null) &&
     Number.isSafeInteger(row.attempt) && (row.attempt as number) > 0 &&
     typeof row.lease_token === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(row.lease_token)
+}
+
+function resolveActiveChannels(): Channel[] {
+  const channels: Channel[] = []
+  if (notificationOperationalGates.web.effective) channels.push('web')
+  if (notificationOperationalGates.whatsapp.effective) channels.push('whatsapp')
+  if (notificationOperationalGates.telegram.effective) channels.push('telegram')
+  return channels
 }
 
 export async function POST(request: Request) {
@@ -55,16 +66,24 @@ export async function POST(request: Request) {
     return NextResponse.json({ completed: 0, failed: 0 }, { headers: { 'Cache-Control': 'no-store' } })
   }
 
+  const activeChannels = resolveActiveChannels()
+  if (activeChannels.length === 0) {
+    return NextResponse.json({ completed: 0, failed: 0 }, { headers: { 'Cache-Control': 'no-store' } })
+  }
+
   let completed = 0
   let failed = 0
   try {
     const db = createAdminClient()
     for (let i = 0; i < 20; i++) {
-      const claim = await db.rpc('claim_notification_outbox', { p_lease_seconds: 60 })
+      const claim = await db.rpc('claim_notification_outbox_for_channels', {
+        p_channels: activeChannels,
+        p_lease_seconds: 60,
+      })
       if (claim.error) throw new Error('MAINTENANCE_UNAVAILABLE')
       const row = claimedRow(claim.data)
       if (row === null) break
-      if (!validClaim(row)) throw new Error('MAINTENANCE_UNAVAILABLE')
+      if (!validClaim(row, activeChannels)) throw new Error('MAINTENANCE_UNAVAILABLE')
       const job = row
       const message = resolveNotificationOutboxMessage(job.event_type, job.payload)
       let result: { status: 'success' } | { status: 'retryable' | 'permanent'; error: string }
