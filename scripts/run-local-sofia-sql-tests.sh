@@ -36,13 +36,37 @@
 # Inside its own container the disposable database also gets one ephemeral loopback password
 # rule (see ensure_loopback_password_rule); it never reaches the host or the repository.
 
+# Supported: execute with trusted Bash startup hooks and exported functions.
+# For clean Bash startup, launch from a trusted caller with an empty environment:
+# /usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/bin /bin/bash --noprofile --norc \
+#   scripts/run-local-sofia-sql-tests.sh --self-check
+# Bash startup hooks/functions run BEFORE this file; we cannot protect that shell.
+# Refuse sourcing before changing caller state, even when the caller spoofs $0.
+if (return 0 2>/dev/null); then
+  printf 'error: execute this runner; do not source it\n' >&2
+  return 1
+fi
+
+# Only these explicit variables reach tools. DO_NOT_TRACK is a configured opt-out;
+# provider support and suppression of telemetry traffic have NOT been verified.
+# Supabase remains repository-pinned; PATH and the Docker socket are explicitly local.
+sanitized_exec() {
+  local home=$1 tmp=$2
+  shift 2
+  exec /usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/bin LC_ALL=C \
+    HOME="$home" TMPDIR="$tmp" DO_NOT_TRACK=1 \
+    DOCKER_HOST=unix:///var/run/docker.sock "$@"
+}
+
+# Transfer only declared code and argv, never an ambient entry marker or environment.
+runner_main() {
 set -Eeuo pipefail
 set +x
 umask 077
 
 # Computed first and frozen afterwards: `readonly var=$(...)` would mask a failing
 # subshell, leaving repo_root empty instead of aborting the run.
-repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
+repo_root="$(cd -- "$(dirname -- "$0")/.." && pwd -P)"
 readonly repo_root
 cli="$repo_root/node_modules/.bin/supabase"
 readonly tests_dir_rel='supabase/tests'
@@ -79,7 +103,7 @@ Usage: scripts/run-local-sofia-sql-tests.sh [--self-check | supabase/tests/<suit
 
 Runs pgTAP suites inside a disposable local Supabase stack. With no arguments it runs
 the seven Sofia suites this harness owns. Only files under supabase/tests may be named.
-Use --self-check to run non-Docker harness validators (TAP, redaction, normalization) and exit.
+Use --self-check for offline environment, TAP, redaction, normalization and cleanup checks.
 EOF
 }
 
@@ -367,18 +391,19 @@ fi
 
 command -v python3 >/dev/null 2>&1 || die 'python3 is required for temporary normalization'
 
-have_tap_parser=false
-if perl -MTAP::Parser -e 1 >/dev/null 2>&1; then
-  have_tap_parser=true
-fi
-
 work="$(mktemp -d "$work_prefix.XXXXXX")"
 trap cleanup EXIT
 trap 'signal_exit 129' HUP
 trap 'signal_exit 130' INT
 trap 'signal_exit 143' TERM
-mkdir -p "$work/project" "$work/run"
-chmod 700 "$work" "$work/project" "$work/run"
+mkdir -p "$work/project" "$work/run" "$work/home" "$work/tmp"
+chmod 700 "$work" "$work/project" "$work/run" "$work/home" "$work/tmp"
+# CLI/Docker credentials and caches must never resolve against the operator's home.
+export HOME="$work/home" TMPDIR="$work/tmp"
+have_tap_parser=false
+if perl -MTAP::Parser -e 1 >/dev/null 2>&1; then
+  have_tap_parser=true
+fi
 
 # ---------------------------------------------------------------------------
 # TAP validation. A real parser is used when perl's TAP::Parser is present; the
@@ -1012,6 +1037,88 @@ print(
 PY
 }
 
+# Fake executables inspect only synthetic environment values; no service is contacted.
+environment_self_check() {
+  local fake_dir="$work/run/environment-bin" tool
+  mkdir -p "$fake_dir"
+  cat >"$fake_dir/supabase" <<'STUB'
+#!/bin/bash
+set -eu
+[[ "$HOME" == "$1" && "$TMPDIR" == "$2" ]] || {
+  printf 'environment_self_check: inherited HOME/TMPDIR\n' >&2
+  exit 1
+}
+[[ "$PATH" == /usr/local/bin:/usr/bin:/bin && "$LC_ALL" == C && "$DO_NOT_TRACK" == 1 ]]
+[[ "$DOCKER_HOST" == unix:///var/run/docker.sock ]]
+[[ ! -e "$HOME/.docker/config.json" && -d "$HOME" && -d "$TMPDIR" ]]
+for name in $(compgen -e); do
+  case "$name" in
+    HOME|TMPDIR|PATH|LC_ALL|DO_NOT_TRACK|DOCKER_HOST|PWD|SHLVL|_) ;;
+    *) printf 'environment_self_check: unexpected exported variable\n' >&2; exit 1 ;;
+  esac
+done
+[[ $(type -t injected_function || true) != function ]]
+# A descendant shell must retain the same boundary (no ambient BASH_ENV hook).
+if [[ "${3:-}" != child ]]; then
+  /bin/bash "$0" "$1" "$2" child
+fi
+STUB
+  printf 'exit 98\n' >"$fake_dir/must-not-source"
+  cp "$fake_dir/supabase" "$fake_dir/docker"
+  chmod +x "$fake_dir/supabase" "$fake_dir/docker"
+  for tool in supabase docker; do
+    (
+      export HOME=/hostile-home TMPDIR=/hostile-tmp DOCKER_HOST=tcp://hostile:2375
+      export PATH=/hostile-bin XDG_CONFIG_HOME=/hostile-config XDG_CACHE_HOME=/hostile-cache
+      export DOCKER_CONTEXT=hostile DOCKER_CONFIG=/hostile-config DOCKER_TLS_VERIFY=1
+      export DOCKER_CERT_PATH=/hostile-certs DO_NOT_TRACK=0
+      export sofia_sanitized_entry=true
+      export DATABASE_URL=hostile SUPABASE_ACCESS_TOKEN=hostile OPENAI_API_KEY=hostile
+      export S3_ACCESS_KEY=hostile APPLE_SECRET=hostile SENDGRID_API_KEY=hostile
+      export PYTHONPATH=/hostile PERL5OPT=hostile HTTPS_PROXY=hostile ARBITRARY_SECRET=hostile
+      export BASH_ENV="$fake_dir/must-not-source" ENV="$fake_dir/must-not-source"
+      injected_function() { return 99; }
+      export -f injected_function
+      sanitized_exec "$work/home" "$work/tmp" "$fake_dir/$tool" "$work/home" "$work/tmp"
+    ) || die "environment self-check failed for fake $tool"
+  done
+  # Test public entry from a trusted shell with spoofed $0 and exported markers.
+  local entry marker entry_output entry_status
+  printf '#!/bin/bash\nprintf "entry-tool-contact\\n"\nexit 91\n' >"$fake_dir/dirname"
+  cp "$fake_dir/dirname" "$fake_dir/cat"
+  chmod +x "$fake_dir/dirname" "$fake_dir/cat"
+  for entry in execute source-marker source; do
+    marker=true
+    if [[ "$entry" == source ]]; then marker=''; fi
+    entry_status=0
+    entry_output="$(/usr/bin/env -i PATH="$fake_dir:/usr/bin:/bin" \
+      HOME=/hostile-home TMPDIR=/hostile-tmp sofia_sanitized_entry="$marker" \
+      /bin/bash --noprofile --norc -c '
+        if [[ "$1" == execute ]]; then exec /bin/bash "$2" --help; fi
+        before="$(set +o);$(umask)"
+        source "$2" --help
+        status=$?
+        [[ "$(set +o);$(umask)" == "$before" ]] || exit 92
+        printf "source_status=%s\n" "$status"
+        exit "$status"
+      ' "$repo_root/scripts/run-local-sofia-sql-tests.sh" "$entry" \
+      "$repo_root/scripts/run-local-sofia-sql-tests.sh" 2>&1)" \
+      || entry_status=$?
+    if [[ "$entry" == execute ]]; then
+      [[ "$entry_status" == 0 && "$entry_output" == Usage:* && "$entry_output" != *entry-tool-contact* ]] \
+        || die 'external entry did not sanitize the exported marker and tool PATH'
+    else
+      [[ "$entry_status" == 1 && "$entry_output" == $'error: execute this runner; do not source it\nsource_status=1' ]] \
+        || die "external entry accepted sourcing or changed caller state: $entry (exit=$entry_status)"
+    fi
+  done
+  log 'external_entry_self_check=pass (exported-marker, spoofed-argv0, sourcing-refused, caller-state-preserved, no-fake-tool-contact)'
+  [[ "$cli" == "$repo_root/node_modules/.bin/supabase" ]] \
+    || die 'environment self-check: Supabase binary is not repository-pinned'
+  log 'environment_self_check=pass (allowlist, private-home/tmp, fixed-local-docker, DO_NOT_TRACK=1-configured, pinned-cli, descendants, no-exported-functions)'
+}
+
+environment_self_check
 tap_self_check
 redact_self_check
 normalization_self_check
@@ -1309,3 +1416,8 @@ if ((${#failed_suites[@]})); then
   exit 1
 fi
 log 'all selected suites passed'
+}
+
+sanitized_exec /nonexistent /tmp /bin/bash --noprofile --norc -c \
+  "$(declare -f sanitized_exec runner_main); runner_main \"\$@\"" \
+  "${BASH_SOURCE[0]}" "$@"
