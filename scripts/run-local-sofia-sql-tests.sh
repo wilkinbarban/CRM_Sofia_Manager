@@ -1491,7 +1491,7 @@ import base64, hashlib, hmac, json, os, re, subprocess, sys, time, uuid
 exe, container, temp_root, auth_image, storage_image = sys.argv[1:6]
 name = 'sofia-auth-' + uuid.uuid4().hex[:12]
 storage_name = 'sofia-storage-' + uuid.uuid4().hex[:12]
-status, phase, cleanup, residue = 1, 'roles', 'not-created', 'not-created'
+status, phase, step, cleanup, residue = 1, 'roles', 'reserved-roles', 'not-created', 'not-created'
 created = []
 
 def docker(*args, timeout=90, stdin=None):
@@ -1523,7 +1523,7 @@ try:
                  "grant supabase_admin to postgres;\n" % (auth_secret, storage_secret))
     if result.returncode:
         raise ValueError('reserved role setup failed')
-    phase = 'auth'
+    phase, step = 'auth', 'auth-credentials'
     env_path = write_env('auth.env', {
         'API_EXTERNAL_URL': 'http://127.0.0.1:9999', 'GOTRUE_API_HOST': '127.0.0.1',
         'GOTRUE_API_PORT': '9999', 'GOTRUE_SITE_URL': 'http://127.0.0.1:3000',
@@ -1533,6 +1533,7 @@ try:
         'GOTRUE_JWT_DEFAULT_GROUP_NAME': 'authenticated', 'GOTRUE_OPERATOR_TOKEN': operator_secret,
         'GOTRUE_MAILER_AUTOCONFIRM': 'true', 'GOTRUE_EXTERNAL_EMAIL_ENABLED': 'true',
         'GOTRUE_LOG_LEVEL': 'warn'})
+    step = 'auth-create'
     result = docker('create', '--pull', 'never', '--network', 'container:' + container,
                     '--name', name, '--label', 'org.sofia.sql-tests.owner=' + name,
                     '--env-file', env_path, '--entrypoint', 'auth', auth_image, 'migrate')
@@ -1540,10 +1541,11 @@ try:
     if result.returncode or not re.fullmatch(r'[0-9a-f]{64}', cid):
         raise ValueError('auth container not created')
     created.append(cid)
+    step = 'auth-run'  # The existing start call is bounded; there is no separate wait.
     if docker('start', cid, timeout=600).returncode:
         raise ValueError('auth migrations failed')
     # Storage runs its own migration chain, which the product migrations depend on.
-    phase = 'storage'
+    phase, step = 'storage', 'storage-credentials'
     storage_env = write_env('storage.env', {
         'ANON_KEY': jwt('anon', jwt_secret), 'SERVICE_KEY': jwt('service_role', jwt_secret),
         'AUTH_JWT_SECRET': jwt_secret, 'POSTGREST_URL': 'http://127.0.0.1:3000',
@@ -1552,35 +1554,42 @@ try:
         'DATABASE_URL': 'postgres://supabase_storage_admin:%s@127.0.0.1:5432/postgres' % storage_secret,
         'REQUEST_ALLOW_X_FORWARDED_PATH': 'true', 'STORAGE_BACKEND': 'file',
         'FILE_STORAGE_BACKEND_PATH': '/var/lib/storage', 'ENABLE_IMAGE_TRANSFORMATION': 'false'})
+    step = 'storage-create'
     result = docker('create', '--pull', 'never', '--network', 'container:' + container,
                     '--name', storage_name, '--label', 'org.sofia.sql-tests.owner=' + storage_name,
                     '--env-file', storage_env, storage_image)
     storage_cid = result.stdout.strip()
     if result.returncode or not re.fullmatch(r'[0-9a-f]{64}', storage_cid): raise ValueError('storage not created')
     created.append(storage_cid)
+    step = 'storage-start'
     if docker('start', storage_cid).returncode: raise ValueError('storage migrations failed')
+    step = 'storage-probe'
     for attempt in range(45):
         ready = sql("select to_regclass('storage.buckets') is not null")
         if ready.returncode == 0 and ready.stdout.strip() == 't': break
         if attempt == 44: raise ValueError('storage migrations did not finish')
         time.sleep(2)
+    step = 'storage-stop'
     docker('stop', storage_cid, timeout=120)
     status = 0
 except Exception:
     pass  # Never echo Docker output, migration logs or generated secrets.
 finally:
-    if created:
-        cleanup = 'removed'
-        for cid in created:
-            if docker('rm', '-f', '-v', cid).returncode:
-                status, cleanup = 1, 'failed'
-            inventory = docker('ps', '-aq', '--no-trunc', '--filter', 'id=' + cid)
-            if inventory.returncode or inventory.stdout.strip():
-                status, residue = 1, 'remaining'
-            else:
-                residue = 'absent-observed'
-print('db_only_bootstrap: operation=%s status=%s cleanup=%s container_residue=%s'
-      % (phase, 'ok' if status == 0 else 'failed', cleanup, residue))
+    try:
+        if created:
+            cleanup = 'removed'
+            for cid in created:
+                if docker('rm', '-f', '-v', cid).returncode:
+                    status, step, cleanup = 1, 'cleanup', 'failed'
+                inventory = docker('ps', '-aq', '--no-trunc', '--filter', 'id=' + cid)
+                if inventory.returncode or inventory.stdout.strip():
+                    status, step, residue = 1, 'cleanup', 'remaining'
+                else:
+                    residue = 'absent-observed'
+    except Exception:
+        status, step, cleanup, residue = 1, 'cleanup', 'failed', 'remaining'
+print('db_only_bootstrap: operation=%s phase=%s status=%s cleanup=%s container_residue=%s'
+      % (phase, step, 'ok' if status == 0 else 'failed', cleanup, residue))
 sys.exit(status)
 PY
 }
@@ -1590,9 +1599,12 @@ db_only_body() (
   local exe=$1 cid=$2 source=$3 run=$4 stage=$5 credentials=$6 auth=$7 storage=$8
   shift 8
   local applied=0 failed=0 suite name raw tap psql_status tap_status result tests count total=0 total_failed=0
-  trap 'status=$?; printf "db_only_body: migrations_applied=%d failed=%d\n" "$applied" "$((status != 0))"' EXIT
+  local phase=input-staging
+  trap 'status=$?; printf "db_only_body: phase=%s migrations_applied=%d failed=%d\n" "$phase" "$applied" "$((status != 0))"' EXIT
   stage_temporary_inputs "$source" "$run/body-project" "$@" || return 1
+  phase=bootstrap
   db_only_bootstrap "$exe" "$cid" "$run" "$auth" "$storage" || return 1
+  phase=credentials
   python3 - "$credentials" "$run" <<'PY' || return 1
 import re, sys, urllib.parse
 from pathlib import Path
@@ -1605,11 +1617,14 @@ pgpass = secret.replace('\\', '\\\\').replace(':', '\\:')
 url = 'postgresql://postgres:' + urllib.parse.quote(secret, safe='') + '@127.0.0.1:5432/postgres'
 (root / 'body-conninfo.sql').write_text("\\set runtime_dblink_conninfo '" + url + "'\n")
 PY
+  phase=staging
   run_bounded 'body staging' 120 "$exe" exec "$cid" mkdir -p "$stage/supabase" >/dev/null 2>&1 || return 1
   run_bounded 'body staging' 120 "$exe" cp "$run/body-project/supabase/." "$cid:$stage/supabase" >/dev/null 2>&1 || return 1
+  phase=credentials
   run_bounded 'body credentials' 60 "$exe" exec -i "$cid" sh -c \
     'umask 077; cat >"$1"' body "$stage/.pgpass" <"$run/body.pgpass" >/dev/null 2>&1 || return 1
   # Only postgres->postgres needs password auth for non-superuser dblink; keep admin trust.
+  phase=hba
   run_bounded 'body loopback rule' 60 "$exe" exec "$cid" sh -c '
     set -e
     hba=$(psql -X -U supabase_admin -d postgres -Atc "show hba_file")
@@ -1621,15 +1636,20 @@ PY
     run_bounded 'body psql' "$psql_timeout_seconds" "$exe" exec -i -e "PGPASSFILE=$stage/.pgpass" "$cid" \
       psql -X -h 127.0.0.1 -U postgres -d postgres -v ON_ERROR_STOP=1 -q "$@"
   }
+  phase=migrations
   for suite in "$run/body-project/supabase/migrations/"*.sql; do
-    body_sql -f "$stage/supabase/migrations/$(basename -- "$suite")" >"$run/body-sql.log" 2>&1 || return 1
+    body_sql -f "$stage/supabase/migrations/$(basename -- "$suite")" >/dev/null 2>&1 || return 1
     applied=$((applied + 1))
   done
-  body_sql -f "$stage/supabase/seed.sql" >"$run/body-sql.log" 2>&1 || return 1
+  phase=seed
+  body_sql -f "$stage/supabase/seed.sql" >/dev/null 2>&1 || return 1
+  phase=prepare
   db_only_prepare "$exe" "$cid" || return 1
   for suite in "$@"; do
     name="$(basename -- "$suite")"
+    phase=reset
     db_only_reset "$exe" "$cid" || return 1
+    phase=suites
     raw="$run/$name.raw"
     tap="$run/$name.tap"
     psql_status=0
@@ -1732,8 +1752,11 @@ argv = [row['argv'] for row in rows]
 joined = ' '.join(' '.join(row) for row in argv)
 report = Path(sys.argv[4]).read_text()
 assert secret not in report and secret not in joined, 'the body leaked the password'
+assert 'hostile SQL secret log' not in report, 'the body printed raw SQL stderr'
+assert not (Path(sys.argv[1]).parent / 'body-sql.log').exists(), 'migration stderr persisted'
 assert (status == 0) == (case == 'ok'), (case, status, report)
-assert re.search(r'db_only_body: migrations_applied=%d failed=%d' % (1 if case == 'migration-fail' else 2, 0 if case == 'ok' else 1), report), report
+expected_phase = {'migration-fail': 'migrations', 'seed-fail': 'seed', 'prepare-fail': 'prepare', 'reset-fail': 'reset'}.get(case, 'suites')
+assert re.search(r'db_only_body: phase=%s migrations_applied=%d failed=%d' % (expected_phase, 1 if case == 'migration-fail' else 2, 0 if case == 'ok' else 1), report), (case, report)
 files = [row[row.index('-f') + 1] for row in argv if 'psql' in row and '-f' in row and row[-1] != '-']
 assert files[:2] == ['/tmp/staging/supabase/migrations/0001_first.sql', '/tmp/staging/supabase/migrations/0002_second.sql'], files
 assert any(arg.endswith('/seed.sql') for row in argv for arg in row) == (case != 'migration-fail')
@@ -1799,10 +1822,23 @@ for image in ('gotrue:v2.192.0', 'storage-api:v1.62.5'):
     assert any('public.ecr.aws/supabase/' + image in row and '--pull' in row and 'never' in row for row in rows)
 count = 7 if case in ('default', 'flag-default') else 2
 assert 'summary: suites=%d assertions=%d failed_assertions=0 failing_suites=%d' % (count, count, int(case == 'psql-fail')) in report
-assert 'db_only_body: migrations_applied=2 failed=%d' % int(case == 'psql-fail') in report
+assert 'db_only_body: phase=suites migrations_applied=2 failed=%d' % int(case == 'psql-fail') in report
+assert 'db_only_bootstrap: operation=storage phase=storage-stop status=ok cleanup=removed container_residue=absent-observed' in report
 assert report.index('cleanup=removed') < report.index('summary: suites=')
 PY
   done
+  local safe_body='db_only_body: phase=migrations migrations_applied=0 failed=1'
+  local safe_bootstrap='db_only_bootstrap: operation=auth phase=auth-run status=failed cleanup=removed container_residue=absent-observed'
+  {
+    printf '%s\n' "$safe_body" "$safe_bootstrap"
+    printf '%s\n' 'RAW SQL select secret; PASSWORD=synthetic-secret postgres://secret' \
+      "${safe_body} PASSWORD=synthetic-secret" "${safe_bootstrap} postgres://secret" \
+      'db_only_body: phase=PASSWORD migrations_applied=0 failed=1' \
+      'db_only_body: migrations_applied=0 failed=1' \
+      'db_only_bootstrap: operation=auth phase=auth-wait status=failed cleanup=removed container_residue=absent-observed'
+  } >"$work/run/hostile-phase-report"
+  [[ "$(db_only_report "$work/run/hostile-phase-report")" == "$(printf '%s\n' "$safe_body" "$safe_bootstrap")" ]] \
+    || die 'phase reporting accepted unknown fields, raw SQL or environment secrets'
   unset DB_FAKE_CASE DB_FAKE_LOG
   log 'db_only_body_self_check=pass (fake-only: pgpass file, staging, migrations and seed through psql, no password in argv, isolated CLI dispatch)'
 }
@@ -2010,6 +2046,7 @@ db_only_bootstrap_self_check() {
 import json, os, sys
 from pathlib import Path
 args = sys.argv[1:]
+print('RAW SQL select secret; PASSWORD=synthetic-secret postgres://secret', file=sys.stderr)
 log = Path(os.environ['DB_FAKE_LOG'])
 with log.open('a') as stream:
     stream.write(json.dumps(args) + '\n')
@@ -2026,6 +2063,7 @@ if args[0] == 'exec':
         assert 'POSTGRES_PASSWORD' not in body
         sys.exit(1 if case == 'roles-fail' else 0)
     if "to_regclass('storage.buckets')" in body:
+        if case == 'probe-error': sys.stdout.buffer.write(b'\xff'); sys.exit(0)
         print('t')
         sys.exit(0)
     assert 'create extension' not in body
@@ -2061,6 +2099,7 @@ elif args[0] == 'stop':
     assert args == ['stop', storage_cid]
 elif args[0] == 'rm':
     assert args[1:] == ['-f', '-v', auth_cid] or args[1:] == ['-f', '-v', storage_cid]
+    if case == 'cleanup-error': sys.stdout.buffer.write(b'\xff'); sys.exit(0)
     sys.exit(1 if case == 'rm-fail' else 0)
 else:
     assert args[:4] == ['ps', '-aq', '--no-trunc', '--filter']
@@ -2069,7 +2108,7 @@ else:
 PY
   chmod +x "$fake"
   declare -F db_only_bootstrap >/dev/null || die 'DB-only bootstrap helper missing'
-  for case_name in ok roles-fail create-fail auth-fail storage-create-fail storage-fail rm-fail residue; do
+  for case_name in ok roles-fail create-fail auth-fail storage-create-fail storage-fail probe-error rm-fail residue cleanup-error; do
     export DB_FAKE_CASE="$case_name" DB_FAKE_LOG="$work/run/bootstrap-$case_name.jsonl"
     : >"$DB_FAKE_LOG"
     status=0
@@ -2083,23 +2122,28 @@ case, status = sys.argv[2], int(sys.argv[3])
 ops = [row[0] for row in rows]
 report = Path(sys.argv[4]).read_text()
 match = re.fullmatch(
-    r'db_only_bootstrap: operation=(roles|auth|storage|extensions) status=(ok|failed) '
+    r'db_only_bootstrap: operation=(roles|auth|storage) phase=([a-z-]+) status=(ok|failed) '
     r'cleanup=(not-created|removed|failed) container_residue=(not-created|absent-observed|remaining)\n', report)
 assert match, 'bootstrap report leaked output or omitted metadata'
 assert (status == 0) == (case == 'ok'), (case, status, report)
 expected_phase = {'roles-fail': 'roles', 'create-fail': 'auth', 'auth-fail': 'auth'}.get(case, 'storage')
 assert match.group(1) == expected_phase, (case, report)
+expected_step = {'roles-fail': 'reserved-roles', 'create-fail': 'auth-create', 'auth-fail': 'auth-run',
+                 'storage-create-fail': 'storage-create', 'storage-fail': 'storage-start', 'probe-error': 'storage-probe',
+                 'rm-fail': 'cleanup', 'residue': 'cleanup', 'cleanup-error': 'cleanup'}.get(case, 'storage-stop')
+assert match.group(2) == expected_step, (case, report)
 auth_created = case not in ('roles-fail', 'create-fail')
 owned = int(auth_created) + int(auth_created and case not in ('auth-fail', 'storage-create-fail'))
 assert ('create' in ops) == (case != 'roles-fail'), (case, ops)
 assert ('start' in ops) == auth_created, (case, ops)
 expected = {'roles-fail': ('not-created', 'not-created'), 'create-fail': ('not-created', 'not-created'),
-            'rm-fail': ('failed', 'absent-observed'), 'residue': ('removed', 'remaining')}.get(
+            'rm-fail': ('failed', 'absent-observed'), 'residue': ('removed', 'remaining'),
+            'cleanup-error': ('failed', 'remaining')}.get(
     case, ('removed', 'absent-observed'))
-assert match.groups()[2:] == expected, (case, report)
+assert match.groups()[3:] == expected, (case, report)
 assert all('postgres://' not in arg and 'PASSWORD' not in arg.upper() for row in rows for arg in row), 'bootstrap argv leaked a secret'
-assert [row[0] for row in rows if row[0] in ('rm', 'ps')] == ['rm', 'ps'] * owned, (case, ops)
-assert ('stop' in ops) == (case in ('ok', 'rm-fail', 'residue')), (case, ops)
+assert [row[0] for row in rows if row[0] in ('rm', 'ps')] == (['rm'] if case == 'cleanup-error' else ['rm', 'ps'] * owned), (case, ops)
+assert ('stop' in ops) == (case in ('ok', 'rm-fail', 'residue', 'cleanup-error')), (case, ops)
 PY
   done
   unset DB_FAKE_CASE DB_FAKE_LOG
@@ -2509,14 +2553,21 @@ db_only_mode() {
   local callback
   printf -v callback '/bin/bash --noprofile --norc %q >%q 2>&1' "$script" "$report"
   db_only_session "$exe" "$database" "$work/run" "$work/run/credentials" 60 "$callback" || status=$?
-  python3 - "$report" <<'PY'
+  db_only_report "$report"
+  return "$status"
+}
+
+# Only exact static phase schemas may cross the callback output boundary.
+db_only_report() {
+  python3 - "$1" <<'PY'
 import re, sys
 from pathlib import Path
 path = Path(sys.argv[1])
 patterns = (
     r'(?:PASS|FAIL) [A-Za-z0-9_.-]{1,128} \(assertions=\d+ failed=\d+ psql_exit=\d+(?: tap_exit=\d+)?\)',
     r'summary: suites=\d+ assertions=\d+ failed_assertions=\d+ failing_suites=\d+',
-    r'db_only_body: migrations_applied=\d+ failed=[01]',
+    r'db_only_body: phase=(?:input-staging|bootstrap|credentials|staging|hba|migrations|seed|prepare|reset|suites) migrations_applied=\d+ failed=[01]',
+    r'db_only_bootstrap: operation=(?:roles|auth|storage) phase=(?:reserved-roles|auth-credentials|auth-create|auth-run|storage-credentials|storage-create|storage-start|storage-probe|storage-stop|cleanup) status=(?:ok|failed) cleanup=(?:not-created|removed|failed) container_residue=(?:not-created|absent-observed|remaining)',
 )
 if path.exists():
     with path.open() as handle:
@@ -2526,7 +2577,6 @@ if path.exists():
             if len(line) <= 256 and any(re.fullmatch(pattern, line) for pattern in patterns):
                 print(line)
 PY
-  return "$status"
 }
 
 # Guard this deletion slice against reintroducing legacy definitions or direct calls.
