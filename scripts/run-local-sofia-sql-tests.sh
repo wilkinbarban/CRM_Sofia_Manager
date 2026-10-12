@@ -1265,6 +1265,10 @@ cid, attempted, status = '', False, 1
 phase, cleanup_state, residue = 'image', 'not-created', 'not-created'
 readiness = 'not-checked'
 data = '/var/lib/postgresql/data'
+# The socket answers as soon as the temporary initdb server is up, so a sentinel
+# that only the finished official bootstrap can satisfy is the real gate.
+sentinel = "select 1 from pg_roles where rolname = 'supabase_auth_admin'"
+probe_timeout = 5
 
 def docker(*args, timeout=15):
     return subprocess.run([exe, *args], capture_output=True, text=True, timeout=timeout)
@@ -1278,16 +1282,22 @@ def wait_ready(seconds):
             readiness = 'deadline'
             raise ValueError('readiness deadline exceeded')
         try:
-            result = docker('exec', cid, 'pg_isready', '-q', '-h', '/var/run/postgresql',
-                            '-p', '5432', '-U', 'postgres', '-d', 'postgres',
-                            timeout=min(15, remaining))
+            # TCP loopback only accepts after the official bootstrap restarts the
+            # server; the sentinel proves the init scripts finished.
+            result = docker('exec', cid, 'psql', '-h', '127.0.0.1', '-p', '5432',
+                            '-U', 'supabase_admin', '-d', 'postgres', '-Atc', sentinel,
+                            timeout=min(probe_timeout, remaining))
         except subprocess.TimeoutExpired:
-            readiness = 'probe-timeout'
+            # A probe that used its whole own bound hung; one cut short by the
+            # overall budget means the deadline was reached.
+            readiness = 'probe-timeout' if remaining > probe_timeout else 'deadline'
             raise
         if result.returncode == 0:
-            readiness = 'ready'
-            return
-        if result.returncode not in (1, 2):
+            if result.stdout.strip() == '1':
+                readiness = 'ready'
+                return
+        elif result.returncode != 2:
+            # 2 is a refused connection during bootstrap; anything else is real.
             readiness = 'probe-failed'
             raise ValueError('readiness probe failed')
         time.sleep(min(0.2, max(0, deadline - time.monotonic())))
@@ -1451,17 +1461,25 @@ elif args[0] == 'start' and case == 'start':
     print('POSTGRES_PASSWORD=synthetic-must-not-leak', file=sys.stderr)
     sys.exit(1)
 elif args[0] == 'exec':
-    assert args == ['exec', cid, 'pg_isready', '-q', '-h', '/var/run/postgresql',
-                    '-p', '5432', '-U', 'postgres', '-d', 'postgres']
+    assert args == ['exec', cid, 'psql', '-h', '127.0.0.1', '-p', '5432',
+                    '-U', 'supabase_admin', '-d', 'postgres', '-Atc',
+                    "select 1 from pg_roles where rolname = 'supabase_auth_admin'"]
     assert any(row == ['start', cid] for row in history)
     probes = sum(row[0] == 'exec' for row in history)
-    if case == 'ready-hang': time.sleep(3)
-    if case in ('ready-reject', 'ready-offline'):
-        sys.exit(1 if case == 'ready-reject' else 2)
+    if case == 'ready-hang': time.sleep(10)
+    # 2 means TCP refused (the initdb server only listens on its socket).
+    if case == 'ready-offline': sys.exit(2)
+    if case == 'ready-retry' and probes < 2: sys.exit(2)
+    if case == 'ready-refused' and probes < 1: sys.exit(2)
+    # 0 with a non-sentinel body means the official init scripts are still running.
+    if case == 'ready-sentinel' and probes < 2:
+        print('0')
+        sys.exit(0)
+    if case == 'ready-reject': sys.exit(1)
     if case in ('ready-invalid', 'ready-unexpected'):
         print('POSTGRES_PASSWORD=synthetic-must-not-leak', file=sys.stderr)
         sys.exit(3 if case == 'ready-invalid' else 7)
-    if case == 'ready-retry' and probes < 2: sys.exit(probes + 1)
+    print('1')
 elif args[0] == 'ps':
     assert args == ['ps', '-aq', '--no-trunc', '--filter', 'id=' + cid]
     if case in ('remove', 'residue'): print(cid)
@@ -1475,13 +1493,15 @@ PY
   local cases=(good empty running state-missing state-type status-missing running-missing running-type status
     volnull volempty volbad volmissing voltype volvalues voljson bind volume mount-extra mount-missing
     mount-type mount-path mount-source mount-rw tmpfs ports network publish owner malformed id pinned name missing create partial start remove image residue inventory
-    ready-retry ready-reject ready-offline ready-invalid ready-unexpected ready-hang ready-owner)
+    ready-retry ready-sentinel ready-refused ready-reject ready-offline ready-invalid ready-unexpected ready-hang ready-owner)
   for case_name in "${cases[@]}"; do
     export DB_FAKE_CASE="$case_name" DB_FAKE_LOG="$work/run/db-only-$case_name.jsonl"
     : >"$DB_FAKE_LOG"
     status=0
     readiness_args=(1)
     if [[ "$case_name" == good ]]; then readiness_args=(); fi
+    # Multi-probe cases need a cap that survives several fake process spawns.
+    case "$case_name" in ready-retry | ready-sentinel | ready-refused) readiness_args=(5) ;; ready-hang) readiness_args=(20) ;; esac
     db_only_session "$fake" local-postgres "$work/run" "${readiness_args[@]}" \
       >"$work/run/db-only-output" 2>&1 || status=$?
     [[ -s "$work/run/db-only-output" ]] || die 'DB-only helper omitted its bounded report'
@@ -1491,7 +1511,7 @@ from pathlib import Path
 rows = [json.loads(line) for line in Path(sys.argv[1]).read_text().splitlines()]
 case, status = sys.argv[2], int(sys.argv[3])
 ops = [row[0] for row in rows]
-accepted = ('good', 'empty', 'volnull', 'volempty', 'ready-retry')
+accepted = ('good', 'empty', 'volnull', 'volempty', 'ready-retry', 'ready-sentinel', 'ready-refused')
 readiness_failed = ('ready-reject', 'ready-offline', 'ready-invalid', 'ready-unexpected', 'ready-hang')
 started = accepted + readiness_failed + ('start', 'remove', 'residue', 'inventory', 'ready-owner')
 image_rejected = ('image', 'volbad', 'volmissing', 'voltype', 'volvalues', 'voljson')
@@ -1525,8 +1545,8 @@ expected_cleanup = {
 }.get(case, ('not-created', 'not-created') if case in image_rejected else ('removed', 'absent-observed'))
 assert match.groups()[2:4] == expected_cleanup, (case, report)
 expected_ready = ('not-checked' if case not in started or case == 'start' else {
-    'ready-reject': 'deadline', 'ready-offline': 'deadline', 'ready-hang': 'probe-timeout',
-    'ready-invalid': 'probe-failed', 'ready-unexpected': 'probe-failed',
+    'ready-offline': 'deadline', 'ready-hang': 'probe-timeout',
+    'ready-reject': 'probe-failed', 'ready-invalid': 'probe-failed', 'ready-unexpected': 'probe-failed',
 }.get(case, 'ready'))
 assert match.group(5) == expected_ready, (case, report)
 probes = [row for row in rows if row[0] == 'exec']
@@ -1534,10 +1554,14 @@ assert bool(probes) == (case in started and case != 'start'), (case, ops)
 if probes:
     assert ops[3:5] == ['start', 'exec'], (case, ops)
     assert ops[4:4 + len(probes)] == ['exec'] * len(probes)
-    assert all(row == ['exec', 'b' * 64, 'pg_isready', '-q', '-h', '/var/run/postgresql',
-                       '-p', '5432', '-U', 'postgres', '-d', 'postgres'] for row in probes)
-    if case == 'ready-retry': assert len(probes) == 3
-    if case not in ('ready-retry', 'ready-reject', 'ready-offline'): assert len(probes) == 1
+    assert all(row == ['exec', 'b' * 64, 'psql', '-h', '127.0.0.1', '-p', '5432',
+                       '-U', 'supabase_admin', '-d', 'postgres', '-Atc',
+                       "select 1 from pg_roles where rolname = 'supabase_auth_admin'"]
+               for row in probes), (case, probes[0])
+    expected_probes = {'ready-retry': 3, 'ready-sentinel': 3, 'ready-refused': 2}.get(case)
+    if expected_probes: assert len(probes) == expected_probes, (case, len(probes))
+    elif case == 'ready-offline': assert len(probes) >= 2, (case, len(probes))
+    else: assert len(probes) == 1, (case, len(probes))
 assert set(ops) <= {'image', 'create', 'inspect', 'start', 'exec', 'rm', 'ps'}
 if case in image_rejected:
     assert ops == ['image']
@@ -1566,7 +1590,7 @@ PY
       || die 'invalid readiness deadline report mismatch'
   done
   unset DB_FAKE_CASE DB_FAKE_LOG
-  log 'db_only_self_check=pass (52 fake-only cases: readiness/order/deadline, pinned-image/volumes, argv, stopped-state, tmpfs-only, pre-start-isolation, exact-owned-cleanup, bounded-reporting; not real residue proof)'
+  log 'db_only_self_check=pass (54 fake-only cases: bootstrap-sentinel readiness/order/deadline, pinned-image/volumes, argv, stopped-state, tmpfs-only, pre-start-isolation, exact-owned-cleanup, bounded-reporting; not real residue proof)'
 }
 
 environment_self_check
