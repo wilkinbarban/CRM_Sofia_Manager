@@ -56,6 +56,42 @@ sanitized_exec() {
 }
 
 # Transfer only declared code and argv, never an ambient entry marker or environment.
+runner_exec() {
+  # Save caller stdin before replacing it with declarations; restore it and close
+  # the transport descriptor before any callback/SQL child can inherit it.
+  sanitized_exec /nonexistent /tmp /bin/bash --noprofile --norc -c \
+    'source /dev/stdin || exit $?; exec 0<&9 9<&- || exit $?; runner_main "$@"' "$@" \
+    9<&0 <<<"$(declare -f sanitized_exec runner_exec runner_transport_self_check runner_main)"
+}
+
+runner_transport_self_check() {
+  local padding fixture output status=0
+  printf -v padding '%140000s' ''
+  padding=${padding// /x}
+  output="$(
+    runner_main() {
+      : PADDING
+      [[ "$0" == 'synthetic script' && $# == 2 && "$1" == 'argument with spaces' && "$2" == '' ]] || exit 93
+      [[ -z "${TRANSPORT_SECRET+x}" && "$HOME" == /nonexistent && "$TMPDIR" == /tmp ]] || exit 94
+      [[ ! -e /proc/self/fd/9 ]] || exit 95
+      local input
+      input=$(/bin/bash --noprofile --norc -c 'IFS= read -r input; printf "%s" "$input"')
+      [[ "$input" == 'callback SQL input' ]] || exit 96
+      printf 'transport=argv,stdin,environment,fd-pass\n'
+      exit 42
+    }
+    fixture="$(declare -f runner_main)"
+    eval "${fixture/PADDING/$padding}"
+    fixture="$(declare -f runner_main)"
+    ((${#fixture} > 131072)) || exit 97
+    export TRANSPORT_SECRET=synthetic
+    runner_exec 'synthetic script' 'argument with spaces' '' <<< 'callback SQL input' 2>&1
+  )" || status=$?
+  [[ "$status" == 42 && "$output" == 'transport=argv,stdin,environment,fd-pass' ]] \
+    || die "runner transport regression failed (exit=$status): $output"
+  log 'runner_transport_self_check=pass (>128KiB definitions, argv0/argv, inherited stdin, env-i, fd closed, exit preserved)'
+}
+
 runner_main() {
 set -Eeuo pipefail
 set +x
@@ -1542,9 +1578,19 @@ try:
     if result.returncode or not re.fullmatch(r'[0-9a-f]{64}', cid):
         raise ValueError('auth container not created')
     created.append(cid)
-    step = 'auth-run'  # The existing start call is bounded; there is no separate wait.
+    step = 'auth-run'
     if docker('start', cid, timeout=600).returncode:
-        raise ValueError('auth migrations failed')
+        raise ValueError('auth start failed')
+    # Detached start proves only startup. Wait on the full CID returned by our
+    # owner-labelled create, never a name/filter; stdout is the process ExitCode,
+    # distinct from the Docker CLI returncode. No logs or state dumps are needed.
+    step = 'auth-wait'
+    result = docker('wait', cid, timeout=600)
+    if result.returncode or not re.fullmatch(r'(?:0|[1-9][0-9]{0,2})\n?', result.stdout):
+        raise ValueError('auth wait failed')
+    step = 'auth-exit'
+    if int(result.stdout) != 0:
+        raise ValueError('auth process failed')
     # Storage runs its own migration chain, which the product migrations depend on.
     phase, step = 'storage', 'storage-credentials'
     storage_env = write_env('storage.env', {
@@ -1736,6 +1782,7 @@ if args[0] == 'cp':
     assert staged.read_bytes() == original.read_bytes(), 'staging changed the original ownership transfer'
 if args[:2] == ['image', 'inspect']:
     print(json.dumps([{'Id': 'sha256:' + 'a' * 64, 'Config': {'Volumes': None}}]))
+if args[0] == 'wait': print('0')
 if args[0] == 'create':
     print(('b' if '--tmpfs' in args else 'e' if '--entrypoint' in args else 'f') * 64)
 if args[0] == 'inspect':
@@ -1851,7 +1898,7 @@ from pathlib import Path
 rows = [json.loads(line)['argv'] for line in Path(sys.argv[1]).read_text().splitlines()]
 case, report = sys.argv[2:]
 assert rows[0] == ['image', 'inspect', '--', 'public.ecr.aws/supabase/postgres:17.6.1.143']
-assert all(row[0] in ('image', 'create', 'inspect', 'start', 'exec', 'cp', 'stop', 'rm', 'ps') for row in rows)
+assert all(row[0] in ('image', 'create', 'inspect', 'start', 'wait', 'exec', 'cp', 'stop', 'rm', 'ps') for row in rows)
 for image in ('gotrue:v2.192.0', 'storage-api:v1.62.5'):
     assert any('public.ecr.aws/supabase/' + image in row and '--pull' in row and 'never' in row for row in rows)
 count = 7 if case in ('default', 'flag-default') else 2
@@ -1864,17 +1911,19 @@ PY
   local safe_body='db_only_body: phase=migrations migrations_applied=0 failed=1'
   local safe_bootstrap='db_only_bootstrap: operation=auth phase=auth-run status=failed cleanup=removed container_residue=absent-observed'
   local safe_probe='db_only_storage_probe: result=malformed lifecycle=running'
+  local safe_wait="${safe_bootstrap/auth-run/auth-wait}" safe_exit="${safe_bootstrap/auth-run/auth-exit}"
   {
-    printf '%s\n' "$safe_body" "$safe_bootstrap" "$safe_probe"
+    printf '%s\n' "$safe_body" "$safe_bootstrap" "$safe_probe" "$safe_wait" "$safe_exit"
     printf '%s\n' 'RAW SQL select secret; PASSWORD=synthetic-secret postgres://secret' \
       "${safe_body} PASSWORD=synthetic-secret" "${safe_bootstrap} postgres://secret" \
       "${safe_probe} PASSWORD=synthetic-secret" 'db_only_storage_probe: result=unknown lifecycle=running' \
       'db_only_storage_probe: result=timeout lifecycle=synthetic-private' \
       'db_only_body: phase=PASSWORD migrations_applied=0 failed=1' \
       'db_only_body: migrations_applied=0 failed=1' \
-      'db_only_bootstrap: operation=auth phase=auth-wait status=failed cleanup=removed container_residue=absent-observed'
+      "${safe_wait} PASSWORD=synthetic-secret" "${safe_exit} postgres://secret" \
+      'db_only_bootstrap: operation=auth phase=auth-unknown status=failed cleanup=removed container_residue=absent-observed'
   } >"$work/run/hostile-phase-report"
-  [[ "$(db_only_report "$work/run/hostile-phase-report")" == "$(printf '%s\n' "$safe_body" "$safe_bootstrap" "$safe_probe")" ]] \
+  [[ "$(db_only_report "$work/run/hostile-phase-report")" == "$(printf '%s\n' "$safe_body" "$safe_bootstrap" "$safe_probe" "$safe_wait" "$safe_exit")" ]] \
     || die 'phase reporting accepted unknown fields, raw SQL or environment secrets'
   unset DB_FAKE_CASE DB_FAKE_LOG
   log 'db_only_body_self_check=pass (fake-only: pgpass file, staging, migrations and seed through psql, no password in argv, isolated CLI dispatch)'
@@ -2118,6 +2167,7 @@ elif args[0] == 'create':
     assert envfile.stat().st_mode & 0o777 == 0o600
     body = envfile.read_text()
     assert args[1:5] == ['--pull', 'never', '--network', 'container:' + 'b' * 64]
+    assert args[args.index('--label') + 1] == 'org.sofia.sql-tests.owner=' + args[args.index('--name') + 1]
     assert '--tmpfs' not in args and '-p' not in args and '--publish' not in args
     if body.startswith('API_EXTERNAL_URL=http://127.0.0.1:9999\n'):
         assert 'postgres://supabase_auth_admin:' in body and 'GOTRUE_JWT_SECRET=' in body
@@ -2126,6 +2176,7 @@ elif args[0] == 'create':
         if case == 'create-fail': sys.exit(1)
         print(auth_cid)
     else:
+        assert any(json.loads(line) == ['wait', auth_cid] for line in log.read_text().splitlines()), 'Storage created before Auth completion'
         assert 'DATABASE_URL=postgres://supabase_storage_admin:' in body
         assert 'STORAGE_BACKEND=file' in body and 'FILE_STORAGE_BACKEND_PATH=/var/lib/storage' in body
         assert args[-2:] == [storage_image, 'node'] or args[-1].endswith('server.js') or storage_image in args
@@ -2139,6 +2190,11 @@ elif args[0] == 'start':
     assert args in (['start', auth_cid], ['start', storage_cid])
     if case == 'auth-fail' and args[1] == auth_cid: sys.exit(3)
     if case == 'storage-fail' and args[1] == storage_cid: sys.exit(4)
+elif args[0] == 'wait':
+    assert args == ['wait', auth_cid]
+    if case == 'auth-cli-error': print('0'); sys.exit(1)
+    print({'auth-process-fail': '7', 'auth-malformed': 'synthetic private malformed',
+           'auth-empty': '', 'auth-multiple': '0\n0', 'auth-leading': '00'}.get(case, '0'))
 elif args[0] == 'inspect':
     assert args[1] == '--format' and args[-1] == storage_cid
     assert '.Id' in args[2] and 'com.supabase' not in args[2] and '.Config.Labels' in args[2]
@@ -2164,7 +2220,7 @@ else:
 PY
   chmod +x "$fake"
   declare -F db_only_bootstrap >/dev/null || die 'DB-only bootstrap helper missing'
-  for case_name in ok roles-fail create-fail auth-fail storage-create-fail storage-fail probe-error rm-fail residue cleanup-error probe-retry probe-false probe-formatted probe-malformed probe-sql-fail probe-timeout probe-exited probe-foreign probe-id probe-state-type probe-other probe-inspect-fail probe-inspect-timeout; do
+  for case_name in auth-process-fail auth-timeout auth-malformed auth-empty auth-multiple auth-leading auth-cli-error ok roles-fail create-fail auth-fail storage-create-fail storage-fail probe-error rm-fail residue cleanup-error probe-retry probe-false probe-formatted probe-malformed probe-sql-fail probe-timeout probe-exited probe-foreign probe-id probe-state-type probe-other probe-inspect-fail probe-inspect-timeout; do
     export DB_FAKE_CASE="$case_name" DB_FAKE_LOG="$work/run/bootstrap-$case_name.jsonl"
     : >"$DB_FAKE_LOG"
     status=0
@@ -2181,7 +2237,9 @@ def run(args, **kwargs):
     inspect = len(args) > 1 and args[1] == 'inspect'
     if probe: assert kwargs['timeout'] == 60
     if inspect: assert kwargs['timeout'] <= 15
-    if probe and case == 'probe-timeout' or inspect and case == 'probe-inspect-timeout':
+    wait = len(args) > 1 and args[1] == 'wait'
+    if wait: assert kwargs['timeout'] == 600 and args[2:] == ['e' * 64]
+    if (wait and case == 'auth-timeout' or probe and case == 'probe-timeout' or inspect and case == 'probe-inspect-timeout'):
         raise subprocess.TimeoutExpired(args, kwargs['timeout'], stderr='synthetic private timeout')
     return real_run(args, **kwargs)
 sys.argv = ['bootstrap', sys.argv[2], 'b' * 64, sys.argv[3], 'local-auth-image', 'local-storage-image']
@@ -2213,6 +2271,11 @@ probes = [row for row in rows if 'psql' in row][1:]
 if case.startswith('probe-'):
     assert len(probes) == (45 if case == 'probe-false' else 2 if case == 'probe-retry' else 0 if case == 'probe-timeout' else 1), (case, len(probes))
     assert all('-X' in row and '-tA' in row for row in probes), 'scalar flags missing'
+auth_failure = case.startswith('auth-') and case != 'auth-fail'
+assert not auth_failure or ops.count('create') == 1, 'Storage created after Auth failure'
+assert ('wait' in ops) == (case not in ('roles-fail', 'create-fail', 'auth-fail', 'auth-timeout'))
+if not auth_failure and case not in ('roles-fail', 'create-fail', 'auth-fail'):
+    assert ops.index('start') < ops.index('wait') < [i for i, op in enumerate(ops) if op == 'create'][1]
 assert ('inspect' in ops) == (probe_failure and case != 'probe-inspect-timeout')
 match = re.fullmatch(
     r'db_only_bootstrap: operation=(roles|auth|storage) phase=([a-z-]+) status=(ok|failed) '
@@ -2220,14 +2283,16 @@ match = re.fullmatch(
 assert match, 'bootstrap report leaked output or omitted metadata'
 assert (status == 0) == (case in ('ok', 'probe-retry')), (case, status, report)
 expected_phase = {'roles-fail': 'roles', 'create-fail': 'auth', 'auth-fail': 'auth'}.get(case, 'storage')
+if auth_failure: expected_phase = 'auth'
 assert match.group(1) == expected_phase, (case, report)
 expected_step = {'roles-fail': 'reserved-roles', 'create-fail': 'auth-create', 'auth-fail': 'auth-run',
                  'storage-create-fail': 'storage-create', 'storage-fail': 'storage-start', 'probe-error': 'storage-probe',
                  'rm-fail': 'cleanup', 'residue': 'cleanup', 'cleanup-error': 'cleanup'}.get(case, 'storage-stop')
 if probe_failure: expected_step = 'storage-probe'
+if auth_failure: expected_step = 'auth-exit' if case == 'auth-process-fail' else 'auth-wait'
 assert match.group(2) == expected_step, (case, report)
 auth_created = case not in ('roles-fail', 'create-fail')
-owned = int(auth_created) + int(auth_created and case not in ('auth-fail', 'storage-create-fail'))
+owned = int(auth_created) + int(auth_created and not auth_failure and case not in ('auth-fail', 'storage-create-fail'))
 assert ('create' in ops) == (case != 'roles-fail'), (case, ops)
 assert ('start' in ops) == auth_created, (case, ops)
 expected = {'roles-fail': ('not-created', 'not-created'), 'create-fail': ('not-created', 'not-created'),
@@ -2661,7 +2726,7 @@ patterns = (
     r'(?:PASS|FAIL) [A-Za-z0-9_.-]{1,128} \(assertions=\d+ failed=\d+ psql_exit=\d+(?: tap_exit=\d+)?\)',
     r'summary: suites=\d+ assertions=\d+ failed_assertions=\d+ failing_suites=\d+',
     r'db_only_body: phase=(?:input-staging|bootstrap|credentials|staging|hba|migrations|seed|prepare|reset|suites) migrations_applied=\d+ failed=[01]',
-    r'db_only_bootstrap: operation=(?:roles|auth|storage) phase=(?:reserved-roles|auth-credentials|auth-create|auth-run|storage-credentials|storage-create|storage-start|storage-probe|storage-stop|cleanup) status=(?:ok|failed) cleanup=(?:not-created|removed|failed) container_residue=(?:not-created|absent-observed|remaining)',
+    r'db_only_bootstrap: operation=(?:roles|auth|storage) phase=(?:reserved-roles|auth-credentials|auth-create|auth-run|auth-wait|auth-exit|storage-credentials|storage-create|storage-start|storage-probe|storage-stop|cleanup) status=(?:ok|failed) cleanup=(?:not-created|removed|failed) container_residue=(?:not-created|absent-observed|remaining)',
     r'db_only_storage_probe: result=(?:sql-failed|timeout|malformed|exhausted) lifecycle=(?:running|exited|other|unavailable|unverified)',
 )
 if path.exists():
@@ -2697,9 +2762,7 @@ assert source.endswith(r'''db_only_mode "$(command -v docker)" "${suites[@]}"
 exit $?
 }
 
-sanitized_exec /nonexistent /tmp /bin/bash --noprofile --norc -c \
-  "$(declare -f sanitized_exec runner_main); runner_main \"\$@\"" \
-  "${BASH_SOURCE[0]}" "$@"
+runner_exec "${BASH_SOURCE[0]}" "$@"
 '''), 'unexpected execution tail after isolated DB-only dispatch'
 PY
   log 'legacy_execution_self_check: obsolete Supabase CLI start/reset execution absent, no unreachable tail'
@@ -2707,6 +2770,7 @@ PY
 
 legacy_helpers_self_check
 legacy_execution_self_check
+runner_transport_self_check
 environment_self_check
 db_only_self_check
 db_only_bootstrap_self_check
@@ -2730,6 +2794,4 @@ db_only_mode "$(command -v docker)" "${suites[@]}"
 exit $?
 }
 
-sanitized_exec /nonexistent /tmp /bin/bash --noprofile --norc -c \
-  "$(declare -f sanitized_exec runner_main); runner_main \"\$@\"" \
-  "${BASH_SOURCE[0]}" "$@"
+runner_exec "${BASH_SOURCE[0]}" "$@"
