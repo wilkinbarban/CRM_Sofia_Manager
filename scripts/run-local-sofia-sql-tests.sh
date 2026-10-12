@@ -1493,6 +1493,7 @@ name = 'sofia-auth-' + uuid.uuid4().hex[:12]
 storage_name = 'sofia-storage-' + uuid.uuid4().hex[:12]
 status, phase, step, cleanup, residue = 1, 'roles', 'reserved-roles', 'not-created', 'not-created'
 created = []
+probe, lifecycle = 'not-checked', 'not-checked'
 
 def docker(*args, timeout=90, stdin=None):
     return subprocess.run([exe, *args], input=stdin, capture_output=True, text=True, timeout=timeout)
@@ -1565,15 +1566,45 @@ try:
     if docker('start', storage_cid).returncode: raise ValueError('storage migrations failed')
     step = 'storage-probe'
     for attempt in range(45):
-        ready = sql("select to_regclass('storage.buckets') is not null")
-        if ready.returncode == 0 and ready.stdout.strip() == 't': break
+        # Quiet alone leaves headers/row counts. Only this boolean probe needs scalar
+        # output; do not change the general SQL helper's statement-output contract.
+        probe = 'malformed'
+        try:
+            ready = docker('exec', '-i', container, 'psql', '-h', '127.0.0.1', '-U', 'supabase_admin',
+                           '-d', 'postgres', '-v', 'ON_ERROR_STOP=1', '-q', '-X', '-tA', '-f', '-',
+                           stdin="select to_regclass('storage.buckets') is not null", timeout=60)
+        except subprocess.TimeoutExpired:
+            probe = 'timeout'
+            raise
+        if ready.returncode:
+            probe = 'sql-failed'
+            raise ValueError('storage query failed')
+        value = ready.stdout.strip()
+        if value not in ('t', 'f'): raise ValueError('invalid storage boolean')
+        if value == 't':
+            probe = 'ready'
+            break
+        probe = 'exhausted'
         if attempt == 44: raise ValueError('storage migrations did not finish')
         time.sleep(2)
     step = 'storage-stop'
     docker('stop', storage_cid, timeout=120)
     status = 0
 except Exception:
-    pass  # Never echo Docker output, migration logs or generated secrets.
+    # One bounded projection, never full inspect/health/log output. Metadata is used
+    # only after matching both the created CID and this run's exact owner label.
+    if step == 'storage-probe':
+        lifecycle = 'unavailable'
+        try:
+            projection = '[{{json .Id}},{{json (index .Config.Labels "org.sofia.sql-tests.owner")}},{{json .State.Status}},{{json .State.Running}}]'
+            result = docker('inspect', '--format', projection, storage_cid, timeout=15)
+            if result.returncode: raise ValueError('inspect failed')
+            found, owner, state, running = json.loads(result.stdout)
+            lifecycle = 'unverified'
+            if found == storage_cid and owner == storage_name and type(running) is bool:
+                lifecycle = state if (state, running) in (('running', True), ('exited', False)) else 'other'
+        except Exception:
+            pass
 finally:
     try:
         if created:
@@ -1588,6 +1619,8 @@ finally:
                     residue = 'absent-observed'
     except Exception:
         status, step, cleanup, residue = 1, 'cleanup', 'failed', 'remaining'
+if probe not in ('not-checked', 'ready'):
+    print('db_only_storage_probe: result=%s lifecycle=%s' % (probe, lifecycle))
 print('db_only_bootstrap: operation=%s phase=%s status=%s cleanup=%s container_residue=%s'
       % (phase, step, 'ok' if status == 0 else 'failed', cleanup, residue))
 sys.exit(status)
@@ -1718,7 +1751,8 @@ if args[0] == 'inspect':
         'Mounts': ([{'Type': 'tmpfs', 'Source': '', 'Destination': '/var/lib/postgresql/data', 'RW': True}]
                    if any(row['argv'][0] == 'start' for row in history) else [])}]))
 if any('select 1 from pg_roles' in arg for arg in args): print('1')
-if "to_regclass('storage.buckets')" in stdin: print('t')
+if "to_regclass('storage.buckets')" in stdin:
+    print('t' if '-tA' in args and '-X' in args else ' ?column?\n----------\n t\n(1 row)')
 if 'select current_database()' in stdin: print('postgres')
 if (case == 'migration-fail' and any('0002_second' in arg for arg in args)
         or case == 'seed-fail' and any(arg.endswith('/seed.sql') for arg in args)
@@ -1829,15 +1863,18 @@ PY
   done
   local safe_body='db_only_body: phase=migrations migrations_applied=0 failed=1'
   local safe_bootstrap='db_only_bootstrap: operation=auth phase=auth-run status=failed cleanup=removed container_residue=absent-observed'
+  local safe_probe='db_only_storage_probe: result=malformed lifecycle=running'
   {
-    printf '%s\n' "$safe_body" "$safe_bootstrap"
+    printf '%s\n' "$safe_body" "$safe_bootstrap" "$safe_probe"
     printf '%s\n' 'RAW SQL select secret; PASSWORD=synthetic-secret postgres://secret' \
       "${safe_body} PASSWORD=synthetic-secret" "${safe_bootstrap} postgres://secret" \
+      "${safe_probe} PASSWORD=synthetic-secret" 'db_only_storage_probe: result=unknown lifecycle=running' \
+      'db_only_storage_probe: result=timeout lifecycle=synthetic-private' \
       'db_only_body: phase=PASSWORD migrations_applied=0 failed=1' \
       'db_only_body: migrations_applied=0 failed=1' \
       'db_only_bootstrap: operation=auth phase=auth-wait status=failed cleanup=removed container_residue=absent-observed'
   } >"$work/run/hostile-phase-report"
-  [[ "$(db_only_report "$work/run/hostile-phase-report")" == "$(printf '%s\n' "$safe_body" "$safe_bootstrap")" ]] \
+  [[ "$(db_only_report "$work/run/hostile-phase-report")" == "$(printf '%s\n' "$safe_body" "$safe_bootstrap" "$safe_probe")" ]] \
     || die 'phase reporting accepted unknown fields, raw SQL or environment secrets'
   unset DB_FAKE_CASE DB_FAKE_LOG
   log 'db_only_body_self_check=pass (fake-only: pgpass file, staging, migrations and seed through psql, no password in argv, isolated CLI dispatch)'
@@ -2055,16 +2092,23 @@ auth_cid, storage_cid = 'e' * 64, 'f' * 64
 storage_image = 'local-storage-image'
 if args[0] == 'exec':
     body = sys.stdin.read()
-    assert args == ['exec', '-i', 'b' * 64, 'psql', '-h', '127.0.0.1', '-U', 'supabase_admin',
-                    '-d', 'postgres', '-v', 'ON_ERROR_STOP=1', '-q', '-f', '-'], args
+    base = ['exec', '-i', 'b' * 64, 'psql', '-h', '127.0.0.1', '-U', 'supabase_admin',
+            '-d', 'postgres', '-v', 'ON_ERROR_STOP=1', '-q']
+    assert args in (base + ['-f', '-'], base + ['-X', '-tA', '-f', '-']), args
     if 'alter user supabase_auth_admin with password' in body:
+        assert args == base + ['-f', '-'], 'general SQL helper changed'
         assert 'alter user supabase_storage_admin with password' in body
         assert 'grant supabase_admin to postgres;' in body
         assert 'POSTGRES_PASSWORD' not in body
         sys.exit(1 if case == 'roles-fail' else 0)
     if "to_regclass('storage.buckets')" in body:
         if case == 'probe-error': sys.stdout.buffer.write(b'\xff'); sys.exit(0)
-        print('t')
+        if case in ('probe-sql-fail', 'probe-exited', 'probe-foreign', 'probe-id', 'probe-state-type', 'probe-other', 'probe-inspect-fail', 'probe-inspect-timeout'): sys.exit(2)
+        count = sum('psql' in json.loads(line) for line in log.read_text().splitlines()) - 1
+        value = 'f' if case == 'probe-false' or case == 'probe-retry' and count == 1 else 't'
+        formatted = ' ?column?\n----------\n %s\n(1 row)\n' % value
+        print(formatted if '-tA' not in args or case == 'probe-formatted' else
+              'unexpected synthetic private value' if case == 'probe-malformed' else value)
         sys.exit(0)
     assert 'create extension' not in body
     assert 'create schema' not in body and 'create table' not in body
@@ -2095,6 +2139,18 @@ elif args[0] == 'start':
     assert args in (['start', auth_cid], ['start', storage_cid])
     if case == 'auth-fail' and args[1] == auth_cid: sys.exit(3)
     if case == 'storage-fail' and args[1] == storage_cid: sys.exit(4)
+elif args[0] == 'inspect':
+    assert args[1] == '--format' and args[-1] == storage_cid
+    assert '.Id' in args[2] and 'com.supabase' not in args[2] and '.Config.Labels' in args[2]
+    assert '.State.Status' in args[2] and '.State.Running' in args[2]
+    assert all(key not in args[2] for key in ('.Env', '.Health', '.Error', '.Log'))
+    if case == 'probe-inspect-fail': sys.exit(1)
+    name = next(json.loads(line)[json.loads(line).index('--name') + 1]
+                for line in log.read_text().splitlines() if 'local-storage-image' in json.loads(line))
+    print(json.dumps(['a' * 64 if case == 'probe-id' else storage_cid,
+                      'foreign' if case == 'probe-foreign' else name,
+                      'exited' if case == 'probe-exited' else 'restarting' if case == 'probe-other' else 'running',
+                      'private-value' if case == 'probe-state-type' else case != 'probe-exited']))
 elif args[0] == 'stop':
     assert args == ['stop', storage_cid]
 elif args[0] == 'rm':
@@ -2108,12 +2164,34 @@ else:
 PY
   chmod +x "$fake"
   declare -F db_only_bootstrap >/dev/null || die 'DB-only bootstrap helper missing'
-  for case_name in ok roles-fail create-fail auth-fail storage-create-fail storage-fail probe-error rm-fail residue cleanup-error; do
+  for case_name in ok roles-fail create-fail auth-fail storage-create-fail storage-fail probe-error rm-fail residue cleanup-error probe-retry probe-false probe-formatted probe-malformed probe-sql-fail probe-timeout probe-exited probe-foreign probe-id probe-state-type probe-other probe-inspect-fail probe-inspect-timeout; do
     export DB_FAKE_CASE="$case_name" DB_FAKE_LOG="$work/run/bootstrap-$case_name.jsonl"
     : >"$DB_FAKE_LOG"
     status=0
-    db_only_bootstrap "$fake" "$(printf 'b%.0s' {1..64})" "$work/run" local-auth-image local-storage-image \
-      >"$work/run/bootstrap-output" 2>&1 || status=$?
+    # Execute the production Python body with only delays/timeouts simulated.
+    python3 - "$repo_root/scripts/run-local-sofia-sql-tests.sh" "$fake" "$work/run" \
+      >"$work/run/bootstrap-output" 2>&1 <<'PY' || status=$?
+import os, subprocess, sys, time
+from pathlib import Path
+from unittest.mock import patch
+source = Path(sys.argv[1]).read_text().split('db_only_bootstrap() {', 1)[1].split("<<'PY'\n", 1)[1].split('\nPY\n', 1)[0]
+real_run, case = subprocess.run, os.environ['DB_FAKE_CASE']
+def run(args, **kwargs):
+    probe = 'psql' in args and "to_regclass('storage.buckets')" in (kwargs.get('input') or '')
+    inspect = len(args) > 1 and args[1] == 'inspect'
+    if probe: assert kwargs['timeout'] == 60
+    if inspect: assert kwargs['timeout'] <= 15
+    if probe and case == 'probe-timeout' or inspect and case == 'probe-inspect-timeout':
+        raise subprocess.TimeoutExpired(args, kwargs['timeout'], stderr='synthetic private timeout')
+    return real_run(args, **kwargs)
+sys.argv = ['bootstrap', sys.argv[2], 'b' * 64, sys.argv[3], 'local-auth-image', 'local-storage-image']
+with patch('subprocess.run', side_effect=run), patch('time.sleep') as sleep:
+    try:
+        exec(compile(source, '<bootstrap>', 'exec'))
+    finally:
+        # subprocess may also poll using short sleeps; count only the probe cadence.
+        assert sum(call.args == (2,) for call in sleep.call_args_list) == (44 if case == 'probe-false' else 1 if case == 'probe-retry' else 0), 'probe retry cadence changed'
+PY
     python3 - "$DB_FAKE_LOG" "$case_name" "$status" "$work/run/bootstrap-output" <<'PY'
 import json, re, sys
 from pathlib import Path
@@ -2121,16 +2199,32 @@ rows = [json.loads(line) for line in Path(sys.argv[1]).read_text().splitlines()]
 case, status = sys.argv[2], int(sys.argv[3])
 ops = [row[0] for row in rows]
 report = Path(sys.argv[4]).read_text()
+probe_failure = case.startswith('probe-') and case != 'probe-retry'
+expected_probe = {'probe-error': 'malformed', 'probe-formatted': 'malformed', 'probe-malformed': 'malformed',
+                  'probe-false': 'exhausted', 'probe-timeout': 'timeout'}.get(case, 'sql-failed')
+expected_state = {'probe-exited': 'exited', 'probe-foreign': 'unverified', 'probe-id': 'unverified',
+                  'probe-state-type': 'unverified', 'probe-other': 'other',
+                  'probe-inspect-fail': 'unavailable', 'probe-inspect-timeout': 'unavailable'}.get(case, 'running')
+if probe_failure:
+    assert report.splitlines()[0] == 'db_only_storage_probe: result=%s lifecycle=%s' % (expected_probe, expected_state), (case, report)
+    report = report.splitlines()[1] + '\n'
+assert 'synthetic private' not in report and 'RAW SQL' not in report
+probes = [row for row in rows if 'psql' in row][1:]
+if case.startswith('probe-'):
+    assert len(probes) == (45 if case == 'probe-false' else 2 if case == 'probe-retry' else 0 if case == 'probe-timeout' else 1), (case, len(probes))
+    assert all('-X' in row and '-tA' in row for row in probes), 'scalar flags missing'
+assert ('inspect' in ops) == (probe_failure and case != 'probe-inspect-timeout')
 match = re.fullmatch(
     r'db_only_bootstrap: operation=(roles|auth|storage) phase=([a-z-]+) status=(ok|failed) '
     r'cleanup=(not-created|removed|failed) container_residue=(not-created|absent-observed|remaining)\n', report)
 assert match, 'bootstrap report leaked output or omitted metadata'
-assert (status == 0) == (case == 'ok'), (case, status, report)
+assert (status == 0) == (case in ('ok', 'probe-retry')), (case, status, report)
 expected_phase = {'roles-fail': 'roles', 'create-fail': 'auth', 'auth-fail': 'auth'}.get(case, 'storage')
 assert match.group(1) == expected_phase, (case, report)
 expected_step = {'roles-fail': 'reserved-roles', 'create-fail': 'auth-create', 'auth-fail': 'auth-run',
                  'storage-create-fail': 'storage-create', 'storage-fail': 'storage-start', 'probe-error': 'storage-probe',
                  'rm-fail': 'cleanup', 'residue': 'cleanup', 'cleanup-error': 'cleanup'}.get(case, 'storage-stop')
+if probe_failure: expected_step = 'storage-probe'
 assert match.group(2) == expected_step, (case, report)
 auth_created = case not in ('roles-fail', 'create-fail')
 owned = int(auth_created) + int(auth_created and case not in ('auth-fail', 'storage-create-fail'))
@@ -2143,7 +2237,7 @@ expected = {'roles-fail': ('not-created', 'not-created'), 'create-fail': ('not-c
 assert match.groups()[3:] == expected, (case, report)
 assert all('postgres://' not in arg and 'PASSWORD' not in arg.upper() for row in rows for arg in row), 'bootstrap argv leaked a secret'
 assert [row[0] for row in rows if row[0] in ('rm', 'ps')] == (['rm'] if case == 'cleanup-error' else ['rm', 'ps'] * owned), (case, ops)
-assert ('stop' in ops) == (case in ('ok', 'rm-fail', 'residue', 'cleanup-error')), (case, ops)
+assert ('stop' in ops) == (case in ('ok', 'probe-retry', 'rm-fail', 'residue', 'cleanup-error')), (case, ops)
 PY
   done
   unset DB_FAKE_CASE DB_FAKE_LOG
@@ -2568,6 +2662,7 @@ patterns = (
     r'summary: suites=\d+ assertions=\d+ failed_assertions=\d+ failing_suites=\d+',
     r'db_only_body: phase=(?:input-staging|bootstrap|credentials|staging|hba|migrations|seed|prepare|reset|suites) migrations_applied=\d+ failed=[01]',
     r'db_only_bootstrap: operation=(?:roles|auth|storage) phase=(?:reserved-roles|auth-credentials|auth-create|auth-run|storage-credentials|storage-create|storage-start|storage-probe|storage-stop|cleanup) status=(?:ok|failed) cleanup=(?:not-created|removed|failed) container_residue=(?:not-created|absent-observed|remaining)',
+    r'db_only_storage_probe: result=(?:sql-failed|timeout|malformed|exhausted) lifecycle=(?:running|exited|other|unavailable|unverified)',
 )
 if path.exists():
     with path.open() as handle:
