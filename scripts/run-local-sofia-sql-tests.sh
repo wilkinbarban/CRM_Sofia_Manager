@@ -1283,15 +1283,16 @@ data = '/var/lib/postgresql/data'
 # that only the finished official bootstrap can satisfy is the real gate.
 sentinel = "select 1 from pg_roles where rolname = 'supabase_auth_admin'"
 probe_timeout = 5
+body_timeout = 1800
 
 def parse_arguments():
-    if len(sys.argv) not in (4, 5, 6):
+    if len(sys.argv) not in (4, 5, 6, 7):
         raise ValueError('invalid internal arguments')
     credentials = sys.argv[4] if len(sys.argv) >= 5 else '-'
-    readiness_seconds = int(sys.argv[5]) if len(sys.argv) == 6 else 60
+    readiness_seconds = int(sys.argv[5]) if len(sys.argv) >= 6 else 60
     if not 1 <= readiness_seconds <= 120:
         raise ValueError('invalid internal readiness deadline')
-    return credentials, readiness_seconds
+    return credentials, readiness_seconds, (sys.argv[6] if len(sys.argv) == 7 else '')
 
 def open_credentials(credentials):
     # '-' asks this session to generate its own secret; anything else is a caller-owned
@@ -1360,7 +1361,7 @@ generated, credentials_path = False, ''
 try:
     # Internal arguments only, never environment overrides. Both are validated before any
     # Docker command runs, so rejected input cannot create a container.
-    credentials, readiness_seconds = parse_arguments()
+    credentials, readiness_seconds, body = parse_arguments()
     credentials_path, generated = open_credentials(credentials)
     result = docker('image', 'inspect', '--', image_ref)
     if result.returncode: raise ValueError('local image required')
@@ -1396,6 +1397,16 @@ try:
     if docker('start', cid).returncode: raise ValueError('start failed')
     phase = 'readiness'
     wait_ready(readiness_seconds)
+    if body:
+        # The body owns everything that must happen while this container exists. It gets
+        # only the container id, never an inherited secret, and its output is captured and
+        # dropped because it may carry product data.
+        phase = 'body'
+        completed = subprocess.run(['/bin/bash', '--noprofile', '--norc', '-c', body],
+                                   env=dict(os.environ, SOFIA_DB_CONTAINER=cid),
+                                   capture_output=True, text=True, timeout=body_timeout)
+        if completed.returncode:
+            raise ValueError('the isolated body failed')
     # Still disconnected: no callback, SQL, or bootstrap executes here.
     status = 0
 except Exception:
@@ -2073,7 +2084,44 @@ PY
   [[ "$(<"$work/run/db-only-output")" == 'db_only: operation=image status=failed cleanup=not-created container_residue=not-created readiness=not-checked' ]] \
     || die 'rejected credentials report mismatch'
   unset DB_FAKE_CASE DB_FAKE_LOG
-  log 'db_only_self_check=pass (fake-only: bootstrap-sentinel readiness/order/deadline, caller-owned-credentials, pinned-image/volumes, argv, stopped-state, tmpfs-only, pre-start-isolation, exact-owned-cleanup, bounded-reporting; not real residue proof)'
+  # An optional body runs after readiness, sees the container it must use and no inherited
+  # secret, and still gets the exact-owned cleanup when it fails.
+  export DB_FAKE_CASE=good DB_FAKE_LOG="$work/run/db-only-body.jsonl"
+  : >"$DB_FAKE_LOG"
+  status=0
+  db_only_session "$fake" local-postgres "$work/run" - 5 \
+    "printf '%s' \"\$SOFIA_DB_CONTAINER\" >'$work/run/body-cid'; env >'$work/run/body-env'" \
+    >"$work/run/db-only-output" 2>&1 || status=$?
+  [[ "$status" == 0 ]] || die 'a successful body did not complete the session'
+  [[ "$(<"$work/run/body-cid")" == "$(printf 'b%.0s' {1..64})" ]] \
+    || die 'the body did not receive the container this session owns'
+  ! grep -qE 'POSTGRES_PASSWORD|JWT_SECRET|supabase_auth_admin' "$work/run/body-env" \
+    || die 'the body inherited a secret from the environment'
+  [[ "$(<"$work/run/db-only-output")" == 'db_only: operation=body status=ok cleanup=removed container_residue=absent-observed readiness=ready' ]] \
+    || die 'successful body report mismatch'
+  export DB_FAKE_CASE=good DB_FAKE_LOG="$work/run/db-only-body-fail.jsonl"
+  : >"$DB_FAKE_LOG"
+  status=0
+  db_only_session "$fake" local-postgres "$work/run" - 5 'exit 3' \
+    >"$work/run/db-only-output" 2>&1 || status=$?
+  [[ "$status" == 1 ]] || die 'a failing body still reported success'
+  [[ "$(<"$work/run/db-only-output")" == 'db_only: operation=body status=failed cleanup=removed container_residue=absent-observed readiness=ready' ]] \
+    || die 'failing body report mismatch'
+  python3 - "$DB_FAKE_LOG" <<'PY'
+import json, sys
+from pathlib import Path
+ops = [json.loads(line)[0] for line in Path(sys.argv[1]).read_text().splitlines()]
+assert ops == ['image', 'create', 'inspect', 'start', 'exec', 'inspect', 'rm', 'ps'], ops
+PY
+  export DB_FAKE_CASE=ready-owner DB_FAKE_LOG="$work/run/db-only-body-owner.jsonl"
+  : >"$DB_FAKE_LOG"
+  status=0
+  db_only_session "$fake" local-postgres "$work/run" - 5 'exit 0' \
+    >"$work/run/db-only-output" 2>&1 || status=$?
+  [[ "$status" == 1 && "$(<"$work/run/db-only-output")" == 'db_only: operation=body status=failed cleanup=unverified container_residue=unknown readiness=ready' ]] \
+    || die 'a body failure hid an unverified cleanup'
+  unset DB_FAKE_CASE DB_FAKE_LOG
+  log 'db_only_self_check=pass (fake-only: bootstrap-sentinel readiness/order/deadline, caller-owned-credentials, bounded-body, pinned-image/volumes, argv, stopped-state, tmpfs-only, pre-start-isolation, exact-owned-cleanup, bounded-reporting; not real residue proof, body timeout untested)'
 }
 
 environment_self_check
