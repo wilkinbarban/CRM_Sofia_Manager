@@ -1257,16 +1257,40 @@ STUB
 # Residue reporting is an observation, not a guarantee against those races.
 db_only_session() {
   python3 - "$@" <<'PY'
-import json, re, signal, subprocess, sys, tempfile, uuid
-exe, image_ref, temp_root = sys.argv[1:]
+import json, re, signal, subprocess, sys, tempfile, time, uuid
+exe, image_ref, temp_root = sys.argv[1:4]
 name = 'sofia-db-' + uuid.uuid4().hex
 label = 'org.sofia.sql-tests.owner'
 cid, attempted, status = '', False, 1
 phase, cleanup_state, residue = 'image', 'not-created', 'not-created'
+readiness = 'not-checked'
 data = '/var/lib/postgresql/data'
 
-def docker(*args):
-    return subprocess.run([exe, *args], capture_output=True, text=True, timeout=15)
+def docker(*args, timeout=15):
+    return subprocess.run([exe, *args], capture_output=True, text=True, timeout=timeout)
+
+def wait_ready(seconds):
+    global readiness
+    deadline = time.monotonic() + seconds
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            readiness = 'deadline'
+            raise ValueError('readiness deadline exceeded')
+        try:
+            result = docker('exec', cid, 'pg_isready', '-q', '-h', '/var/run/postgresql',
+                            '-p', '5432', '-U', 'postgres', '-d', 'postgres',
+                            timeout=min(15, remaining))
+        except subprocess.TimeoutExpired:
+            readiness = 'probe-timeout'
+            raise
+        if result.returncode == 0:
+            readiness = 'ready'
+            return
+        if result.returncode not in (1, 2):
+            readiness = 'probe-failed'
+            raise ValueError('readiness probe failed')
+        time.sleep(min(0.2, max(0, deadline - time.monotonic())))
 
 def inspect_owned():
     result = docker('inspect', name)
@@ -1284,6 +1308,10 @@ def interrupted(signum, frame):
 for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
     signal.signal(sig, interrupted)
 try:
+    # Internal argument only, never an environment override. Bound the whole wait.
+    readiness_seconds = int(sys.argv[4]) if len(sys.argv) == 5 else 60
+    if len(sys.argv) not in (4, 5) or not 1 <= readiness_seconds <= 120:
+        raise ValueError('invalid internal readiness deadline')
     result = docker('image', 'inspect', '--', image_ref)
     if result.returncode: raise ValueError('local image required')
     image_doc, = json.loads(result.stdout)
@@ -1319,6 +1347,9 @@ try:
         raise ValueError('isolation mismatch')
     phase = 'start'
     if docker('start', cid).returncode: raise ValueError('start failed')
+    phase = 'readiness'
+    wait_ready(readiness_seconds)
+    # Still disconnected: no callback, SQL, or bootstrap executes here.
     status = 0
 except Exception:
     pass  # Never expose Docker output, inspect bodies or synthetic credentials.
@@ -1338,17 +1369,18 @@ finally:
         except Exception:
             status = 1  # Refuse removal without exact ownership evidence.
 print(f'db_only: operation={phase} status={"ok" if status == 0 else "failed"} '
-      f'cleanup={cleanup_state} container_residue={residue}')
+      f'cleanup={cleanup_state} container_residue={residue} readiness={readiness}')
 sys.exit(status)
 PY
 }
 
 # Hermetic DB-only lifecycle contract; these fixtures never contact a daemon.
 db_only_self_check() {
-  local fake="$work/run/db-only-docker" case_name status
+  local fake="$work/run/db-only-docker" case_name status deadline
+  local -a readiness_args
   cat >"$fake" <<'PY'
 #!/usr/bin/python3
-import json, os, sys
+import json, os, sys, time
 from pathlib import Path
 args = sys.argv[1:]
 log = Path(os.environ['DB_FAKE_LOG'])
@@ -1412,11 +1444,24 @@ elif args[0] == 'inspect':
         if case == 'mount-source': doc['Mounts'][0]['Source'] = '/host'
         if case == 'mount-rw': doc['Mounts'][0]['RW'] = False
         if case == 'tmpfs': doc['HostConfig']['Tmpfs'] = {}
-    if case == 'owner': doc['Config']['Labels'] = {'foreign': 'owner'}
+    if case == 'owner' or (case == 'ready-owner' and any(row[0] == 'exec' for row in history)):
+        doc['Config']['Labels'] = {'foreign': 'owner'}
     print('malformed' if case == 'malformed' else json.dumps([doc]))
 elif args[0] == 'start' and case == 'start':
     print('POSTGRES_PASSWORD=synthetic-must-not-leak', file=sys.stderr)
     sys.exit(1)
+elif args[0] == 'exec':
+    assert args == ['exec', cid, 'pg_isready', '-q', '-h', '/var/run/postgresql',
+                    '-p', '5432', '-U', 'postgres', '-d', 'postgres']
+    assert any(row == ['start', cid] for row in history)
+    probes = sum(row[0] == 'exec' for row in history)
+    if case == 'ready-hang': time.sleep(3)
+    if case in ('ready-reject', 'ready-offline'):
+        sys.exit(1 if case == 'ready-reject' else 2)
+    if case in ('ready-invalid', 'ready-unexpected'):
+        print('POSTGRES_PASSWORD=synthetic-must-not-leak', file=sys.stderr)
+        sys.exit(3 if case == 'ready-invalid' else 7)
+    if case == 'ready-retry' and probes < 2: sys.exit(probes + 1)
 elif args[0] == 'ps':
     assert args == ['ps', '-aq', '--no-trunc', '--filter', 'id=' + cid]
     if case in ('remove', 'residue'): print(cid)
@@ -1429,12 +1474,16 @@ PY
   declare -F db_only_session >/dev/null || die 'DB-only lifecycle helper missing'
   local cases=(good empty running state-missing state-type status-missing running-missing running-type status
     volnull volempty volbad volmissing voltype volvalues voljson bind volume mount-extra mount-missing
-    mount-type mount-path mount-source mount-rw tmpfs ports network publish owner malformed id pinned name missing create partial start remove image residue inventory)
+    mount-type mount-path mount-source mount-rw tmpfs ports network publish owner malformed id pinned name missing create partial start remove image residue inventory
+    ready-retry ready-reject ready-offline ready-invalid ready-unexpected ready-hang ready-owner)
   for case_name in "${cases[@]}"; do
     export DB_FAKE_CASE="$case_name" DB_FAKE_LOG="$work/run/db-only-$case_name.jsonl"
     : >"$DB_FAKE_LOG"
     status=0
-    db_only_session "$fake" local-postgres "$work/run" >"$work/run/db-only-output" 2>&1 || status=$?
+    readiness_args=(1)
+    if [[ "$case_name" == good ]]; then readiness_args=(); fi
+    db_only_session "$fake" local-postgres "$work/run" "${readiness_args[@]}" \
+      >"$work/run/db-only-output" 2>&1 || status=$?
     [[ -s "$work/run/db-only-output" ]] || die 'DB-only helper omitted its bounded report'
     python3 - "$DB_FAKE_LOG" "$case_name" "$status" "$work/run/db-only-output" <<'PY'
 import json, re, sys
@@ -1442,33 +1491,54 @@ from pathlib import Path
 rows = [json.loads(line) for line in Path(sys.argv[1]).read_text().splitlines()]
 case, status = sys.argv[2], int(sys.argv[3])
 ops = [row[0] for row in rows]
-accepted = ('good', 'empty', 'volnull', 'volempty')
-started = accepted + ('start', 'remove', 'residue', 'inventory')
+accepted = ('good', 'empty', 'volnull', 'volempty', 'ready-retry')
+readiness_failed = ('ready-reject', 'ready-offline', 'ready-invalid', 'ready-unexpected', 'ready-hang')
+started = accepted + readiness_failed + ('start', 'remove', 'residue', 'inventory', 'ready-owner')
 image_rejected = ('image', 'volbad', 'volmissing', 'voltype', 'volvalues', 'voljson')
 assert (status == 0) == (case in accepted), (case, status)
 assert ('start' in ops) == (case in started), (case, ops)
+assert ('exec' in ops) == (case in started and case != 'start'), ('readiness probe missing', case, ops)
 report = Path(sys.argv[4]).read_text()
 match = re.fullmatch(
-    r'db_only: operation=(image|create|inspect|start) status=(ok|failed) '
-    r'cleanup=(not-created|unverified|removed|failed) container_residue=(not-created|unknown|remaining|absent-observed)\n', report)
+    r'db_only: operation=(image|create|inspect|start|readiness) status=(ok|failed) '
+    r'cleanup=(not-created|unverified|removed|failed) container_residue=(not-created|unknown|remaining|absent-observed) '
+    r'readiness=(not-checked|ready|deadline|probe-failed|probe-timeout)\n', report)
 assert match, 'report leaked output or omitted metadata'
 if case in image_rejected:
     expected_phase = 'image'
 elif case in ('create', 'partial'):
     expected_phase = 'create'
-elif case in started:
+elif case == 'start':
     expected_phase = 'start'
+elif case in started:
+    expected_phase = 'readiness'
 else:
     expected_phase = 'inspect'
 assert match.groups()[:2] == (expected_phase, 'ok' if status == 0 else 'failed')
 expected_cleanup = {
     'owner': ('unverified', 'unknown'),
+    'ready-owner': ('unverified', 'unknown'),
     'malformed': ('unverified', 'unknown'),
     'remove': ('failed', 'remaining'),
     'inventory': ('removed', 'unknown'),
     'residue': ('removed', 'remaining'),
 }.get(case, ('not-created', 'not-created') if case in image_rejected else ('removed', 'absent-observed'))
-assert match.groups()[2:] == expected_cleanup, (case, report)
+assert match.groups()[2:4] == expected_cleanup, (case, report)
+expected_ready = ('not-checked' if case not in started or case == 'start' else {
+    'ready-reject': 'deadline', 'ready-offline': 'deadline', 'ready-hang': 'probe-timeout',
+    'ready-invalid': 'probe-failed', 'ready-unexpected': 'probe-failed',
+}.get(case, 'ready'))
+assert match.group(5) == expected_ready, (case, report)
+probes = [row for row in rows if row[0] == 'exec']
+assert bool(probes) == (case in started and case != 'start'), (case, ops)
+if probes:
+    assert ops[3:5] == ['start', 'exec'], (case, ops)
+    assert ops[4:4 + len(probes)] == ['exec'] * len(probes)
+    assert all(row == ['exec', 'b' * 64, 'pg_isready', '-q', '-h', '/var/run/postgresql',
+                       '-p', '5432', '-U', 'postgres', '-d', 'postgres'] for row in probes)
+    if case == 'ready-retry': assert len(probes) == 3
+    if case not in ('ready-retry', 'ready-reject', 'ready-offline'): assert len(probes) == 1
+assert set(ops) <= {'image', 'create', 'inspect', 'start', 'exec', 'rm', 'ps'}
 if case in image_rejected:
     assert ops == ['image']
 else:
@@ -1479,13 +1549,24 @@ else:
     assert create[7:10] == ['--label', 'org.sofia.sql-tests.owner=' + create[6], '--env-file']
     assert create[11:] == ['--tmpfs', '/var/lib/postgresql/data', 'sha256:' + 'a' * 64]
     assert ops[:3] == ['image', 'create', 'inspect']
-    assert ('rm' in ops) == (case not in ('owner', 'malformed'))
+    assert ('rm' in ops) == (case not in ('owner', 'malformed', 'ready-owner'))
     if 'start' in ops: assert rows[3] == ['start', 'b' * 64]
     if 'rm' in ops: assert next(row for row in rows if row[0] == 'rm') == ['rm', '-f', '-v', 'b' * 64]
 PY
   done
+  # Invalid internal deadlines fail before any Docker command or resource creation.
+  for deadline in 0 121 invalid ''; do
+    export DB_FAKE_CASE=good DB_FAKE_LOG="$work/run/db-only-invalid-deadline.jsonl"
+    : >"$DB_FAKE_LOG"
+    status=0
+    db_only_session "$fake" local-postgres "$work/run" "$deadline" \
+      >"$work/run/db-only-output" 2>&1 || status=$?
+    [[ "$status" == 1 && ! -s "$DB_FAKE_LOG" ]] || die 'invalid readiness deadline accepted'
+    [[ "$(<"$work/run/db-only-output")" == 'db_only: operation=image status=failed cleanup=not-created container_residue=not-created readiness=not-checked' ]] \
+      || die 'invalid readiness deadline report mismatch'
+  done
   unset DB_FAKE_CASE DB_FAKE_LOG
-  log 'db_only_self_check=pass (fake-only: pinned-image/volumes, argv, stopped-state, tmpfs-only, pre-start-isolation, exact-owned-cleanup, bounded-reporting; not real residue proof)'
+  log 'db_only_self_check=pass (52 fake-only cases: readiness/order/deadline, pinned-image/volumes, argv, stopped-state, tmpfs-only, pre-start-isolation, exact-owned-cleanup, bounded-reporting; not real residue proof)'
 }
 
 environment_self_check
