@@ -1432,9 +1432,10 @@ PY
 # port, no pull, no hand-written DDL. Secrets reach the container only through 0600 files.
 db_only_bootstrap() {
   python3 - "$@" <<'PY'
-import os, re, subprocess, sys, uuid
-exe, container, temp_root, auth_image = sys.argv[1:5]
+import base64, hashlib, hmac, json, os, re, subprocess, sys, time, uuid
+exe, container, temp_root, auth_image, storage_image = sys.argv[1:6]
 name = 'sofia-auth-' + uuid.uuid4().hex[:12]
+storage_name = 'sofia-storage-' + uuid.uuid4().hex[:12]
 status, phase, cleanup, residue = 1, 'roles', 'not-created', 'not-created'
 created = []
 
@@ -1445,27 +1446,38 @@ def sql(statement, timeout=60):
     return docker('exec', '-i', container, 'psql', '-h', '127.0.0.1', '-U', 'supabase_admin',
                   '-d', 'postgres', '-v', 'ON_ERROR_STOP=1', '-q', '-f', '-', stdin=statement, timeout=timeout)
 
+def write_env(filename, values):
+    path = os.path.join(temp_root, filename)
+    with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), 'w') as handle:
+        for key in sorted(values):
+            handle.write('%s=%s\n' % (key, values[key]))
+    return path
+
+def jwt(role, secret):
+    encode = lambda body: base64.urlsafe_b64encode(body).rstrip(b'=').decode()  # noqa: E731
+    header = encode(json.dumps({'alg': 'HS256', 'typ': 'JWT'}, separators=(',', ':')).encode())
+    payload = encode(json.dumps({'role': role, 'iss': 'supabase', 'iat': 1700000000,
+                                 'exp': 2000000000}, separators=(',', ':')).encode())
+    signed = ('%s.%s' % (header, payload)).encode()
+    return '%s.%s.%s' % (header, payload, encode(hmac.new(secret.encode(), signed, hashlib.sha256).digest()))
+
 try:
-    role_secret, jwt_secret, operator_secret = (uuid.uuid4().hex + uuid.uuid4().hex for _ in range(3))
+    auth_secret, storage_secret, jwt_secret, operator_secret = (uuid.uuid4().hex for _ in range(4))
     result = sql("alter user supabase_auth_admin with password '%s';\n"
-                 "grant supabase_admin to postgres;\n" % role_secret)
+                 "alter user supabase_storage_admin with password '%s';\n"
+                 "grant supabase_admin to postgres;\n" % (auth_secret, storage_secret))
     if result.returncode:
         raise ValueError('reserved role setup failed')
     phase = 'auth'
-    values = {
+    env_path = write_env('auth.env', {
         'API_EXTERNAL_URL': 'http://127.0.0.1:9999', 'GOTRUE_API_HOST': '127.0.0.1',
         'GOTRUE_API_PORT': '9999', 'GOTRUE_SITE_URL': 'http://127.0.0.1:3000',
         'GOTRUE_DB_DRIVER': 'postgres', 'GOTRUE_DB_MIGRATIONS_PATH': '/usr/local/etc/auth/migrations',
-        'GOTRUE_DB_DATABASE_URL': 'postgres://supabase_auth_admin:%s@127.0.0.1:5432/postgres' % role_secret,
+        'GOTRUE_DB_DATABASE_URL': 'postgres://supabase_auth_admin:%s@127.0.0.1:5432/postgres' % auth_secret,
         'GOTRUE_JWT_SECRET': jwt_secret, 'GOTRUE_JWT_EXP': '3600', 'GOTRUE_JWT_AUD': 'authenticated',
         'GOTRUE_JWT_DEFAULT_GROUP_NAME': 'authenticated', 'GOTRUE_OPERATOR_TOKEN': operator_secret,
         'GOTRUE_MAILER_AUTOCONFIRM': 'true', 'GOTRUE_EXTERNAL_EMAIL_ENABLED': 'true',
-        'GOTRUE_LOG_LEVEL': 'warn',
-    }
-    env_path = os.path.join(temp_root, 'auth.env')
-    with os.fdopen(os.open(env_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), 'w') as handle:
-        for key in sorted(values):
-            handle.write('%s=%s\n' % (key, values[key]))
+        'GOTRUE_LOG_LEVEL': 'warn'})
     result = docker('create', '--pull', 'never', '--network', 'container:' + container,
                     '--name', name, '--label', 'org.sofia.sql-tests.owner=' + name,
                     '--env-file', env_path, '--entrypoint', 'auth', auth_image, 'migrate')
@@ -1475,6 +1487,29 @@ try:
     created.append(cid)
     if docker('start', cid, timeout=600).returncode:
         raise ValueError('auth migrations failed')
+    # Storage runs its own migration chain, which the product migrations depend on.
+    phase = 'storage'
+    storage_env = write_env('storage.env', {
+        'ANON_KEY': jwt('anon', jwt_secret), 'SERVICE_KEY': jwt('service_role', jwt_secret),
+        'AUTH_JWT_SECRET': jwt_secret, 'POSTGREST_URL': 'http://127.0.0.1:3000',
+        'STORAGE_PUBLIC_URL': 'http://127.0.0.1:8000', 'FILE_SIZE_LIMIT': '52428800',
+        'TENANT_ID': 'stub', 'REGION': 'stub', 'GLOBAL_S3_BUCKET': 'stub',
+        'DATABASE_URL': 'postgres://supabase_storage_admin:%s@127.0.0.1:5432/postgres' % storage_secret,
+        'REQUEST_ALLOW_X_FORWARDED_PATH': 'true', 'STORAGE_BACKEND': 'file',
+        'FILE_STORAGE_BACKEND_PATH': '/var/lib/storage', 'ENABLE_IMAGE_TRANSFORMATION': 'false'})
+    result = docker('create', '--pull', 'never', '--network', 'container:' + container,
+                    '--name', storage_name, '--label', 'org.sofia.sql-tests.owner=' + storage_name,
+                    '--env-file', storage_env, storage_image)
+    storage_cid = result.stdout.strip()
+    if result.returncode or not re.fullmatch(r'[0-9a-f]{64}', storage_cid): raise ValueError('storage not created')
+    created.append(storage_cid)
+    if docker('start', storage_cid).returncode: raise ValueError('storage migrations failed')
+    for attempt in range(45):
+        ready = sql("select to_regclass('storage.buckets') is not null")
+        if ready.returncode == 0 and ready.stdout.strip() == 't': break
+        if attempt == 44: raise ValueError('storage migrations did not finish')
+        time.sleep(2)
+    docker('stop', storage_cid, timeout=120)
     status = 0
 except Exception:
     pass  # Never echo Docker output, migration logs or generated secrets.
@@ -1508,44 +1543,66 @@ log = Path(os.environ['DB_FAKE_LOG'])
 with log.open('a') as stream:
     stream.write(json.dumps(args) + '\n')
 case = os.environ['DB_FAKE_CASE']
-cid = 'e' * 64
+auth_cid, storage_cid = 'e' * 64, 'f' * 64
+storage_image = 'local-storage-image'
 if args[0] == 'exec':
     body = sys.stdin.read()
     assert args == ['exec', '-i', 'b' * 64, 'psql', '-h', '127.0.0.1', '-U', 'supabase_admin',
                     '-d', 'postgres', '-v', 'ON_ERROR_STOP=1', '-q', '-f', '-'], args
-    assert 'alter user supabase_auth_admin with password' in body
-    assert 'grant supabase_admin to postgres;' in body
-    assert 'POSTGRES_PASSWORD' not in body
-    sys.exit(1 if case == 'roles-fail' else 0)
+    if 'alter user supabase_auth_admin with password' in body:
+        assert 'alter user supabase_storage_admin with password' in body
+        assert 'grant supabase_admin to postgres;' in body
+        assert 'POSTGRES_PASSWORD' not in body
+        sys.exit(1 if case == 'roles-fail' else 0)
+    if "to_regclass('storage.buckets')" in body:
+        print('t')
+        sys.exit(0)
+    assert 'create extension' not in body
+    assert 'create schema' not in body and 'create table' not in body
+    sys.exit(0)
 elif args[0] == 'create':
     envfile = Path(args[args.index('--env-file') + 1])
     assert envfile.stat().st_mode & 0o777 == 0o600
     body = envfile.read_text()
-    assert body.startswith('API_EXTERNAL_URL=http://127.0.0.1:9999\n')
-    assert 'postgres://supabase_auth_admin:' in body and 'GOTRUE_JWT_SECRET=' in body
-    assert body.count('GOTRUE_DB_MIGRATIONS_PATH=/usr/local/etc/auth/migrations') == 1
     assert args[1:5] == ['--pull', 'never', '--network', 'container:' + 'b' * 64]
-    assert args[args.index('--entrypoint') + 1] == 'auth' and args[-1] == 'migrate'
     assert '--tmpfs' not in args and '-p' not in args and '--publish' not in args
-    if case == 'create-fail': sys.exit(1)
-    print(cid)
+    if body.startswith('API_EXTERNAL_URL=http://127.0.0.1:9999\n'):
+        assert 'postgres://supabase_auth_admin:' in body and 'GOTRUE_JWT_SECRET=' in body
+        assert body.count('GOTRUE_DB_MIGRATIONS_PATH=/usr/local/etc/auth/migrations') == 1
+        assert args[args.index('--entrypoint') + 1] == 'auth' and args[-1] == 'migrate'
+        if case == 'create-fail': sys.exit(1)
+        print(auth_cid)
+    else:
+        assert 'DATABASE_URL=postgres://supabase_storage_admin:' in body
+        assert 'STORAGE_BACKEND=file' in body and 'FILE_STORAGE_BACKEND_PATH=/var/lib/storage' in body
+        assert args[-2:] == [storage_image, 'node'] or args[-1].endswith('server.js') or storage_image in args
+        secret = [row for row in body.splitlines() if row.startswith('AUTH_JWT_SECRET=')][0].split('=', 1)[1]
+        keys = [row.split('=', 1)[1] for row in body.splitlines() if row[:7] in ('ANON_KE', 'SERVICE')]
+        assert len(keys) == 2 and all(key.count('.') == 2 for key in keys) and keys[0] != keys[1]
+        assert secret not in args and keys[0] not in args
+        if case == 'storage-create-fail': sys.exit(1)
+        print(storage_cid)
 elif args[0] == 'start':
-    assert args == ['start', cid]
-    sys.exit(3 if case == 'auth-fail' else 0)
+    assert args in (['start', auth_cid], ['start', storage_cid])
+    if case == 'auth-fail' and args[1] == auth_cid: sys.exit(3)
+    if case == 'storage-fail' and args[1] == storage_cid: sys.exit(4)
+elif args[0] == 'stop':
+    assert args == ['stop', storage_cid]
 elif args[0] == 'rm':
-    assert args == ['rm', '-f', '-v', cid]
+    assert args[1:] == ['-f', '-v', auth_cid] or args[1:] == ['-f', '-v', storage_cid]
     sys.exit(1 if case == 'rm-fail' else 0)
 else:
-    assert args == ['ps', '-aq', '--no-trunc', '--filter', 'id=' + cid]
-    print(cid if case == 'residue' else '')
+    assert args[:4] == ['ps', '-aq', '--no-trunc', '--filter']
+    assert args[4] in ('id=' + auth_cid, 'id=' + storage_cid)
+    print(args[4][3:] if case == 'residue' else '')
 PY
   chmod +x "$fake"
   declare -F db_only_bootstrap >/dev/null || die 'DB-only bootstrap helper missing'
-  for case_name in ok roles-fail create-fail auth-fail rm-fail residue; do
+  for case_name in ok roles-fail create-fail auth-fail storage-create-fail storage-fail rm-fail residue; do
     export DB_FAKE_CASE="$case_name" DB_FAKE_LOG="$work/run/bootstrap-$case_name.jsonl"
     : >"$DB_FAKE_LOG"
     status=0
-    db_only_bootstrap "$fake" "$(printf 'b%.0s' {1..64})" "$work/run" local-auth-image \
+    db_only_bootstrap "$fake" "$(printf 'b%.0s' {1..64})" "$work/run" local-auth-image local-storage-image \
       >"$work/run/bootstrap-output" 2>&1 || status=$?
     python3 - "$DB_FAKE_LOG" "$case_name" "$status" "$work/run/bootstrap-output" <<'PY'
 import json, re, sys
@@ -1555,23 +1612,27 @@ case, status = sys.argv[2], int(sys.argv[3])
 ops = [row[0] for row in rows]
 report = Path(sys.argv[4]).read_text()
 match = re.fullmatch(
-    r'db_only_bootstrap: operation=(roles|auth) status=(ok|failed) '
+    r'db_only_bootstrap: operation=(roles|auth|storage|extensions) status=(ok|failed) '
     r'cleanup=(not-created|removed|failed) container_residue=(not-created|absent-observed|remaining)\n', report)
 assert match, 'bootstrap report leaked output or omitted metadata'
 assert (status == 0) == (case == 'ok'), (case, status, report)
-assert match.group(1) == ('roles' if case == 'roles-fail' else 'auth'), (case, report)
+expected_phase = {'roles-fail': 'roles', 'create-fail': 'auth', 'auth-fail': 'auth'}.get(case, 'storage')
+assert match.group(1) == expected_phase, (case, report)
+auth_created = case not in ('roles-fail', 'create-fail')
+owned = int(auth_created) + int(auth_created and case not in ('auth-fail', 'storage-create-fail'))
 assert ('create' in ops) == (case != 'roles-fail'), (case, ops)
-assert ('start' in ops) == (case in ('ok', 'auth-fail', 'rm-fail', 'residue')), (case, ops)
-expected = {'ok': ('removed', 'absent-observed'), 'roles-fail': ('not-created', 'not-created'),
-            'create-fail': ('not-created', 'not-created'), 'auth-fail': ('removed', 'absent-observed'),
-            'rm-fail': ('failed', 'absent-observed'), 'residue': ('removed', 'remaining')}[case]
+assert ('start' in ops) == auth_created, (case, ops)
+expected = {'roles-fail': ('not-created', 'not-created'), 'create-fail': ('not-created', 'not-created'),
+            'rm-fail': ('failed', 'absent-observed'), 'residue': ('removed', 'remaining')}.get(
+    case, ('removed', 'absent-observed'))
 assert match.groups()[2:] == expected, (case, report)
 assert all('postgres://' not in arg and 'PASSWORD' not in arg.upper() for row in rows for arg in row), 'bootstrap argv leaked a secret'
-assert ('rm' in ops) == (case in ('ok', 'auth-fail', 'rm-fail', 'residue'))
+assert [row[0] for row in rows if row[0] in ('rm', 'ps')] == ['rm', 'ps'] * owned, (case, ops)
+assert ('stop' in ops) == (case in ('ok', 'rm-fail', 'residue')), (case, ops)
 PY
   done
   unset DB_FAKE_CASE DB_FAKE_LOG
-  log 'db_only_bootstrap_self_check=pass (fake-only: reserved-role SQL, auth migrate exit, 0600 env argv, own-container cleanup and residue classification)'
+  log 'db_only_bootstrap_self_check=pass (fake-only: reserved-role SQL, auth migrate exit, storage runner readiness, 0600 env argv, own-container cleanup and residue classification)'
 }
 
 # Hermetic DB-only lifecycle contract; these fixtures never contact a daemon.
