@@ -1802,7 +1802,13 @@ if args[0] == 'inspect':
 if any('select 1 from pg_roles' in arg for arg in args): print('1')
 if "to_regclass('storage.buckets')" in stdin:
     print('t' if '-tA' in args and '-X' in args else ' ?column?\n----------\n t\n(1 row)')
-if 'select current_database()' in stdin: print('postgres')
+if 'select current_database()' in stdin:
+    if case == 'reset-query-fail': print('postgres'); sys.exit(2)
+    if case == 'reset-no': sys.exit(0)
+    value = {'reset-false': 'f', 'reset-null': '',
+             'reset-malformed': 'synthetic private scalar', 'reset-multiline': 'postgres\npostgres',
+             'reset-blank-multiline': 'postgres\n'}.get(case, 'postgres')
+    print(value if '-X' in args and '-tA' in args else ' current_database \n------------------\n postgres\n(1 row)\n')
 if (case == 'migration-fail' and any('0002_second' in arg for arg in args)
         or case == 'seed-fail' and any(arg.endswith('/seed.sql') for arg in args)
         or case == 'prepare-fail' and 'create extension' in stdin
@@ -1818,13 +1824,36 @@ PY
   db_only_credentials "$work/run/body-credentials" || die 'credentials helper failed'
   printf 'IGNORED=synthetic-extra-line\n' >>"$work/run/body-credentials"
   declare -F db_only_body >/dev/null || die 'DB-only body missing'
-  for case_name in ok bootstrap-stop-fail migration-fail seed-fail prepare-fail reset-fail psql-fail tap-fail; do
+  for case_name in ok bootstrap-stop-fail migration-fail seed-fail prepare-fail reset-fail reset-false reset-no reset-null reset-malformed reset-multiline reset-blank-multiline reset-query-fail reset-timeout psql-fail tap-fail; do
     export DB_FAKE_CASE="$case_name" DB_FAKE_LOG="$work/run/body-$case_name.jsonl"
     : >"$DB_FAKE_LOG"
     status=0
-    db_only_body "$fake" "$(printf 'b%.0s' {1..64})" "$repo" "$work/run" /tmp/staging \
-      "$work/run/body-credentials" local-auth-image local-storage-image \
-      supabase/tests/first.sql supabase/tests/second.sql >"$work/run/body-output" 2>&1 || status=$?
+    (
+      if [[ "$case_name" == reset-timeout ]]; then
+        # Inject a real TimeoutExpired at the readiness query inside the full body.
+        python3() {
+          /usr/bin/python3 -c '
+import json, os, subprocess, sys
+from pathlib import Path
+from unittest.mock import patch
+real_run = subprocess.run
+def run(args, **kwargs):
+    if kwargs.get("input") == "select current_database();\n":
+        with Path(os.environ["DB_FAKE_LOG"]).open("a") as log:
+            log.write(json.dumps({"argv": args[1:], "stdin": kwargs["input"]}) + "\n")
+        assert kwargs["timeout"] == 60
+        raise subprocess.TimeoutExpired(args, 60, output="synthetic private scalar", stderr="RAW SQL")
+    return real_run(args, **kwargs)
+sys.argv = sys.argv[1:]
+with patch("subprocess.run", side_effect=run):
+    exec(compile(sys.stdin.read(), "<body-fixture>", "exec"))
+' "$@"
+        }
+      fi
+      db_only_body "$fake" "$(printf 'b%.0s' {1..64})" "$repo" "$work/run" /tmp/staging \
+        "$work/run/body-credentials" local-auth-image local-storage-image \
+        supabase/tests/first.sql supabase/tests/second.sql
+    ) >"$work/run/body-output" 2>&1 || status=$?
     python3 - "$DB_FAKE_LOG" "$case_name" "$status" "$work/run/body-output" "$work/run/body-credentials" <<'PY'
 import json, re, sys
 from pathlib import Path
@@ -1851,12 +1880,15 @@ if case == 'bootstrap-stop-fail':
     sys.exit(0)
 assert next(i for i, row in enumerate(argv) if row[0] == 'stop') < next(
     i for i, row in enumerate(argv) if any('0001_first.sql' in arg for arg in row)), 'product migration preceded Storage stop'
-expected_phase = {'migration-fail': 'migrations', 'seed-fail': 'seed', 'prepare-fail': 'prepare', 'reset-fail': 'reset'}.get(case, 'suites')
+expected_phase = 'reset' if case.startswith('reset-') else {'migration-fail': 'migrations', 'seed-fail': 'seed', 'prepare-fail': 'prepare'}.get(case, 'suites')
 assert re.search(r'db_only_body: phase=%s migrations_applied=%d failed=%d' % (expected_phase, 1 if case == 'migration-fail' else 2, 0 if case == 'ok' else 1), report), (case, report)
 files = [row[row.index('-f') + 1] for row in argv if 'psql' in row and '-f' in row and row[-1] != '-']
 assert files[:2] == ['/tmp/staging/supabase/migrations/0001_first.sql', '/tmp/staging/supabase/migrations/0002_second.sql'], files
 assert any(arg.endswith('/seed.sql') for row in argv for arg in row) == (case != 'migration-fail')
-assert sum('drop database' in row['stdin'] for row in rows) == (3 if case == 'reset-fail' else 2 if case in ('ok', 'psql-fail', 'tap-fail') else 0)
+assert sum('drop database' in row['stdin'] for row in rows) == (3 if case == 'reset-fail' else 1 if case.startswith('reset-') else 2 if case in ('ok', 'psql-fail', 'tap-fail') else 0)
+if case.startswith('reset-'):
+    assert not any('/tests/' in arg for row in argv for arg in row), 'suite ran after failed reset'
+    assert report.endswith('db_only_body: phase=reset migrations_applied=2 failed=1\n'), report
 assert all((Path(sys.argv[1]).parent / name).stat().st_mode & 0o777 == 0o600 for name in ('body.pgpass', 'body-conninfo.sql'))
 assert any(arg.endswith('/tests/second.sql') for row in argv for arg in row) == (case in ('ok', 'psql-fail', 'tap-fail'))
 assert ('PASS second.sql' in report) == (case in ('ok', 'psql-fail', 'tap-fail'))
@@ -1969,8 +2001,14 @@ for attempt in range(1, 4):
         break
     time.sleep(2)
 if verified:
-    probe = sql('select current_database();\n', 'postgres', timeout=60)
-    status = 0 if probe.returncode == 0 and probe.stdout.strip() == 'postgres' else 1
+    try:
+        # Quiet retains aligned headers; only the readiness query needs scalar output.
+        probe = docker('exec', '-i', container, 'psql', '-h', '127.0.0.1', '-U', 'supabase_admin',
+                       '-d', 'postgres', '-v', 'ON_ERROR_STOP=1', '-q', '-X', '-tA', '-f', '-',
+                       stdin='select current_database();\n', timeout=60)
+        status = 0 if probe.returncode == 0 and probe.stdout in ('postgres', 'postgres\n') else 1
+    except (subprocess.TimeoutExpired, UnicodeError):
+        pass  # Fail closed without exposing captured query output or a traceback.
 print('db_only_reset: operation=reset status=%s attempts=%d'
       % ('ok' if status == 0 else 'failed', attempts))
 sys.exit(status)
@@ -1996,22 +2034,48 @@ assert args[4:6] == ['-h', '127.0.0.1'] and args[8:10] in (['-d', 'template1'], 
 body = sys.stdin.read()
 if 'drop database if exists postgres with (force)' in body:
     assert args[8:10] == ['-d', 'template1'], args
-    assert 'create database postgres template sofia_template owner postgres' in body
+    assert args[10:] == ['-v', 'ON_ERROR_STOP=1', '-q', '-f', '-'], 'reset SQL flags changed'
+    assert body == ('drop database if exists postgres with (force);\n'
+                    'create database postgres template sofia_template owner postgres;\n')
     if case == 'create-fail': sys.exit(1)
     if case == 'retry' and not previous: sys.exit(1)
     sys.exit(0)
 assert args[8:10] == ['-d', 'postgres'], args
-assert 'select current_database()' in body
-if case == 'sentinel-fail': sys.exit(1)
-print('postgres')
+assert body == 'select current_database();\n'
+if case == 'sentinel-fail': print('postgres'); sys.exit(2)
+if case == 'no': sys.exit(0)
+if case == 'encoding': sys.stdout.buffer.write(b'\xff'); sys.exit(0)
+value = {'false': 'f', 'null': '', 'malformed': 'synthetic private scalar',
+         'multiline': 'postgres\npostgres', 'blank-multiline': 'postgres\n', 'padded': ' postgres ',
+         'formatted': ' current_database \n------------------\n postgres\n(1 row)\n'}.get(case, 'postgres')
+print(value if '-X' in args and '-tA' in args else ' current_database \n------------------\n postgres\n(1 row)\n')
 PY
   chmod +x "$fake"
   declare -F db_only_reset >/dev/null || die 'DB-only reset helper missing'
-  for case_name in ok retry create-fail sentinel-fail; do
+  for case_name in ok retry create-fail sentinel-fail false no null malformed multiline blank-multiline padded formatted timeout encoding; do
     export DB_FAKE_CASE="$case_name" DB_FAKE_LOG="$work/run/reset-$case_name.jsonl"
     : >"$DB_FAKE_LOG"
     status=0
-    db_only_reset "$fake" "$(printf 'b%.0s' {1..64})" >"$work/run/reset-output" 2>&1 || status=$?
+    # Exercise the production reset body; simulate only timeout and retry delays.
+    python3 - "$repo_root/scripts/run-local-sofia-sql-tests.sh" "$fake" <<'PY' \
+      >"$work/run/reset-output" 2>&1 || status=$?
+import json, os, subprocess, sys
+from pathlib import Path
+from unittest.mock import patch
+source = Path(sys.argv[1]).read_text().split('db_only_reset() {', 1)[1].split("<<'PY'\n", 1)[1].split('\nPY\n', 1)[0]
+real_run = subprocess.run
+def run(args, **kwargs):
+    probe = kwargs.get('input') == 'select current_database();\n'
+    assert kwargs['timeout'] == (60 if probe else 180)
+    if probe and os.environ['DB_FAKE_CASE'] == 'timeout':
+        with Path(os.environ['DB_FAKE_LOG']).open('a') as log:
+            log.write(json.dumps(args[1:]) + '\n')
+        raise subprocess.TimeoutExpired(args, 60, output='synthetic private scalar', stderr='RAW SQL')
+    return real_run(args, **kwargs)
+sys.argv = ['reset', sys.argv[2], 'b' * 64]
+with patch('subprocess.run', side_effect=run), patch('time.sleep'):
+    exec(compile(source, '<reset>', 'exec'))
+PY
     python3 - "$DB_FAKE_LOG" "$case_name" "$status" "$work/run/reset-output" <<'PY'
 import json, re, sys
 from pathlib import Path
@@ -2021,8 +2085,12 @@ report = Path(sys.argv[4]).read_text()
 match = re.fullmatch(r'db_only_reset: operation=reset status=(ok|failed) attempts=([1-3])\n', report)
 assert match, 'reset report leaked output or omitted metadata'
 assert (status == 0) == (case in ('ok', 'retry')), (case, status, report)
-assert int(match.group(2)) == ({'ok': 1, 'retry': 2, 'create-fail': 3, 'sentinel-fail': 1}[case]), (case, report)
-assert len(rows) == {'ok': 2, 'retry': 3, 'create-fail': 3, 'sentinel-fail': 2}[case], (case, len(rows))
+assert match.group(1) == ('ok' if status == 0 else 'failed'), (case, report)
+assert int(match.group(2)) == {'retry': 2, 'create-fail': 3}.get(case, 1), (case, report)
+assert len(rows) == (3 if case in ('retry', 'create-fail') else 2), (case, len(rows))
+assert all(row[10:] == ['-v', 'ON_ERROR_STOP=1', '-q', '-f', '-'] for row in rows if row[9] == 'template1')
+if case != 'create-fail':
+    assert rows[-1][10:] == ['-v', 'ON_ERROR_STOP=1', '-q', '-X', '-tA', '-f', '-'], 'dedicated scalar flags missing'
 assert not any('postgresql://' in arg for row in rows for arg in row), 'reset argv leaked a connection string'
 PY
   done
