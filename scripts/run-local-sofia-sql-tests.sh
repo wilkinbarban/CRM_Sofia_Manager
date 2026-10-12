@@ -68,11 +68,6 @@ readonly repo_root
 cli="$repo_root/node_modules/.bin/supabase"
 readonly tests_dir_rel='supabase/tests'
 
-# The hosted migration runner applies ownership transfers to supabase_admin. The local
-# CLI migrates as postgres, so the temporary copy drops exactly these statements. The
-# expected count is asserted so a new transfer cannot change the local chain silently.
-readonly expected_owner_transfers=8
-
 readonly psql_timeout_seconds=300
 readonly stop_timeout_seconds=300
 readonly docker_query_timeout_seconds=15
@@ -112,20 +107,6 @@ redact() {
     -e 's#((Bearer)[[:space:]]+)[^[:space:]]+#\1[redacted]#g' \
     -e 's#((POSTGRES_PASSWORD|AUTH_TOKEN|JWT_SECRET|SECRET_KEY)[[:space:]]*=[[:space:]]*)[^[:space:]]+#\1[redacted]#g' \
     -e 's#("?(apiKey|api_key|password|secret|token)"?[[:space:]]*[:=][[:space:]]*"?)[^",[:space:]]+#\1[redacted]#g'
-}
-
-# Binds ephemeral ports so the stack never collides with another local stack. A port
-# taken between this probe and `supabase start` makes the start fail loudly below.
-free_ports() {
-  local needed=$1 collected='' candidate
-  while (($(wc -w <<<"$collected") < needed)); do
-    candidate="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')"
-    case " $collected " in
-      *" $candidate "*) continue ;;
-    esac
-    collected="$collected $candidate"
-  done
-  printf '%s\n' "$collected"
 }
 
 # ---------------------------------------------------------------------------
@@ -2389,11 +2370,11 @@ PY
 
 # Guard this deletion slice against reintroducing legacy definitions or direct calls.
 legacy_helpers_self_check() {
-  if grep -Eq '^[[:space:]]*(stage_supabase_tree|suite_staged_paths|ensure_staged_suite|ensure_loopback_password_rule)([[:space:]]|\(\))' \
+  if grep -Eq '^[[:space:]]*(stage_supabase_tree|suite_staged_paths|ensure_staged_suite|ensure_loopback_password_rule|free_ports)([[:space:]]|\(\))|^[[:space:]]*readonly[[:space:]]+expected_owner_transfers=' \
     "$repo_root/scripts/run-local-sofia-sql-tests.sh"; then
-    die 'obsolete staging/loopback helpers remain in the runner'
+    die 'obsolete staging/loopback/port helpers or ownership constant remain in the runner'
   fi
-  log 'legacy_helpers_self_check: obsolete staging/loopback helpers absent'
+  log 'legacy_helpers_self_check: obsolete staging/loopback/port helpers and ownership constant absent'
 }
 
 # Reject executable legacy CLI start/reset commands, not shared diagnostic fixtures.
@@ -2402,7 +2383,20 @@ legacy_execution_self_check() {
     "$repo_root/scripts/run-local-sofia-sql-tests.sh"; then
     die 'obsolete Supabase CLI start/reset execution remains in the runner'
   fi
-  log 'legacy_execution_self_check: obsolete Supabase CLI start/reset execution absent'
+  python3 - "$repo_root/scripts/run-local-sofia-sql-tests.sh" <<'PY'
+import sys
+from pathlib import Path
+source = Path(sys.argv[1]).read_text()
+assert source.endswith(r'''db_only_mode "$(command -v docker)" "${suites[@]}"
+exit $?
+}
+
+sanitized_exec /nonexistent /tmp /bin/bash --noprofile --norc -c \
+  "$(declare -f sanitized_exec runner_main); runner_main \"\$@\"" \
+  "${BASH_SOURCE[0]}" "$@"
+'''), 'unexpected execution tail after isolated DB-only dispatch'
+PY
+  log 'legacy_execution_self_check: obsolete Supabase CLI start/reset execution absent, no unreachable tail'
 }
 
 legacy_helpers_self_check
@@ -2428,30 +2422,6 @@ fi
 [[ "$(pwd -P)" == "$repo_root" ]] || die "run this harness from the repository root: $repo_root"
 db_only_mode "$(command -v docker)" "${suites[@]}"
 exit $?
-# Legacy execution is deliberately unreachable pending bounded deletion slices.
-[[ "$(git rev-parse --show-toplevel 2>/dev/null)" == "$repo_root" ]] \
-  || die 'repository root mismatch; refusing to run'
-for suite in "${suites[@]}"; do
-  [[ -f "$repo_root/$suite" ]] || die "missing suite file: $suite"
-done
-
-command -v realpath >/dev/null 2>&1 || die 'realpath is required to resolve suite includes'
-timeout -k 5 "$docker_query_timeout_seconds" docker info >/dev/null 2>&1 \
-  || die 'docker is unavailable; refusing to start a local stack'
-
-# ---------------------------------------------------------------------------
-# Private temporary project: config, migrations, and tests only, plus normalization.
-# ---------------------------------------------------------------------------
-read -r -a ports <<<"$(free_ports 8)"
-api_port="${ports[0]}" db_port="${ports[1]}" shadow_port="${ports[2]}" pooler_port="${ports[3]}"
-studio_port="${ports[4]}" smtp_port="${ports[5]}" analytics_port="${ports[6]}" inspector_port="${ports[7]}"
-project_id="sofia-sql-$(python3 -c 'import uuid; print(uuid.uuid4().hex[:8])')"
-
-stage_temporary_inputs "$repo_root" "$work/project" "${suites[@]}"
-
-normalize_temporary_tree "$work/project" "$project_id" "$expected_owner_transfers" \
-  "api=$api_port" "db=$db_port" "shadow=$shadow_port" "pooler=$pooler_port" \
-  "studio=$studio_port" "smtp=$smtp_port" "analytics=$analytics_port" "inspector=$inspector_port"
 }
 
 sanitized_exec /nonexistent /tmp /bin/bash --noprofile --norc -c \
