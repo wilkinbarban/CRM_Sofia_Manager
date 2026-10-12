@@ -1541,6 +1541,155 @@ sys.exit(status)
 PY
 }
 
+# Private session body; original SQL and image refs are supplied by its trusted caller.
+db_only_body() (
+  local exe=$1 cid=$2 source=$3 run=$4 stage=$5 credentials=$6 auth=$7 storage=$8
+  shift 8
+  local applied=0 failed=0 suite name raw tap psql_status tap_status result tests count total=0 total_failed=0
+  trap 'status=$?; printf "db_only_body: migrations_applied=%d failed=%d\n" "$applied" "$((status != 0))"' EXIT
+  stage_temporary_inputs "$source" "$run/body-project" "$@" || return 1
+  db_only_bootstrap "$exe" "$cid" "$run" "$auth" "$storage" || return 1
+  python3 - "$credentials" "$run" <<'PY' || return 1
+import re, sys, urllib.parse
+from pathlib import Path
+credentials, root = Path(sys.argv[1]), Path(sys.argv[2])
+line = credentials.open().readline()
+assert re.fullmatch(r'POSTGRES_PASSWORD=\S+\n', line)
+secret = line.rstrip('\n').split('=', 1)[1]
+pgpass = secret.replace('\\', '\\\\').replace(':', '\\:')
+(root / 'body.pgpass').write_text('127.0.0.1:5432:postgres:postgres:' + pgpass + '\n')
+url = 'postgresql://postgres:' + urllib.parse.quote(secret, safe='') + '@127.0.0.1:5432/postgres'
+(root / 'body-conninfo.sql').write_text("\\set runtime_dblink_conninfo '" + url + "'\n")
+PY
+  run_bounded 'body staging' 120 "$exe" exec "$cid" mkdir -p "$stage/supabase" >/dev/null 2>&1 || return 1
+  run_bounded 'body staging' 120 "$exe" cp "$run/body-project/supabase/." "$cid:$stage/supabase" >/dev/null 2>&1 || return 1
+  run_bounded 'body credentials' 60 "$exe" exec -i "$cid" sh -c \
+    'umask 077; cat >"$1"' body "$stage/.pgpass" <"$run/body.pgpass" >/dev/null 2>&1 || return 1
+  # Only postgres->postgres needs password auth for non-superuser dblink; keep admin trust.
+  run_bounded 'body loopback rule' 60 "$exe" exec "$cid" sh -c '
+    set -e
+    hba=$(psql -X -U supabase_admin -d postgres -Atc "show hba_file")
+    { printf "%s\n" "host postgres postgres 127.0.0.1/32 scram-sha-256"; cat "$hba"; } >"$1/hba"
+    cat "$1/hba" >"$hba"
+    psql -X -U supabase_admin -d postgres -v ON_ERROR_STOP=1 -c "select pg_reload_conf()"
+  ' body "$stage" >/dev/null 2>&1 || return 1
+  body_sql() {
+    run_bounded 'body psql' "$psql_timeout_seconds" "$exe" exec -i -e "PGPASSFILE=$stage/.pgpass" "$cid" \
+      psql -X -h 127.0.0.1 -U postgres -d postgres -v ON_ERROR_STOP=1 -q "$@"
+  }
+  for suite in "$run/body-project/supabase/migrations/"*.sql; do
+    body_sql -f "$stage/supabase/migrations/$(basename -- "$suite")" >"$run/body-sql.log" 2>&1 || return 1
+    applied=$((applied + 1))
+  done
+  body_sql -f "$stage/supabase/seed.sql" >"$run/body-sql.log" 2>&1 || return 1
+  db_only_prepare "$exe" "$cid" || return 1
+  for suite in "$@"; do
+    name="$(basename -- "$suite")"
+    db_only_reset "$exe" "$cid" || return 1
+    raw="$run/$name.raw"
+    tap="$run/$name.tap"
+    psql_status=0
+    body_sql -tA --pset pager=off -f - -f "$stage/$suite" \
+      <"$run/body-conninfo.sql" >"$raw" 2>&1 || psql_status=$?
+    filter_tap "$raw" >"$tap"
+    tap_status=0
+    result="$(validate_tap "$tap" 2>"$run/$name.tap.err")" || tap_status=$?
+    read -r tests count <<<"$(sed -nE 's/^TAP_RESULT tests=([0-9]+) failed=([0-9]+) .*/\1 \2/p' <<<"$result")"
+    tests=${tests:-0}
+    count=${count:-0}
+    total=$((total + tests))
+    total_failed=$((total_failed + count))
+    if ((psql_status == 0 && tap_status == 0)); then
+      log "PASS $name (assertions=$tests failed=0 psql_exit=0)"
+    else
+      failed=$((failed + 1))
+      log "FAIL $name (assertions=$tests failed=$count psql_exit=$psql_status tap_exit=$tap_status)"
+    fi
+  done
+  log "summary: suites=$# assertions=$total failed_assertions=$total_failed failing_suites=$failed"
+  ((failed == 0))
+)
+
+# Hermetic body contract: the body stages a repository tree, applies every migration and
+# the seed as the non-superuser postgres role, prepares the template and never puts the
+# password in argv.
+db_only_body_self_check() {
+  local fake="$work/run/body-docker" repo="$work/run/body-repo" case_name status
+  mkdir -p "$repo/supabase/migrations"
+  printf 'select 1;\nalter function public.my_func() owner to supabase_admin;\n' >"$repo/supabase/migrations/0001_first.sql"
+  printf 'select 2;\n' >"$repo/supabase/migrations/0002_second.sql"
+  printf 'select 3;\n' >"$repo/supabase/seed.sql"
+  mkdir -p "$repo/supabase/tests"
+  printf '\\ir helper.sql\n' >"$repo/supabase/tests/first.sql"
+  printf 'select 4;\n' >"$repo/supabase/tests/helper.sql"
+  printf 'select 5;\n' >"$repo/supabase/tests/second.sql"
+  cat >"$fake" <<'PY'
+#!/usr/bin/python3
+import json, os, sys
+from pathlib import Path
+args = sys.argv[1:]
+stdin = sys.stdin.read() if '-i' in args else ''
+with Path(os.environ['DB_FAKE_LOG']).open('a') as stream:
+    stream.write(json.dumps({'argv': args, 'stdin': stdin}) + '\n')
+case = os.environ['DB_FAKE_CASE']
+if args[0] == 'cp':
+    staged = Path(args[1]) / 'migrations/0001_first.sql'
+    original = Path(os.environ['DB_FAKE_LOG']).parent / 'body-repo/supabase/migrations/0001_first.sql'
+    assert staged.read_bytes() == original.read_bytes(), 'staging changed the original ownership transfer'
+if args[0] == 'create': print(('e' if '--entrypoint' in args else 'f') * 64)
+if "to_regclass('storage.buckets')" in stdin: print('t')
+if 'select current_database()' in stdin: print('postgres')
+if (case == 'migration-fail' and any('0002_second' in arg for arg in args)
+        or case == 'seed-fail' and any(arg.endswith('/seed.sql') for arg in args)
+        or case == 'prepare-fail' and 'create extension' in stdin
+        or case == 'reset-fail' and 'drop database' in stdin): sys.exit(1)
+if any(arg.endswith('/tests/first.sql') for arg in args):
+    print('1..1\n' + ('not ok' if case == 'tap-fail' else 'ok') + ' 1 - first')
+    if case == 'psql-fail': sys.exit(2)
+if any(arg.endswith('/tests/second.sql') for arg in args): print('1..1\nok 1 - second')
+PY
+  chmod +x "$fake"
+  db_only_credentials "$work/run/body-credentials" || die 'credentials helper failed'
+  printf 'IGNORED=synthetic-extra-line\n' >>"$work/run/body-credentials"
+  declare -F db_only_body >/dev/null || die 'DB-only body missing'
+  for case_name in ok migration-fail seed-fail prepare-fail reset-fail psql-fail tap-fail; do
+    export DB_FAKE_CASE="$case_name" DB_FAKE_LOG="$work/run/body-$case_name.jsonl"
+    : >"$DB_FAKE_LOG"
+    status=0
+    db_only_body "$fake" "$(printf 'b%.0s' {1..64})" "$repo" "$work/run" /tmp/staging \
+      "$work/run/body-credentials" local-auth-image local-storage-image \
+      supabase/tests/first.sql supabase/tests/second.sql >"$work/run/body-output" 2>&1 || status=$?
+    python3 - "$DB_FAKE_LOG" "$case_name" "$status" "$work/run/body-output" "$work/run/body-credentials" <<'PY'
+import json, re, sys
+from pathlib import Path
+rows = [json.loads(line) for line in Path(sys.argv[1]).read_text().splitlines()]
+case, status = sys.argv[2], int(sys.argv[3])
+secret = Path(sys.argv[5]).read_text().splitlines()[0].split('=', 1)[1]
+argv = [row['argv'] for row in rows]
+joined = ' '.join(' '.join(row) for row in argv)
+report = Path(sys.argv[4]).read_text()
+assert secret not in report and secret not in joined, 'the body leaked the password'
+assert (status == 0) == (case == 'ok'), (case, status, report)
+assert re.search(r'db_only_body: migrations_applied=%d failed=%d' % (1 if case == 'migration-fail' else 2, 0 if case == 'ok' else 1), report), report
+files = [row[row.index('-f') + 1] for row in argv if 'psql' in row and '-f' in row and row[-1] != '-']
+assert files[:2] == ['/tmp/staging/supabase/migrations/0001_first.sql', '/tmp/staging/supabase/migrations/0002_second.sql'], files
+assert any(arg.endswith('/seed.sql') for row in argv for arg in row) == (case != 'migration-fail')
+assert sum('drop database' in row['stdin'] for row in rows) == (3 if case == 'reset-fail' else 2 if case in ('ok', 'psql-fail', 'tap-fail') else 0)
+assert all((Path(sys.argv[1]).parent / name).stat().st_mode & 0o777 == 0o600 for name in ('body.pgpass', 'body-conninfo.sql'))
+assert any(arg.endswith('/tests/second.sql') for row in argv for arg in row) == (case in ('ok', 'psql-fail', 'tap-fail'))
+assert ('PASS second.sql' in report) == (case in ('ok', 'psql-fail', 'tap-fail'))
+assert ('summary: suites=2 assertions=2 failed_assertions=%d failing_suites=%d' % (int(case == 'tap-fail'), int(case != 'ok')) in report) == (case in ('ok', 'psql-fail', 'tap-fail'))
+assert all(row[row.index('-U') + 1] == 'postgres' for row in argv if any('/supabase/' in arg for arg in row) and 'psql' in row)
+assert any(row[:2] == ['exec', '-i'] and any('umask 077' in arg for arg in row) for row in argv), 'pgpass not written as a 0600 file'
+assert any(row[0] == 'exec' and 'mkdir' in row for row in argv), 'staging directory not prepared'
+assert any(row[0] == 'cp' and row[-1].endswith(':/tmp/staging/supabase') for row in argv), 'tree not staged into the container'
+assert all('--publish' not in row and '--tmpfs' not in row and (row[0] != 'create' or '-p' not in row) for row in argv), 'the body altered isolation'
+PY
+  done
+  unset DB_FAKE_CASE DB_FAKE_LOG
+  log 'db_only_body_self_check=pass (fake-only: pgpass file, staging, migrations and seed through psql, no password in argv)'
+}
+
 # Per-suite reset: a copy of the prepared template replaces the product database. The
 # postmaster can refuse a connection for a moment after the copy, so the attempt is
 # retried and the session the suites use is verified before anything runs.
@@ -2129,6 +2278,7 @@ db_only_self_check
 db_only_bootstrap_self_check
 db_only_prepare_self_check
 db_only_reset_self_check
+db_only_body_self_check
 tap_self_check
 redact_self_check
 normalization_self_check
