@@ -91,8 +91,8 @@ describe('Phase 8 operational artifacts', () => {
   it('restores only current Supabase services and makes globals explicit', () => {
     const restore = read('ops', 'supabase', 'restore.sh')
 
-    expect(restore).toContain('clients="studio api-gw auth rest realtime storage meta functions"')
-    expect(restore).not.toMatch(/clients=.*(?:imgproxy|supavisor)/)
+    expect(restore).toContain('clients="api-gw auth rest realtime storage functions"')
+    expect(restore).not.toMatch(/clients=.*(?:studio|meta|imgproxy|supavisor)/)
     expect(restore).toContain('--restore-globals')
     expect(restore).toContain('trap restart_clients EXIT')
   })

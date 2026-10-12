@@ -7,13 +7,11 @@ cd "$here"
 docker compose config --quiet
 
 expected_containers="
-asados-supabase-studio
 asados-supabase-envoy
 asados-supabase-auth
 asados-supabase-rest
 realtime-dev.supabase-realtime
 asados-supabase-storage
-asados-supabase-meta
 asados-supabase-edge-functions
 asados-supabase-db
 "
