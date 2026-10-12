@@ -1255,9 +1255,23 @@ STUB
 # Scoped session scaffold: start only after inspection, then discard temporary data.
 # Timeouts can leave daemon work in flight; a second signal can interrupt teardown.
 # Residue reporting is an observation, not a guarantee against those races.
+# Caller-owned database credentials. The secret is written once to a 0600 file and never
+# echoed; the session validates and reuses that file instead of generating its own, so
+# the caller keeps the connection target it later passes to psql and to the suites.
+db_only_credentials() {
+  python3 - "$1" <<'PY'
+import os, secrets, sys
+path = sys.argv[1]
+fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+with os.fdopen(fd, 'w', encoding='utf-8') as handle:
+    handle.write('POSTGRES_PASSWORD=' + secrets.token_hex(24) + '\n')
+PY
+  chmod 600 -- "$1"
+}
+
 db_only_session() {
   python3 - "$@" <<'PY'
-import json, re, signal, subprocess, sys, tempfile, time, uuid
+import json, os, re, signal, stat, subprocess, sys, tempfile, time, uuid
 exe, image_ref, temp_root = sys.argv[1:4]
 name = 'sofia-db-' + uuid.uuid4().hex
 label = 'org.sofia.sql-tests.owner'
@@ -1269,6 +1283,31 @@ data = '/var/lib/postgresql/data'
 # that only the finished official bootstrap can satisfy is the real gate.
 sentinel = "select 1 from pg_roles where rolname = 'supabase_auth_admin'"
 probe_timeout = 5
+
+def parse_arguments():
+    if len(sys.argv) not in (4, 5, 6):
+        raise ValueError('invalid internal arguments')
+    credentials = sys.argv[4] if len(sys.argv) >= 5 else '-'
+    readiness_seconds = int(sys.argv[5]) if len(sys.argv) == 6 else 60
+    if not 1 <= readiness_seconds <= 120:
+        raise ValueError('invalid internal readiness deadline')
+    return credentials, readiness_seconds
+
+def open_credentials(credentials):
+    # '-' asks this session to generate its own secret; anything else is a caller-owned
+    # file that must already be private and well formed, and is never rewritten.
+    if credentials == '-':
+        with tempfile.NamedTemporaryFile(mode='w', dir=temp_root, delete=False) as handle:
+            handle.write('POSTGRES_PASSWORD=' + uuid.uuid4().hex + '\n')
+        return handle.name, True
+    info = os.stat(credentials)
+    if not stat.S_ISREG(info.st_mode) or info.st_mode & 0o777 != 0o600:
+        raise ValueError('credentials must be a 0600 regular file')
+    with open(credentials, encoding='utf-8') as handle:
+        line = handle.readline()
+    if not re.fullmatch(r'POSTGRES_PASSWORD=\S+\n', line):
+        raise ValueError('credentials must start with POSTGRES_PASSWORD')
+    return credentials, False
 
 def docker(*args, timeout=15):
     return subprocess.run([exe, *args], capture_output=True, text=True, timeout=timeout)
@@ -1317,11 +1356,12 @@ def interrupted(signum, frame):
 
 for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
     signal.signal(sig, interrupted)
+generated, credentials_path = False, ''
 try:
-    # Internal argument only, never an environment override. Bound the whole wait.
-    readiness_seconds = int(sys.argv[4]) if len(sys.argv) == 5 else 60
-    if len(sys.argv) not in (4, 5) or not 1 <= readiness_seconds <= 120:
-        raise ValueError('invalid internal readiness deadline')
+    # Internal arguments only, never environment overrides. Both are validated before any
+    # Docker command runs, so rejected input cannot create a container.
+    credentials, readiness_seconds = parse_arguments()
+    credentials_path, generated = open_credentials(credentials)
     result = docker('image', 'inspect', '--', image_ref)
     if result.returncode: raise ValueError('local image required')
     image_doc, = json.loads(result.stdout)
@@ -1331,16 +1371,13 @@ try:
     if volumes is not None and volumes not in ({}, {data: {}}):
         raise ValueError('unsupported image volumes')
     phase = 'create'
-    with tempfile.NamedTemporaryFile(mode='w', dir=temp_root) as credentials:
-        credentials.write('POSTGRES_PASSWORD=' + uuid.uuid4().hex + '\n')
-        credentials.flush()
-        attempted = True
-        result = docker('create', '--pull', 'never', '--network', 'none', '--name', name,
-                        '--label', label + '=' + name, '--env-file', credentials.name,
-                        '--tmpfs', '/var/lib/postgresql/data', image)
-        cid = result.stdout.strip()
-        if result.returncode or not re.fullmatch(r'[0-9a-f]{64}', cid):
-            raise ValueError('create failed')
+    attempted = True
+    result = docker('create', '--pull', 'never', '--network', 'none', '--name', name,
+                    '--label', label + '=' + name, '--env-file', credentials_path,
+                    '--tmpfs', '/var/lib/postgresql/data', image)
+    cid = result.stdout.strip()
+    if result.returncode or not re.fullmatch(r'[0-9a-f]{64}', cid):
+        raise ValueError('create failed')
     phase = 'inspect'
     doc = inspect_owned()
     host = doc['HostConfig']
@@ -1364,6 +1401,11 @@ try:
 except Exception:
     pass  # Never expose Docker output, inspect bodies or synthetic credentials.
 finally:
+    if generated:
+        try:
+            os.unlink(credentials_path)
+        except OSError:
+            pass
     if attempted:
         cleanup_state, residue = 'unverified', 'unknown'
         try:
@@ -1502,7 +1544,7 @@ PY
     if [[ "$case_name" == good ]]; then readiness_args=(); fi
     # Multi-probe cases need a cap that survives several fake process spawns.
     case "$case_name" in ready-retry | ready-sentinel | ready-refused) readiness_args=(5) ;; ready-hang) readiness_args=(20) ;; esac
-    db_only_session "$fake" local-postgres "$work/run" "${readiness_args[@]}" \
+    db_only_session "$fake" local-postgres "$work/run" - ${readiness_args[@]+"${readiness_args[@]}"} \
       >"$work/run/db-only-output" 2>&1 || status=$?
     [[ -s "$work/run/db-only-output" ]] || die 'DB-only helper omitted its bounded report'
     python3 - "$DB_FAKE_LOG" "$case_name" "$status" "$work/run/db-only-output" <<'PY'
@@ -1583,14 +1625,52 @@ PY
     export DB_FAKE_CASE=good DB_FAKE_LOG="$work/run/db-only-invalid-deadline.jsonl"
     : >"$DB_FAKE_LOG"
     status=0
-    db_only_session "$fake" local-postgres "$work/run" "$deadline" \
+    db_only_session "$fake" local-postgres "$work/run" - "$deadline" \
       >"$work/run/db-only-output" 2>&1 || status=$?
     [[ "$status" == 1 && ! -s "$DB_FAKE_LOG" ]] || die 'invalid readiness deadline accepted'
     [[ "$(<"$work/run/db-only-output")" == 'db_only: operation=image status=failed cleanup=not-created container_residue=not-created readiness=not-checked' ]] \
       || die 'invalid readiness deadline report mismatch'
   done
+  # A caller-owned credentials file is used exactly as given: never regenerated, never
+  # removed, and never world-readable.
+  local credentials="$work/run/db-only-credentials" before after
+  db_only_credentials "$credentials" || die 'credentials helper failed'
+  [[ -f "$credentials" && "$(stat -c %a "$credentials")" == '600' ]] \
+    || die 'credentials helper did not create a 0600 file'
+  grep -qE '^POSTGRES_PASSWORD=[0-9a-f]{32,}$' "$credentials" \
+    || die 'credentials helper wrote an unexpected secret shape'
+  db_only_credentials "$work/run/db-only-credentials-second" || die 'credentials helper failed on reuse'
+  cmp -s "$credentials" "$work/run/db-only-credentials-second" \
+    && die 'credentials helper reused a secret between calls'
+  before="$(sha256sum <"$credentials")"
+  export DB_FAKE_CASE=good DB_FAKE_LOG="$work/run/db-only-credentials.jsonl"
+  : >"$DB_FAKE_LOG"
+  status=0
+  db_only_session "$fake" local-postgres "$work/run" "$credentials" 1 \
+    >"$work/run/db-only-output" 2>&1 || status=$?
+  [[ "$status" == 0 ]] || die 'caller-owned credentials were not accepted'
+  [[ -f "$credentials" ]] || die 'the session removed a caller-owned credentials file'
+  after="$(sha256sum <"$credentials")"
+  [[ "$before" == "$after" ]] || die 'the session rewrote a caller-owned credentials file'
+  python3 - "$DB_FAKE_LOG" "$credentials" <<'PY'
+import json, sys
+from pathlib import Path
+rows = [json.loads(line) for line in Path(sys.argv[1]).read_text().splitlines()]
+create, = [row for row in rows if row[0] == 'create']
+assert create[create.index('--env-file') + 1] == sys.argv[2], 'caller credentials were not the env file'
+assert rows[3] == ['start', 'b' * 64]
+assert [row[0] for row in rows][-1] == 'ps'
+PY
+  chmod 644 "$work/run/db-only-credentials-second"
+  : >"$DB_FAKE_LOG"
+  status=0
+  db_only_session "$fake" local-postgres "$work/run" "$work/run/db-only-credentials-second" 1 \
+    >"$work/run/db-only-output" 2>&1 || status=$?
+  [[ "$status" == 1 && ! -s "$DB_FAKE_LOG" ]] || die 'a world-readable credentials file was accepted'
+  [[ "$(<"$work/run/db-only-output")" == 'db_only: operation=image status=failed cleanup=not-created container_residue=not-created readiness=not-checked' ]] \
+    || die 'rejected credentials report mismatch'
   unset DB_FAKE_CASE DB_FAKE_LOG
-  log 'db_only_self_check=pass (54 fake-only cases: bootstrap-sentinel readiness/order/deadline, pinned-image/volumes, argv, stopped-state, tmpfs-only, pre-start-isolation, exact-owned-cleanup, bounded-reporting; not real residue proof)'
+  log 'db_only_self_check=pass (fake-only: bootstrap-sentinel readiness/order/deadline, caller-owned-credentials, pinned-image/volumes, argv, stopped-state, tmpfs-only, pre-start-isolation, exact-owned-cleanup, bounded-reporting; not real residue proof)'
 }
 
 environment_self_check
