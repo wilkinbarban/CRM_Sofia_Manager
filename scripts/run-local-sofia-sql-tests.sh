@@ -1674,6 +1674,33 @@ sys.exit(status)
 PY
 }
 
+# Drain stderr to EOF without SIGPIPE; retain raw payload at most 64KiB + 8KiB chunk
+# in memory only, NOT a bound on total Python RAM. Truncation or ambiguous ERROR
+# records cannot provide SQLSTATE evidence.
+db_only_migration_capture() {
+  python3 -c '
+import re, sys
+path = sys.argv[1]
+data = bytearray()
+truncated = False
+while True:
+    chunk = sys.stdin.buffer.read(8192)
+    if not chunk: break
+    room = 65536 - len(data)
+    truncated |= len(chunk) > room
+    data.extend(chunk[:room])
+pattern = re.compile(rb"psql:" + re.escape(path.encode()) + rb":[1-9][0-9]{0,9}: ERROR:  ([0-9A-Z]{5})")
+code = None
+errors = 0
+for error in re.finditer(rb"(?m)^[^\n]*\bERROR\b[^\n]*$", data):
+    errors += 1
+    match = pattern.fullmatch(data, error.start(), error.end())
+    code = match[1] if match else None
+if not truncated and errors == 1 and code and not code.startswith(b"00"):
+    print(code.decode("ascii"))
+' "$1"
+}
+
 # Private session body; original SQL and image refs are supplied by its trusted caller.
 db_only_body() (
   local exe=$1 cid=$2 source=$3 run=$4 stage=$5 credentials=$6 auth=$7 storage=$8
@@ -1717,8 +1744,28 @@ PY
       psql -X -h 127.0.0.1 -U postgres -d postgres -v ON_ERROR_STOP=1 -q "$@"
   }
   phase=migrations
+  declare -F db_only_migration_capture >/dev/null || return 1
+  local migration_path migration_state migration_status migration_class ordinal
   for suite in "$run/body-project/supabase/migrations/"*.sql; do
-    body_sql -f "$stage/supabase/migrations/$(basename -- "$suite")" >/dev/null 2>&1 || return 1
+    migration_path="$stage/supabase/migrations/$(basename -- "$suite")"
+    migration_status=0
+    migration_state="$(body_sql -v VERBOSITY=sqlstate -f "$migration_path" 2>&1 >/dev/null |
+      db_only_migration_capture "$migration_path")" || migration_status=$?
+    if ((migration_status != 0)); then
+      migration_class=unclassified
+      # 1/2 are ambiguous Docker/client failures. Only psql exit 3 plus an
+      # exact sqlstate-only ERROR record is SQL evidence; never infer a cause.
+      case "$migration_status" in
+        124|137) migration_class=timeout ;; # run_bounded timeout contract
+        125|126|127) migration_class=command-error ;;
+        3) [[ "$migration_state" =~ ^[0-9A-Z]{5}$ ]] && migration_class=sql-error ;;
+      esac
+      ordinal=''
+      ((applied < 999999)) && ordinal=" ordinal=$((applied + 1))"
+      printf 'db_only_migration:%s class=%s%s\n' "$ordinal" "$migration_class" \
+        "$([[ "$migration_class" == sql-error ]] && printf ' sqlstate=%s' "$migration_state")"
+      return 1
+    fi
     applied=$((applied + 1))
   done
   phase=seed
@@ -1809,8 +1856,26 @@ if 'select current_database()' in stdin:
              'reset-malformed': 'synthetic private scalar', 'reset-multiline': 'postgres\npostgres',
              'reset-blank-multiline': 'postgres\n'}.get(case, 'postgres')
     print(value if '-X' in args and '-tA' in args else ' current_database \n------------------\n postgres\n(1 row)\n')
-if (case == 'migration-fail' and any('0002_second' in arg for arg in args)
-        or case == 'seed-fail' and any(arg.endswith('/seed.sql') for arg in args)
+if (case.startswith('migration-') and any('0002_second' in arg for arg in args)
+        or case == 'migration-first' and any('0001_first' in arg for arg in args)):
+    assert 'VERBOSITY=sqlstate' in args, 'migration verbosity missing'
+    path = args[args.index('-f') + 1]
+    record = 'psql:' + path + ':17: ERROR:  42501'
+    messages = {'migration-fail': record, 'migration-ambiguous': record,
+                'migration-command': 'Docker synthetic secret', 'migration-malformed': record + ' PASSWORD=secret',
+                'migration-hostile': 'PASSWORD=42501 postgres://private ERROR:  23505',
+                'migration-flood': 'x' * 70000 + '\n' + record,
+                'migration-first': record.replace('42501', '42P01'),
+                'migration-duplicate': record + '\n' + record,
+                'migration-mixed': record + '\n' + record + ' PASSWORD=secret',
+                'migration-mixed-path': record + '\n' + record.replace('0002_second.sql', 'private.sql'),
+                'migration-wrong-path': record.replace('0002_second.sql', 'private.sql'),
+                'migration-bad-state': record.replace('42501', '00000')}
+    print(messages.get(case, record), file=sys.stderr)
+    print('hostile SQL secret log', file=sys.stderr)
+    sys.exit({'migration-fail': 3, 'migration-ambiguous': 1, 'migration-client': 2, 'migration-command': 127,
+              'migration-timeout': 124, 'migration-killed': 137}.get(case, 3))
+if (case == 'seed-fail' and any(arg.endswith('/seed.sql') for arg in args)
         or case == 'prepare-fail' and 'create extension' in stdin
         or case == 'reset-fail' and 'drop database' in stdin): sys.exit(1)
 if any(arg.endswith('/tests/first.sql') for arg in args):
@@ -1824,14 +1889,32 @@ PY
   db_only_credentials "$work/run/body-credentials" || die 'credentials helper failed'
   printf 'IGNORED=synthetic-extra-line\n' >>"$work/run/body-credentials"
   declare -F db_only_body >/dev/null || die 'DB-only body missing'
-  for case_name in ok bootstrap-stop-fail migration-fail seed-fail prepare-fail reset-fail reset-false reset-no reset-null reset-malformed reset-multiline reset-blank-multiline reset-query-fail reset-timeout psql-fail tap-fail; do
+  # Prove GNU timeout independently of Python startup and the migration call log.
+  status=0
+  run_bounded 'fixture GNU timeout' 1 /bin/sleep 30 >/dev/null 2>&1 || status=$?
+  [[ "$status" == 124 ]] || die 'GNU timeout contract failed'
+  for case_name in ok bootstrap-stop-fail migration-fail migration-mixed migration-mixed-path migration-first migration-ambiguous migration-client migration-command migration-malformed migration-hostile migration-flood migration-duplicate migration-wrong-path migration-bad-state migration-timeout migration-killed helper-missing seed-fail prepare-fail reset-fail reset-false reset-no reset-null reset-malformed reset-multiline reset-blank-multiline reset-query-fail reset-timeout psql-fail tap-fail; do
     export DB_FAKE_CASE="$case_name" DB_FAKE_LOG="$work/run/body-$case_name.jsonl"
     : >"$DB_FAKE_LOG"
     status=0
     (
+      [[ "$case_name" != helper-missing ]] || unset -f db_only_migration_capture
+      if [[ "$case_name" == migration-timeout ]]; then
+        timeout() {
+          if [[ "${@: -2:1}" == -f && "${@: -1}" == /tmp/staging/supabase/migrations/0002_second.sql ]]; then
+            [[ "$1" == -k && "$2" == 10 && "$3" == 300 ]] || return 99
+            shift 3
+            "$@" # fake records the second invocation before injecting exit 124
+          else
+            /usr/bin/timeout "$@"
+          fi
+        }
+      fi
       if [[ "$case_name" == reset-timeout ]]; then
         # Inject a real TimeoutExpired at the readiness query inside the full body.
         python3() {
+          # The reset fault injector must not interpret the memory-capture -c program.
+          if [[ "$1" == -c ]]; then /usr/bin/python3 "$@"; return; fi
           /usr/bin/python3 -c '
 import json, os, subprocess, sys
 from pathlib import Path
@@ -1878,13 +1961,31 @@ if case == 'bootstrap-stop-fail':
         ['rm', '-f', '-v', 'e' * 64], ['ps', '-aq', '--no-trunc', '--filter', 'id=' + 'e' * 64],
         ['rm', '-f', '-v', 'f' * 64], ['ps', '-aq', '--no-trunc', '--filter', 'id=' + 'f' * 64]]
     sys.exit(0)
+if case == 'helper-missing':
+    assert 'db_only_migration:' not in report, 'missing helper produced a bogus diagnostic'
+    assert report.endswith('db_only_body: phase=migrations migrations_applied=0 failed=1\n'), report
+    assert not any('psql' in row and any('/supabase/' in arg for arg in row) for row in argv), 'SQL ran without capture helper'
+    assert not any('create extension' in row['stdin'] or 'drop database' in row['stdin'] for row in rows)
+    sys.exit(0)
 assert next(i for i, row in enumerate(argv) if row[0] == 'stop') < next(
     i for i, row in enumerate(argv) if any('0001_first.sql' in arg for arg in row)), 'product migration preceded Storage stop'
-expected_phase = 'reset' if case.startswith('reset-') else {'migration-fail': 'migrations', 'seed-fail': 'seed', 'prepare-fail': 'prepare'}.get(case, 'suites')
-assert re.search(r'db_only_body: phase=%s migrations_applied=%d failed=%d' % (expected_phase, 1 if case == 'migration-fail' else 2, 0 if case == 'ok' else 1), report), (case, report)
+migration_failure = case.startswith('migration-')
+if migration_failure:
+    classification = {'migration-fail': 'sql-error', 'migration-first': 'sql-error', 'migration-command': 'command-error',
+                      'migration-timeout': 'timeout', 'migration-killed': 'timeout'}.get(case, 'unclassified')
+    diagnostic = 'db_only_migration: ordinal=%d class=' % (1 if case == 'migration-first' else 2) + classification
+    if classification == 'sql-error': diagnostic += ' sqlstate=' + ('42P01' if case == 'migration-first' else '42501')
+    assert diagnostic + '\n' in report, (case, report)
+    assert not any('/tests/' in arg or arg.endswith('/seed.sql') for row in argv for arg in row)
+    assert not any('create extension' in row['stdin'] or 'drop database' in row['stdin'] for row in rows)
+else:
+    assert 'db_only_migration:' not in report, report
+expected_phase = 'migrations' if migration_failure else 'reset' if case.startswith('reset-') else {'seed-fail': 'seed', 'prepare-fail': 'prepare'}.get(case, 'suites')
+assert re.search(r'db_only_body: phase=%s migrations_applied=%d failed=%d' % (expected_phase, 0 if case == 'migration-first' else 1 if migration_failure else 2, 0 if case == 'ok' else 1), report), (case, report)
 files = [row[row.index('-f') + 1] for row in argv if 'psql' in row and '-f' in row and row[-1] != '-']
-assert files[:2] == ['/tmp/staging/supabase/migrations/0001_first.sql', '/tmp/staging/supabase/migrations/0002_second.sql'], files
-assert any(arg.endswith('/seed.sql') for row in argv for arg in row) == (case != 'migration-fail')
+expected_files = ['/tmp/staging/supabase/migrations/0001_first.sql', '/tmp/staging/supabase/migrations/0002_second.sql']
+assert files[:2] == (expected_files[:1] if case == 'migration-first' else expected_files), files
+assert any(arg.endswith('/seed.sql') for row in argv for arg in row) == (not migration_failure)
 assert sum('drop database' in row['stdin'] for row in rows) == (3 if case == 'reset-fail' else 1 if case.startswith('reset-') else 2 if case in ('ok', 'psql-fail', 'tap-fail') else 0)
 if case.startswith('reset-'):
     assert not any('/tests/' in arg for row in argv for arg in row), 'suite ran after failed reset'
@@ -1912,11 +2013,11 @@ code = sys.stdin.read()
 code = re.sub(r"(?m)^\s*[a-z_]+_self_check;?\s*$", "", code)
 print(code.replace("command -v docker", "printf %s " + shlex.quote(sys.argv[1])))
 ' "$fake" <<<"$payload")"
-  for case_name in selected default flag-default psql-fail invalid-mix invalid-option invalid-help invalid-suite invalid-duplicate; do
+  for case_name in selected default flag-default psql-fail migration-fail invalid-mix invalid-option invalid-help invalid-suite invalid-duplicate; do
     local -a arguments=()
     expected=0
     case "$case_name" in
-      selected | psql-fail) arguments=(--db-only supabase/tests/first.sql supabase/tests/second.sql) ;;
+      selected | psql-fail | migration-fail) arguments=(--db-only supabase/tests/first.sql supabase/tests/second.sql) ;;
       flag-default) arguments=(--db-only) ;;
       invalid-mix) arguments=(--db-only --self-check); expected=1 ;;
       invalid-option) arguments=(--db-only --unknown); expected=1 ;;
@@ -1924,7 +2025,7 @@ print(code.replace("command -v docker", "printf %s " + shlex.quote(sys.argv[1]))
       invalid-suite) arguments=(--self-check supabase/tests/first.sql); expected=1 ;;
       invalid-duplicate) arguments=(--db-only --db-only); expected=1 ;;
     esac
-    [[ "$case_name" != psql-fail ]] || expected=1
+    [[ "$case_name" != psql-fail && "$case_name" != migration-fail ]] || expected=1
     export DB_FAKE_CASE="$case_name" DB_FAKE_LOG="$work/run/cli-$case_name.jsonl"
     : >"$DB_FAKE_LOG"
     status=0
@@ -1934,6 +2035,13 @@ print(code.replace("command -v docker", "printf %s " + shlex.quote(sys.argv[1]))
     [[ "$status" == "$expected" ]] || die "isolated CLI status mismatch: $case_name ($status)"
     if [[ "$case_name" == invalid-* ]]; then
       [[ ! -s "$DB_FAKE_LOG" ]] || die 'invalid CLI arguments contacted Docker'
+      continue
+    fi
+    if [[ "$case_name" == migration-fail ]]; then
+      [[ "$output" == *'db_only_migration: ordinal=2 class=sql-error sqlstate=42501'* &&
+         "$output" == *'db_only_body: phase=migrations migrations_applied=1 failed=1'* &&
+         "$output" != *'hostile SQL secret log'* && "$output" != *'summary: suites='* ]] \
+        || die 'CLI migration diagnostic missing or raw output leaked'
       continue
     fi
     [[ "$output" == *'db_only: operation=body'*'cleanup=removed'*'summary: suites='* ]] \
@@ -1956,6 +2064,20 @@ assert 'db_only_bootstrap: operation=storage phase=storage-stop status=ok cleanu
 assert report.index('cleanup=removed') < report.index('summary: suites=')
 PY
   done
+  local safe_migration='db_only_migration: ordinal=2 class=sql-error sqlstate=42501'
+  local filtered_migration
+  filtered_migration="$(printf '%s\n' "$safe_migration" \
+    'db_only_migration: ordinal=999999 class=unclassified' \
+    'db_only_migration: ordinal=0 class=timeout' 'db_only_migration: ordinal=1000000 class=timeout' \
+    'db_only_migration: ordinal=01 class=timeout' 'db_only_migration: ordinal=secret class=timeout' \
+    "${safe_migration} PASSWORD=secret" 'db_only_migration: ordinal=2 class=timeout sqlstate=42501' \
+    'db_only_migration: ordinal=2 class=sql-error sqlstate=00000' \
+    'db_only_migration: ordinal=2 class=sql-error sqlstate=secret' \
+    'db_only_migration: ordinal=2 class=postgres://private' \
+    'db_only_migration: ordinal=2 class=unclassified filename=PASSWORD' >"$work/run/hostile-migration-report"
+    db_only_report "$work/run/hostile-migration-report")"
+  [[ "$filtered_migration" == "$(printf '%s\n' "$safe_migration" 'db_only_migration: ordinal=999999 class=unclassified')" ]] \
+    || die 'migration filter accepted hostile or malformed diagnostics'
   local safe_body='db_only_body: phase=migrations migrations_applied=0 failed=1'
   local safe_bootstrap='db_only_bootstrap: operation=auth phase=auth-run status=failed cleanup=removed container_residue=absent-observed'
   local safe_probe='db_only_storage_probe: result=malformed lifecycle=running'
@@ -2800,7 +2922,7 @@ db_only_mode() {
   {
     printf 'set -Eeuo pipefail\nset +x\numask 077\nexec 3>&2\nticker_pid=\n'
     declare -p work have_tap_parser psql_timeout_seconds progress_interval_seconds
-    declare -f log stage_temporary_inputs db_only_bootstrap db_only_body db_only_prepare \
+    declare -f log stage_temporary_inputs db_only_bootstrap db_only_body db_only_prepare db_only_migration_capture \
       db_only_reset run_bounded start_progress stop_progress filter_tap validate_tap validate_tap_fallback
     printf 'db_only_body %q "$SOFIA_DB_CONTAINER" ' "$exe"
     printf '%q ' "$repo_root" "$work/run" /tmp/sofia-sql-suites "$work/run/credentials" "$auth" "$storage" "$@"
@@ -2823,6 +2945,7 @@ patterns = (
     r'(?:PASS|FAIL) [A-Za-z0-9_.-]{1,128} \(assertions=\d+ failed=\d+ psql_exit=\d+(?: tap_exit=\d+)?\)',
     r'summary: suites=\d+ assertions=\d+ failed_assertions=\d+ failing_suites=\d+',
     r'db_only_body: phase=(?:input-staging|bootstrap|credentials|staging|hba|migrations|seed|prepare|reset|suites) migrations_applied=\d+ failed=[01]',
+    r'db_only_migration:(?: ordinal=[1-9][0-9]{0,5})? class=(?:(?:timeout|command-error|unclassified)|sql-error sqlstate=(?!00)[0-9A-Z]{5})',
     r'db_only_bootstrap: operation=(?:roles|auth|storage) phase=(?:reserved-roles|auth-credentials|auth-create|auth-run|auth-wait|auth-exit|storage-credentials|storage-create|storage-start|storage-probe|storage-stop|cleanup) status=(?:ok|failed) cleanup=(?:not-created|removed|failed) container_residue=(?:not-created|absent-observed|remaining)',
     r'db_only_storage_probe: result=(?:sql-failed|timeout|malformed|exhausted) lifecycle=(?:running|exited|other|unavailable|unverified)',
 )
