@@ -1530,6 +1530,115 @@ sys.exit(status)
 PY
 }
 
+# Hermetic preparation contract: the extensions the suites rely on and the template used
+# for the per-suite reset, including the guarantee that a failure never leaves the
+# database refusing connections.
+db_only_prepare_self_check() {
+  local fake="$work/run/prepare-docker" case_name status
+  cat >"$fake" <<'PY'
+#!/usr/bin/python3
+import json, os, sys
+from pathlib import Path
+args = sys.argv[1:]
+with Path(os.environ['DB_FAKE_LOG']).open('a') as stream:
+    stream.write(json.dumps(args) + '\n')
+case = os.environ['DB_FAKE_CASE']
+assert args[:4] == ['exec', '-i', 'b' * 64, 'psql'], args
+assert args[8:10] == ['-d', 'postgres'] and args[10:] == ['-v', 'ON_ERROR_STOP=1', '-q', '-f', '-'], args
+body = sys.stdin.read()
+if 'create extension if not exists pgtap' in body:
+    assert 'create extension if not exists dblink with schema extensions;' in body
+    assert 'create schema' not in body and 'create table' not in body
+    sys.exit(1 if case == 'extensions-fail' else 0)
+if 'allow_connections false' in body:
+    assert body.count(';') == 1
+    sys.exit(0)
+if 'pg_terminate_backend' in body:
+    compact = body.replace(' ', '')
+    assert "datname='postgres'" in compact and 'pid<>pg_backend_pid()' in compact
+    sys.exit(0)
+if 'create database sofia_template template postgres' in body:
+    sys.exit(1 if case == 'template-fail' else 0)
+assert 'alter database sofia_template allow_connections true' in body
+assert 'alter database postgres allow_connections true' in body
+sys.exit(1 if case == 'restore-fail' else 0)
+PY
+  chmod +x "$fake"
+  declare -F db_only_prepare >/dev/null || die 'DB-only preparation helper missing'
+  for case_name in ok extensions-fail template-fail restore-fail; do
+    export DB_FAKE_CASE="$case_name" DB_FAKE_LOG="$work/run/prepare-$case_name.jsonl"
+    : >"$DB_FAKE_LOG"
+    status=0
+    db_only_prepare "$fake" "$(printf 'b%.0s' {1..64})" >"$work/run/prepare-output" 2>&1 || status=$?
+    python3 - "$DB_FAKE_LOG" "$case_name" "$status" "$work/run/prepare-output" <<'PY'
+import json, re, sys
+from pathlib import Path
+rows = [json.loads(line) for line in Path(sys.argv[1]).read_text().splitlines()]
+case, status = sys.argv[2], int(sys.argv[3])
+report = Path(sys.argv[4]).read_text()
+match = re.fullmatch(r'db_only_prepare: operation=(extensions|template) status=(ok|failed) '
+                     r'template=(created|absent)\n', report)
+assert match, 'prepare report leaked output or omitted metadata'
+assert (status == 0) == (case == 'ok'), (case, status, report)
+assert match.groups() == ({'ok': ('template', 'ok', 'created'), 'extensions-fail': ('extensions', 'failed', 'absent'),
+                          'template-fail': ('template', 'failed', 'absent'),
+                          'restore-fail': ('template', 'failed', 'created')}[case]), (case, report)
+bodies = [row for row in rows]
+assert len(bodies) == ({'extensions-fail': 1, 'ok': 5, 'template-fail': 5, 'restore-fail': 5}[case]), (case, len(rows))
+if case == 'extensions-fail':
+    assert all(row[4:8] == ['-h', '127.0.0.1', '-U', 'supabase_admin'] for row in rows)
+assert not any('PASSWORD' in arg.upper() or 'postgres://' in arg for row in rows for arg in row)
+PY
+  done
+  unset DB_FAKE_CASE DB_FAKE_LOG
+  log 'db_only_prepare_self_check=pass (fake-only: pgtap/dblink install, postgres->template copy with connections blocked, allow_connections always restored)'
+}
+
+# Prepare the isolated database for the suites: the test extensions plus a template
+# database cloned from the bootstrapped one, so each suite can start from a known state.
+# The clone needs an exclusive source, so the sessions held by the image's own background
+# workers are blocked and terminated first, and both databases are left accepting
+# connections again no matter how the copy ends.
+db_only_prepare() {
+  python3 - "$@" <<'PY'
+import subprocess, sys
+exe, container = sys.argv[1:3]
+status, phase, template = 1, 'extensions', 'absent'
+
+def docker(*args, timeout=120, stdin=None):
+    return subprocess.run([exe, *args], input=stdin, capture_output=True, text=True, timeout=timeout)
+
+def sql(statement, timeout=120):
+    return docker('exec', '-i', container, 'psql', '-h', '127.0.0.1', '-U', 'supabase_admin',
+                  '-d', 'postgres', '-v', 'ON_ERROR_STOP=1', '-q', '-f', '-', stdin=statement, timeout=timeout)
+
+try:
+    result = sql('create extension if not exists pgtap with schema extensions;\n'
+                 'create extension if not exists dblink with schema extensions;\n')
+    if result.returncode:
+        raise ValueError('test extensions not installed')
+    phase = 'template'
+    try:
+        sql('alter database postgres allow_connections false;\n')
+        sql('select count(*) from (select pg_terminate_backend(pid) from pg_stat_activity\n'
+            "where datname = 'postgres' and pid <> pg_backend_pid()) terminated;\n")
+        if sql('create database sofia_template template postgres;\n').returncode:
+            raise ValueError('template database not created')
+        template = 'created'
+    finally:
+        # Connections must come back even when the copy failed.
+        if sql('alter database sofia_template allow_connections true;\n'
+               'alter database postgres allow_connections true;\n').returncode:
+            raise ValueError('connections were not restored')
+    status = 0
+except Exception:
+    pass  # Never echo Docker output, SQL bodies or database output.
+print('db_only_prepare: operation=%s status=%s template=%s'
+      % (phase, 'ok' if status == 0 else 'failed', template))
+sys.exit(status)
+PY
+}
+
 # Hermetic bootstrap contract: a dedicated fake proves the argv, the 0600 env file and the
 # failure/cleanup paths without ever touching a daemon.
 db_only_bootstrap_self_check() {
@@ -1885,6 +1994,7 @@ PY
 environment_self_check
 db_only_self_check
 db_only_bootstrap_self_check
+db_only_prepare_self_check
 tap_self_check
 redact_self_check
 normalization_self_check
