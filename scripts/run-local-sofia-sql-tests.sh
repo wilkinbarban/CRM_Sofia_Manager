@@ -2,7 +2,7 @@
 #
 # Disposable local pgTAP runner for the Sofia SQL suites.
 #
-# The runner copies supabase/ into a private temporary project, starts an isolated
+# The runner stages allowlisted SQL and a generated config in a private project, starts a
 # Supabase stack under a unique project id and probe-selected free ports, applies the
 # full migration chain plus seed, and then runs each requested suite in a freshly reset
 # database through the database container's own psql client. The dblink connection
@@ -962,6 +962,138 @@ failure_output_self_check() {
   log 'failure_output_self_check=pass (allowlisted-fields-only, zero-hostile-secrets-emitted)'
 }
 
+# Shared staging boundary, exercised offline before any service operation.
+stage_temporary_inputs() {
+  local source_root=$1 target_root=$2
+  shift 2
+  python3 - "$source_root" "$target_root" "$@" <<'PY'
+import json
+import os
+import re
+import shutil
+import sys
+from pathlib import Path
+
+source, target = map(Path, sys.argv[1:3])
+pending = list((source / 'supabase/migrations').glob('*.sql'))
+if not pending:
+    raise SystemExit('staging requires the migration chain')
+pending += [source / 'supabase/seed.sql'] + [source / name for name in sys.argv[3:]]
+seen = set()
+while pending:
+    path = pending.pop()
+    relative = path.relative_to(source)
+    allowed = relative == Path('supabase/seed.sql') or relative.parts[:2] in (
+        ('supabase', 'migrations'), ('supabase', 'tests'))
+    if not allowed or '..' in relative.parts or any(part.startswith('.') for part in relative.parts):
+        raise SystemExit('staging rejected input outside the SQL allowlist')
+    if path.suffix != '.sql' or any(parent.is_symlink() for parent in [path, *path.parents]):
+        raise SystemExit('staging requires non-symlink SQL inputs')
+    if not path.is_file():
+        raise SystemExit('staging requires regular SQL inputs')
+    if relative in seen:
+        continue
+    seen.add(relative)
+    destination = target / relative
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(path, destination)
+    for line in path.read_text().splitlines():
+        if not re.match(r'\s*\\i(?:r)?(?:\s|$)', line):
+            continue
+        include = re.fullmatch(r'\s*\\ir\s+([^\s\'":`]+)\s*', line)
+        if not include or Path(include[1]).is_absolute():
+            raise SystemExit('staging supports only static relative backslash-ir includes')
+        # Normalize lexical ../ without following a symlink before validating ancestry.
+        pending.append(Path(os.path.abspath(path.parent / include[1])))
+
+# Auth/storage supply schemas used by migrations; seed uses extensions.crypt.
+# Generate literals only, never load repository config or external env references.
+tables = {
+    'api': {'enabled': True, 'port': 54321},
+    'db': {'port': 54322, 'shadow_port': 54320, 'major_version': 17},
+    'db.pooler': {'enabled': False, 'port': 54329},
+    'db.migrations': {'enabled': True, 'schema_paths': []},
+    'db.seed': {'enabled': True, 'sql_paths': ['./seed.sql']},
+    'auth': {'enabled': True, 'site_url': 'http://127.0.0.1:3000'},
+    'storage': {'enabled': True},
+    'storage.s3_protocol': {'enabled': False},
+    'realtime': {'enabled': False},
+    'studio': {'enabled': False, 'port': 54323},
+    'local_smtp': {'enabled': False, 'port': 54324},
+    'edge_runtime': {'enabled': False, 'inspector_port': 8083},
+    'analytics': {'enabled': False, 'port': 54327},
+}
+config = ['project_id = "Asados"']
+for section, values in tables.items():
+    config.append(f'[{section}]')
+    config.extend(f'{key} = {json.dumps(value)}' for key, value in values.items())
+(target / 'supabase/config.toml').write_text('\n'.join(config) + '\n')
+PY
+}
+
+inputs_self_check() {
+  local source="$work/run/input-source" target="$work/run/input-target"
+  mkdir -p "$source" "$target"
+  python3 - "$source" <<'PY'
+import sys
+from pathlib import Path
+root = Path(sys.argv[1])
+files = {
+    'migrations/01_required.sql': 'select 1;\n',
+    'seed.sql': 'select 2;\n',
+    'tests/selected.sql': '\\ir includes/helper.sql\n',
+    'tests/includes/helper.sql': '\\ir ../../migrations/01_required.sql\n',
+    'tests/bad-include.sql': '\\ir ../contractions/01_forbidden.sql\n',
+    'tests/missing-include.sql': '\\ir includes/missing.sql\n',
+    'tests/unrelated.sql': 'select 99;\n',
+    '.env': 'HOSTILE=fixture\n',
+    'credentials.json': 'hostile fixture\n',
+    'roles.sql': 'hostile fixture\n',
+    'contractions/01_forbidden.sql': 'select 99;\n',
+    'config.toml': 'secret = "env(HOSTILE_EXTERNAL_KEY)"\n',
+}
+for name, content in files.items():
+    path = root / 'supabase' / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content)
+(root / 'supabase/tests/escape.sql').symlink_to(root / 'outside.sql')
+PY
+  stage_temporary_inputs "$source" "$target" supabase/tests/selected.sql
+  python3 - "$source" "$target" <<'PY'
+import sys
+from pathlib import Path
+import tomllib
+source, target = (Path(arg) / 'supabase' for arg in sys.argv[1:])
+required = {'migrations/01_required.sql', 'seed.sql', 'tests/selected.sql', 'tests/includes/helper.sql'}
+actual = {str(path.relative_to(target)) for path in target.rglob('*') if not path.is_dir()}
+assert actual == required | {'config.toml'}, 'staging copied forbidden/unrelated inputs'
+for name in required:
+    assert (target / name).read_bytes() == (source / name).read_bytes(), 'required input changed'
+config_text = (target / 'config.toml').read_text()
+assert 'env(' not in config_text, 'external env reference retained'
+config = tomllib.loads(config_text)
+assert config['db']['major_version'] == 17
+assert config['db']['seed'] == {'enabled': True, 'sql_paths': ['./seed.sql']}
+assert config['db']['migrations'] == {'enabled': True, 'schema_paths': []}
+assert all(config[service]['enabled'] for service in ('api', 'auth', 'storage'))
+assert not config['storage']['s3_protocol']['enabled']
+assert all(not config[service]['enabled'] for service in (
+    'studio', 'edge_runtime', 'realtime', 'local_smtp', 'analytics'))
+PY
+  normalize_temporary_tree "$target" sofia-input-check 0 \
+    api=10001 db=10002 shadow=10003 pooler=10004 \
+    studio=10005 smtp=10006 analytics=10007 inspector=10008 >/dev/null
+  grep -q 'port = 10001' "$target/supabase/config.toml" \
+    || die 'input self-check: generated config did not normalize'
+  local rejected
+  for rejected in escape bad-include missing-include; do
+    if stage_temporary_inputs "$source" "$work/run/input-rejected-$rejected" "supabase/tests/$rejected.sql" >/dev/null 2>&1; then
+      die "input self-check: unsafe or missing input accepted ($rejected)"
+    fi
+  done
+  log 'inputs_self_check=pass (required-inputs, recursive-includes, no-ambient-config, forbidden-files-absent, symlink-rejected)'
+}
+
 normalize_temporary_tree() {
   local target_root=$1 proj_id=$2 exp_transfers=$3
   shift 3
@@ -1002,8 +1134,8 @@ replace_once(r'(?m)^inspector_port = 8083$', f"inspector_port = {ports['inspecto
 
 # Reduce clearly prescindible services in the temporary copy: Studio and Edge Runtime.
 # Storage is preserved to satisfy reset, migration, and seed requirements.
-replace_once(r'(?m)^\[studio\]\nenabled = true$', '[studio]\nenabled = false', 'studio enabled')
-replace_once(r'(?m)^\[edge_runtime\]\nenabled = true$', '[edge_runtime]\nenabled = false', 'edge_runtime enabled')
+replace_once(r'(?m)^\[studio\]\nenabled = (?:true|false)$', '[studio]\nenabled = false', 'studio enabled')
+replace_once(r'(?m)^\[edge_runtime\]\nenabled = (?:true|false)$', '[edge_runtime]\nenabled = false', 'edge_runtime enabled')
 config_path.write_text(config)
 
 roles_removed = 0
@@ -1122,6 +1254,7 @@ environment_self_check
 tap_self_check
 redact_self_check
 normalization_self_check
+inputs_self_check
 diagnostics_self_check
 failure_output_self_check
 
@@ -1152,7 +1285,7 @@ api_port="${ports[0]}" db_port="${ports[1]}" shadow_port="${ports[2]}" pooler_po
 studio_port="${ports[4]}" smtp_port="${ports[5]}" analytics_port="${ports[6]}" inspector_port="${ports[7]}"
 project_id="sofia-sql-$(python3 -c 'import uuid; print(uuid.uuid4().hex[:8])')"
 
-cp -a "$repo_root/supabase" "$work/project/supabase"
+stage_temporary_inputs "$repo_root" "$work/project" "${suites[@]}"
 
 normalize_temporary_tree "$work/project" "$project_id" "$expected_owner_transfers" \
   "api=$api_port" "db=$db_port" "shadow=$shadow_port" "pooler=$pooler_port" \
@@ -1161,9 +1294,6 @@ normalize_temporary_tree "$work/project" "$project_id" "$expected_owner_transfer
 # ---------------------------------------------------------------------------
 # Start, migrate, and seed the disposable stack.
 # ---------------------------------------------------------------------------
-# Synthetic local auth value only; the local config keeps the Twilio provider disabled.
-export SUPABASE_AUTH_SMS_TWILIO_AUTH_TOKEN="local-disposable-${project_id}"
-
 log "starting disposable stack (project_id=$project_id, db_port=$db_port)"
 if ! run_bounded 'supabase start' "$start_timeout_seconds" "$cli" start --workdir "$work/project" \
   --exclude studio,edge-runtime \
@@ -1217,7 +1347,7 @@ unset db_password
 
 # ---------------------------------------------------------------------------
 # Staged suite tree. psql runs inside the database container and resolves a relative
-# `\ir` against the including file, so the whole supabase/ tree must exist there.
+# `\ir` against the including file, so selected suites and their includes must exist there.
 # `supabase db reset` may replace the database container, and a replaced container
 # starts with an empty writable layer, so the tree is staged, verified, and staged again
 # whenever a reset discarded it. The copy names the source directory contents (SRC/.)
