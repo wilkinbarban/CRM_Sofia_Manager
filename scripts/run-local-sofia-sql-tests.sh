@@ -1676,7 +1676,8 @@ PY
 
 # Drain stderr to EOF without SIGPIPE; retain raw payload at most 64KiB + 8KiB chunk
 # in memory only, NOT a bound on total Python RAM. Truncation or ambiguous ERROR
-# records cannot provide SQLSTATE evidence.
+# records cannot provide SQLSTATE/line evidence. psql reports the statement endpoint,
+# not necessarily the offending token; line is a positive decimal of at most 10 digits.
 db_only_migration_capture() {
   python3 -c '
 import re, sys
@@ -1689,15 +1690,15 @@ while True:
     room = 65536 - len(data)
     truncated |= len(chunk) > room
     data.extend(chunk[:room])
-pattern = re.compile(rb"psql:" + re.escape(path.encode()) + rb":[1-9][0-9]{0,9}: ERROR:  ([0-9A-Z]{5})")
-code = None
+pattern = re.compile(rb"psql:" + re.escape(path.encode()) + rb":([1-9][0-9]{0,9}): ERROR:  ([0-9A-Z]{5})")
+code = line = None
 errors = 0
 for error in re.finditer(rb"(?m)^[^\n]*\bERROR\b[^\n]*$", data):
     errors += 1
     match = pattern.fullmatch(data, error.start(), error.end())
-    code = match[1] if match else None
+    line, code = match.groups() if match else (None, None)
 if not truncated and errors == 1 and code and not code.startswith(b"00"):
-    print(code.decode("ascii"))
+    print(code.decode("ascii"), line.decode("ascii"))
 ' "$1"
 }
 
@@ -1745,7 +1746,7 @@ PY
   }
   phase=migrations
   declare -F db_only_migration_capture >/dev/null || return 1
-  local migration_path migration_state migration_status migration_class ordinal
+  local migration_path migration_state migration_line migration_status migration_class ordinal
   for suite in "$run/body-project/supabase/migrations/"*.sql; do
     migration_path="$stage/supabase/migrations/$(basename -- "$suite")"
     migration_status=0
@@ -1758,12 +1759,16 @@ PY
       case "$migration_status" in
         124|137) migration_class=timeout ;; # run_bounded timeout contract
         125|126|127) migration_class=command-error ;;
-        3) [[ "$migration_state" =~ ^[0-9A-Z]{5}$ ]] && migration_class=sql-error ;;
+        3) if [[ "$migration_state" =~ ^([0-9A-Z]{5})\ ([1-9][0-9]{0,9})$ ]]; then
+             migration_class=sql-error
+             migration_state=${BASH_REMATCH[1]}
+             migration_line=${BASH_REMATCH[2]}
+           fi ;;
       esac
       ordinal=''
       ((applied < 999999)) && ordinal=" ordinal=$((applied + 1))"
       printf 'db_only_migration:%s class=%s%s\n' "$ordinal" "$migration_class" \
-        "$([[ "$migration_class" == sql-error ]] && printf ' sqlstate=%s' "$migration_state")"
+        "$([[ "$migration_class" == sql-error ]] && printf ' sqlstate=%s line=%s' "$migration_state" "$migration_line")"
       return 1
     fi
     applied=$((applied + 1))
@@ -1865,9 +1870,17 @@ if (case.startswith('migration-') and any('0002_second' in arg for arg in args)
                 'migration-command': 'Docker synthetic secret', 'migration-malformed': record + ' PASSWORD=secret',
                 'migration-hostile': 'PASSWORD=42501 postgres://private ERROR:  23505',
                 'migration-flood': 'x' * 70000 + '\n' + record,
-                'migration-first': record.replace('42501', '42P01'),
+                'migration-first': record.replace(':17:', ':23:').replace('42501', '42P01'),
+                'migration-line-max': record.replace(':17:', ':9999999999:'),
+                'migration-line-zero': record.replace(':17:', ':0:'),
+                'migration-line-leading': record.replace(':17:', ':017:'),
+                'migration-line-malformed': record.replace(':17:', ':17x:'),
+                'migration-line-negative': record.replace(':17:', ':-17:'),
+                'migration-line-unicode': record.replace(':17:', ':١٧:'),
+                'migration-line-overflow': record.replace(':17:', ':10000000000:'),
                 'migration-duplicate': record + '\n' + record,
                 'migration-mixed': record + '\n' + record + ' PASSWORD=secret',
+                'migration-mixed-error': record + '\nERROR: PASSWORD=secret',
                 'migration-mixed-path': record + '\n' + record.replace('0002_second.sql', 'private.sql'),
                 'migration-wrong-path': record.replace('0002_second.sql', 'private.sql'),
                 'migration-bad-state': record.replace('42501', '00000')}
@@ -1893,7 +1906,7 @@ PY
   status=0
   run_bounded 'fixture GNU timeout' 1 /bin/sleep 30 >/dev/null 2>&1 || status=$?
   [[ "$status" == 124 ]] || die 'GNU timeout contract failed'
-  for case_name in ok bootstrap-stop-fail migration-fail migration-mixed migration-mixed-path migration-first migration-ambiguous migration-client migration-command migration-malformed migration-hostile migration-flood migration-duplicate migration-wrong-path migration-bad-state migration-timeout migration-killed helper-missing seed-fail prepare-fail reset-fail reset-false reset-no reset-null reset-malformed reset-multiline reset-blank-multiline reset-query-fail reset-timeout psql-fail tap-fail; do
+  for case_name in ok bootstrap-stop-fail migration-fail migration-mixed migration-mixed-error migration-mixed-path migration-first migration-ambiguous migration-client migration-command migration-malformed migration-hostile migration-flood migration-duplicate migration-wrong-path migration-bad-state migration-line-max migration-line-zero migration-line-leading migration-line-malformed migration-line-negative migration-line-unicode migration-line-overflow migration-timeout migration-killed helper-missing seed-fail prepare-fail reset-fail reset-false reset-no reset-null reset-malformed reset-multiline reset-blank-multiline reset-query-fail reset-timeout psql-fail tap-fail; do
     export DB_FAKE_CASE="$case_name" DB_FAKE_LOG="$work/run/body-$case_name.jsonl"
     : >"$DB_FAKE_LOG"
     status=0
@@ -1948,6 +1961,7 @@ joined = ' '.join(' '.join(row) for row in argv)
 report = Path(sys.argv[4]).read_text()
 assert secret not in report and secret not in joined, 'the body leaked the password'
 assert 'hostile SQL secret log' not in report, 'the body printed raw SQL stderr'
+assert 'PASSWORD=secret' not in report and 'private.sql' not in report, 'migration metadata leaked raw text'
 assert not (Path(sys.argv[1]).parent / 'body-sql.log').exists(), 'migration stderr persisted'
 assert (status == 0) == (case == 'ok'), (case, status, report)
 if case == 'bootstrap-stop-fail':
@@ -1971,11 +1985,14 @@ assert next(i for i, row in enumerate(argv) if row[0] == 'stop') < next(
     i for i, row in enumerate(argv) if any('0001_first.sql' in arg for arg in row)), 'product migration preceded Storage stop'
 migration_failure = case.startswith('migration-')
 if migration_failure:
-    classification = {'migration-fail': 'sql-error', 'migration-first': 'sql-error', 'migration-command': 'command-error',
+    classification = {'migration-fail': 'sql-error', 'migration-first': 'sql-error', 'migration-line-max': 'sql-error', 'migration-command': 'command-error',
                       'migration-timeout': 'timeout', 'migration-killed': 'timeout'}.get(case, 'unclassified')
     diagnostic = 'db_only_migration: ordinal=%d class=' % (1 if case == 'migration-first' else 2) + classification
-    if classification == 'sql-error': diagnostic += ' sqlstate=' + ('42P01' if case == 'migration-first' else '42501')
-    assert diagnostic + '\n' in report, (case, report)
+    if classification == 'sql-error':
+        diagnostic += ' sqlstate=' + ('42P01' if case == 'migration-first' else '42501')
+        diagnostic += ' line=' + {'migration-first': '23', 'migration-line-max': '9999999999'}.get(case, '17')
+    assert [line for line in report.splitlines() if line.startswith('db_only_migration:')] == [diagnostic], (case, report)
+    assert (' line=' in report) == (classification == 'sql-error'), (case, report)
     assert not any('/tests/' in arg or arg.endswith('/seed.sql') for row in argv for arg in row)
     assert not any('create extension' in row['stdin'] or 'drop database' in row['stdin'] for row in rows)
 else:
@@ -2038,7 +2055,7 @@ print(code.replace("command -v docker", "printf %s " + shlex.quote(sys.argv[1]))
       continue
     fi
     if [[ "$case_name" == migration-fail ]]; then
-      [[ "$output" == *'db_only_migration: ordinal=2 class=sql-error sqlstate=42501'* &&
+      [[ "$output" == *'db_only_migration: ordinal=2 class=sql-error sqlstate=42501 line=17'* &&
          "$output" == *'db_only_body: phase=migrations migrations_applied=1 failed=1'* &&
          "$output" != *'hostile SQL secret log'* && "$output" != *'summary: suites='* ]] \
         || die 'CLI migration diagnostic missing or raw output leaked'
@@ -2064,9 +2081,10 @@ assert 'db_only_bootstrap: operation=storage phase=storage-stop status=ok cleanu
 assert report.index('cleanup=removed') < report.index('summary: suites=')
 PY
   done
-  local safe_migration='db_only_migration: ordinal=2 class=sql-error sqlstate=42501'
+  local safe_migration='db_only_migration: ordinal=2 class=sql-error sqlstate=42501 line=17'
+  local safe_line_max='db_only_migration: ordinal=1 class=sql-error sqlstate=42P01 line=9999999999'
   local filtered_migration
-  filtered_migration="$(printf '%s\n' "$safe_migration" \
+  filtered_migration="$(printf '%s\n' "$safe_migration" "$safe_line_max" \
     'db_only_migration: ordinal=999999 class=unclassified' \
     'db_only_migration: ordinal=0 class=timeout' 'db_only_migration: ordinal=1000000 class=timeout' \
     'db_only_migration: ordinal=01 class=timeout' 'db_only_migration: ordinal=secret class=timeout' \
@@ -2074,9 +2092,16 @@ PY
     'db_only_migration: ordinal=2 class=sql-error sqlstate=00000' \
     'db_only_migration: ordinal=2 class=sql-error sqlstate=secret' \
     'db_only_migration: ordinal=2 class=postgres://private' \
-    'db_only_migration: ordinal=2 class=unclassified filename=PASSWORD' >"$work/run/hostile-migration-report"
+    'db_only_migration: ordinal=2 class=unclassified filename=PASSWORD' \
+    "${safe_migration/line=17/line=0}" "${safe_migration/line=17/line=017}" \
+    "${safe_migration/line=17/line=17x}" "${safe_migration/line=17/line=10000000000}" \
+    "${safe_migration/line=17/line=-17}" "${safe_migration/line=17/line=١٧}" \
+    "${safe_migration/42501/00000}" "${safe_migration/42501/secret}" \
+    'db_only_migration: ordinal=2 class=timeout line=17' \
+    'db_only_migration: ordinal=2 class=unclassified line=17' \
+    >"$work/run/hostile-migration-report"
     db_only_report "$work/run/hostile-migration-report")"
-  [[ "$filtered_migration" == "$(printf '%s\n' "$safe_migration" 'db_only_migration: ordinal=999999 class=unclassified')" ]] \
+  [[ "$filtered_migration" == "$(printf '%s\n' "$safe_migration" "$safe_line_max" 'db_only_migration: ordinal=999999 class=unclassified')" ]] \
     || die 'migration filter accepted hostile or malformed diagnostics'
   local safe_body='db_only_body: phase=migrations migrations_applied=0 failed=1'
   local safe_bootstrap='db_only_bootstrap: operation=auth phase=auth-run status=failed cleanup=removed container_residue=absent-observed'
@@ -2945,7 +2970,7 @@ patterns = (
     r'(?:PASS|FAIL) [A-Za-z0-9_.-]{1,128} \(assertions=\d+ failed=\d+ psql_exit=\d+(?: tap_exit=\d+)?\)',
     r'summary: suites=\d+ assertions=\d+ failed_assertions=\d+ failing_suites=\d+',
     r'db_only_body: phase=(?:input-staging|bootstrap|credentials|staging|hba|migrations|seed|prepare|reset|suites) migrations_applied=\d+ failed=[01]',
-    r'db_only_migration:(?: ordinal=[1-9][0-9]{0,5})? class=(?:(?:timeout|command-error|unclassified)|sql-error sqlstate=(?!00)[0-9A-Z]{5})',
+    r'db_only_migration:(?: ordinal=[1-9][0-9]{0,5})? class=(?:(?:timeout|command-error|unclassified)|sql-error sqlstate=(?!00)[0-9A-Z]{5} line=[1-9][0-9]{0,9})',
     r'db_only_bootstrap: operation=(?:roles|auth|storage) phase=(?:reserved-roles|auth-credentials|auth-create|auth-run|auth-wait|auth-exit|storage-credentials|storage-create|storage-start|storage-probe|storage-stop|cleanup) status=(?:ok|failed) cleanup=(?:not-created|removed|failed) container_residue=(?:not-created|absent-observed|remaining)',
     r'db_only_storage_probe: result=(?:sql-failed|timeout|malformed|exhausted) lifecycle=(?:running|exited|other|unavailable|unverified)',
 )
