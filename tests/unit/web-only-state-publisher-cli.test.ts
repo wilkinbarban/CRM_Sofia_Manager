@@ -24,7 +24,7 @@ const PYTHON_BIN = 'python3'
 
 function runPublisherCli(args: string[], env: Record<string, string> = {}) {
   return spawnSync(PYTHON_BIN, ['-B', 'scripts/web_only_state_publisher.py', ...args], {
-    env: { PATH: '/usr/bin:/bin', PYTHONDONTWRITEBYTECODE: '1', PYTHONPATH: '.', ...env },
+    env: { NODE_ENV: 'test', PATH: '/usr/bin:/bin', PYTHONDONTWRITEBYTECODE: '1', PYTHONPATH: '.', ...env },
     timeout: 20000,
     encoding: 'utf8',
   })

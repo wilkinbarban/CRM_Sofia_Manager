@@ -22,7 +22,7 @@ afterEach(() => {
 
 function expectPython(code: string, expectedStdout: string) {
   const ret = spawnSync(PYTHON_BIN, ['-B', '-c', code], {
-    env: { PATH: '/usr/bin:/bin', PYTHONDONTWRITEBYTECODE: '1', PYTHONPATH: '.' },
+    env: { NODE_ENV: 'test', PATH: '/usr/bin:/bin', PYTHONDONTWRITEBYTECODE: '1', PYTHONPATH: '.' },
     encoding: 'utf8',
   })
   expect(ret.status).toBe(0)

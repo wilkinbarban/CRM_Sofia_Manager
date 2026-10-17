@@ -5,7 +5,7 @@ const PYTHON_BIN = '/usr/bin/python3'
 
 function expectPy(code: string, expected = '') {
   const res = spawnSync(PYTHON_BIN, ['-B', '-c', code], {
-    env: { PATH: '/usr/bin:/bin', PYTHONDONTWRITEBYTECODE: '1', PYTHONPATH: '.' },
+    env: { NODE_ENV: 'test', PATH: '/usr/bin:/bin', PYTHONDONTWRITEBYTECODE: '1', PYTHONPATH: '.' },
     encoding: 'utf8',
   })
   expect(res.status).toBe(0)

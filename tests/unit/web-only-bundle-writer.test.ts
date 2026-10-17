@@ -25,7 +25,7 @@ afterEach(() => {
 
 function runPython(code: string, env: Record<string, string> = {}) {
   return spawnSync(PYTHON_BIN, ['-B', '-c', code], {
-    env: { PATH: '/usr/bin:/bin', PYTHONDONTWRITEBYTECODE: '1', ...env },
+    env: { NODE_ENV: 'test', PATH: '/usr/bin:/bin', PYTHONDONTWRITEBYTECODE: '1', ...env },
     encoding: 'utf8',
   })
 }

@@ -15,7 +15,7 @@ afterEach(() => {
 
 function runCli(args: string[]) {
   return spawnSync(PYTHON_BIN, ['-B', SCRIPT_PATH, ...args], {
-    env: {
+    env: { NODE_ENV: 'test',
       PATH: '/usr/bin:/bin',
       PYTHONDONTWRITEBYTECODE: '1',
       PYTHONPATH: join(process.cwd(), 'scripts') + ':' + process.cwd(),
