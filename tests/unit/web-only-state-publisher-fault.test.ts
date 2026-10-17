@@ -11,6 +11,7 @@
 import { describe, expect, it, afterEach } from 'vitest'
 import { join } from 'node:path'
 import { statSync, writeFileSync, readFileSync } from 'node:fs'
+import type { Stats } from 'node:fs'
 import { createPrivateSandbox, type PrivateSandbox } from '../helpers/web-private-sandbox'
 import { createBundleFixture } from '../helpers/web-bundle-fixture'
 
@@ -33,7 +34,7 @@ function setupDeploySandbox() {
   return { deployDir, fixture, existingFile, origStat }
 }
 
-function expectTargetUnchanged(existingFile: string, origStat: ReturnType<typeof statSync>) {
+function expectTargetUnchanged(existingFile: string, origStat: Stats) {
   const postStat = statSync(existingFile)
   expect(postStat.size).toBe(origStat.size)
   expect(postStat.mode).toBe(origStat.mode)
