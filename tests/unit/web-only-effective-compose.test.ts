@@ -114,7 +114,7 @@ describe('web-only-effective-compose Unit U1 CLI', () => {
       '--bundle-dir', bundleDir,
     ], {
       cwd: arbCwd,
-      env: {
+      env: { NODE_ENV: 'test',
         PATH: join(sb.dir, 'bin'),
         PYTHONDONTWRITEBYTECODE: '1',
         SPY_LOG: sb.spyLog,
@@ -266,7 +266,7 @@ assert r_doc["services"]["web"]["image"] == "sha256:roll"
 print("MULTI_NET_VERIFIED")`
 
     const ret = spawnSync(PYTHON_BIN, ['-B', '-c', pythonScript], {
-      env: { PYTHONDONTWRITEBYTECODE: '1' },
+      env: { NODE_ENV: 'test', PYTHONDONTWRITEBYTECODE: '1' },
       encoding: 'utf8',
     })
     expect(ret.status).toBe(0)

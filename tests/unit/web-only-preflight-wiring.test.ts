@@ -206,7 +206,7 @@ sys.exit(rpf.main())
   const runDeploy = (args: string[], env: Record<string, string> = {}) =>
     spawnSync(join(pb.binDir, 'bash'), [join(scriptsDir, 'deploy-web.sh'), ...args], {
       cwd: pb.opRoot,
-      env: {
+      env: { NODE_ENV: 'test',
         PATH: pb.binDir, HOME: pb.dir, TMPDIR: pb.dir,
         ASADOS_DEPLOY_STATE_ROOT: stateRoot, ASADOS_COMPOSE_PROJECT: FIXTURE_PROJECT,
         PREFLIGHT_CALL_LOG: preflightLog, EVENTS_LOG: eventsLog,
@@ -265,7 +265,7 @@ except ValueError as e:
     sys.exit(0 if "manifest sha mismatch" in str(e) else 98)
 `, join(sb.dir, 'direct-bundle')], {
       cwd: sb.scriptsDir,
-      env: { PYTHONDONTWRITEBYTECODE: '1', PYTHONPATH: sb.scriptsDir },
+      env: { NODE_ENV: 'test', PYTHONDONTWRITEBYTECODE: '1', PYTHONPATH: sb.scriptsDir },
       encoding: 'utf8',
     })
     expect(pyCheck.status).toBe(0)

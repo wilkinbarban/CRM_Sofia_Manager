@@ -141,7 +141,7 @@ if (res.stdout) process.stdout.write(res.stdout); if (res.stderr) process.stderr
   const runDeploy = (args: string[], env: Record<string, string> = {}) =>
     spawnSync(join(pb.binDir, 'bash'), [join(scriptsDir, 'deploy-web.sh'), ...args], {
       cwd: pb.opRoot,
-      env: {
+      env: { NODE_ENV: 'test',
         PATH: pb.binDir, HOME: pb.dir, TMPDIR: pb.dir, ASADOS_DEPLOY_STATE_ROOT: stateRoot,
         ASADOS_COMPOSE_PROJECT: FIXTURE_PROJECT, ASADOS_WEB_HEALTH_TIMEOUT_SECONDS: '1',
         ASADOS_SOFIA_SCHEDULER_HEALTH_TIMEOUT_SECONDS: '1', PYTHONDONTWRITEBYTECODE: '1',

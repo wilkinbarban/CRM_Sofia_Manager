@@ -22,7 +22,7 @@ afterEach(() => {
 
 function expectPython(code: string, expectedStdout: string) {
   const ret = spawnSync(PYTHON_BIN, ['-B', '-c', code], {
-    env: { PATH: '/usr/bin:/bin', PYTHONDONTWRITEBYTECODE: '1', PYTHONPATH: '.' },
+    env: { NODE_ENV: 'test', PATH: '/usr/bin:/bin', PYTHONDONTWRITEBYTECODE: '1', PYTHONPATH: '.' },
     encoding: 'utf8',
   })
   expect(ret.status).toBe(0)
@@ -31,7 +31,7 @@ function expectPython(code: string, expectedStdout: string) {
 
 function runCli(args: string[], env: Record<string, string> = {}) {
   return spawnSync(PYTHON_BIN, ['-B', 'scripts/web_only_state.py', ...args], {
-    env: { PATH: '/usr/bin:/bin', PYTHONDONTWRITEBYTECODE: '1', PYTHONPATH: '.', ...env },
+    env: { NODE_ENV: 'test', PATH: '/usr/bin:/bin', PYTHONDONTWRITEBYTECODE: '1', PYTHONPATH: '.', ...env },
     encoding: 'utf8',
   })
 }
@@ -45,7 +45,7 @@ state = make_state("${rootDir}", bdir, res)
 print(f"{bdir}\\t{res['manifest_sha256']}\\t{state['PREVIOUS_ID']}\\t{state['DEPLOYED_ID']}")
 `
   const ret = spawnSync(PYTHON_BIN, ['-B', '-c', pyCode], {
-    env: { PATH: '/usr/bin:/bin', PYTHONDONTWRITEBYTECODE: '1', PYTHONPATH: '.' },
+    env: { NODE_ENV: 'test', PATH: '/usr/bin:/bin', PYTHONDONTWRITEBYTECODE: '1', PYTHONPATH: '.' },
     encoding: 'utf8',
   })
   if (ret.status !== 0) throw new Error(`setup failed: ${ret.stderr}`)
