@@ -51,7 +51,8 @@ export function runHermeticPython(code: string, options: RunPythonOptions = {}):
     throw new Error(`Target cwd is not a directory: ${targetCwd}`)
   }
 
-  const env: Record<string, string> = {
+  const env: Record<string, string> & { NODE_ENV: 'test' } = {
+    NODE_ENV: 'test',
     PATH: '/usr/bin:/bin',
     PYTHONDONTWRITEBYTECODE: '1',
     PYTHONPATH: process.cwd(),

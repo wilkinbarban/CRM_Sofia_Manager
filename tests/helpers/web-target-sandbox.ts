@@ -94,11 +94,11 @@ esac
 
   const runHelper = (args: string[], extraEnv: Record<string, string> = {}) =>
     spawnSync(PYTHON_BIN, [HELPER_PATH, ...args], {
-      cwd: opRoot, env: { PATH: binDir, PYTHONDONTWRITEBYTECODE: '1', SPY_LOG: spyLog, ...extraEnv },
+      cwd: opRoot, env: { NODE_ENV: 'test', PATH: binDir, PYTHONDONTWRITEBYTECODE: '1', SPY_LOG: spyLog, ...extraEnv },
       timeout: 20000, encoding: 'utf8',
     })
   const runDocker = (args: string[], extraEnv: Record<string, string> = {}) =>
-    spawnSync(dockerBin, args, { env: { SPY_LOG: spyLog, ...extraEnv }, encoding: 'utf8' })
+    spawnSync(dockerBin, args, { env: { NODE_ENV: 'test', SPY_LOG: spyLog, ...extraEnv }, encoding: 'utf8' })
 
   return { dir, opRoot, spyLog, runHelper, runDocker, cleanup: () => rmSync(dir, { recursive: true, force: true }) }
 }
