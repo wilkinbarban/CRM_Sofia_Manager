@@ -174,8 +174,8 @@ describe('web-only-p7-dry-run rollout and rollback rehearsal contracts', () => {
 
     const cmds = getCommands(sb.commandsLog)
     const valIdx = cmds.findIndex((c) => c.command === 'web_only_bundle_lifecycle.py' && c.args?.[0] === 'validate')
-    const tag1Idx = cmds.findIndex((c) => c.command === 'docker' && c.args?.some((a) => a.startsWith('asados-web:rollback-')))
-    const tag2Idx = cmds.findIndex((c) => c.command === 'docker' && c.args?.some((a) => a.startsWith('crm-sofia-web:rollback-')))
+    const tag1Idx = cmds.findIndex((c) => c.command === 'docker' && c.args?.some((a: string) => a.startsWith('asados-web:rollback-')))
+    const tag2Idx = cmds.findIndex((c) => c.command === 'docker' && c.args?.some((a: string) => a.startsWith('crm-sofia-web:rollback-')))
     const promoIdx = cmds.findIndex((c) => c.command === 'docker' && c.args?.[0] === 'compose' && c.args?.includes('up') && c.args?.[2]?.endsWith('candidate-compose.json'))
     const pubIdx = cmds.findIndex((c) => c.command === 'web_only_state_publisher.py')
 
@@ -211,7 +211,7 @@ describe('web-only-p7-dry-run rollout and rollback rehearsal contracts', () => {
     expect(sb.runDeploy(['deploy', '--web-only', FIXTURE_CANDIDATE_CONFIG_IMAGE]).status).toBe(0)
     const cmds = getCommands(sb.commandsLog)
     for (const c of cmds.filter((c) => c.command === 'docker' && c.args?.[0] === 'compose' && c.args?.includes('up'))) {
-      expect(c.args!.slice(c.args!.indexOf('up') + 1).filter((a) => !a.startsWith('-'))).toEqual(['web'])
+      expect(c.args!.slice(c.args!.indexOf('up') + 1).filter((a: string) => !a.startsWith('-'))).toEqual(['web'])
     }
     for (const c of cmds) {
       const full = [c.command, ...(c.args || [])].join(' ')
