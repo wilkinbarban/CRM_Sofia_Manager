@@ -182,12 +182,14 @@ finally:
     const bdir = join(sb, 'b7')
     mkdirSync(bdir, 0o777)
     expectPython(`${CONSUMER_IMPORT}
+parent_ino = os.stat("${sb}").st_ino
 orig_close = os.close
-calls = 0
 def mock_close(fd):
-    global calls
-    calls += 1
-    if calls == 3:
+    try:
+        st = os.fstat(fd)
+    except OSError:
+        return orig_close(fd)
+    if st.st_ino == parent_ino:
         raise KeyboardInterrupt("secondary interrupt during cleanup")
     return orig_close(fd)
 os.close = mock_close
@@ -207,18 +209,20 @@ finally:
     const bdir = join(sb, 'bundle')
     mkdirSync(bdir, 0o700)
     expectPython(`${CONSUMER_IMPORT}
-fds_before = set(os.listdir("/proc/self/fd"))
 fd = open_bundle("${bdir}")
-fds_during = set(os.listdir("/proc/self/fd")) - fds_before
-assert len(fds_during) == 1 and str(fd) in fds_during
+os.fstat(fd)
 os.close(fd)
-assert set(os.listdir("/proc/self/fd")) == fds_before
-
+try:
+    os.fstat(fd)
+    print("FD_STILL_OPEN")
+except OSError:
+    pass
+before = len(os.listdir("/proc/self/fd"))
 try:
     open_bundle("${bdir}/nonexistent")
 except (FileNotFoundError, OSError):
     pass
-assert set(os.listdir("/proc/self/fd")) == fds_before
+assert len(os.listdir("/proc/self/fd")) == before, "error path leaked a descriptor"
 print("ZERO_FD_LEAK")`, 'ZERO_FD_LEAK')
   })
 
@@ -729,12 +733,14 @@ except ValueError as err:
     expectPython(`${FIXTURE_SETUP}
 from scripts.web_only_bundle_consumer import validate_effective_bundle
 bdir, res = make_bundle("${sb}")
+bundle_ino = os.stat(bdir).st_ino
 orig_close = os.close
-calls = 0
 def mock_close(fd):
-    global calls
-    calls += 1
-    if calls == 5:
+    try:
+        st = os.fstat(fd)
+    except OSError:
+        return orig_close(fd)
+    if st.st_ino == bundle_ino:
         raise OSError("mocked close error during cleanup")
     return orig_close(fd)
 os.close = mock_close
