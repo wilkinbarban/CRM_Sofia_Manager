@@ -45,7 +45,12 @@ describe('web-only-operational-target', () => {
     ])
   })
 
-  it.each([
+  interface RawAliasCase {
+    useRawCliRoot?: boolean
+    useRawWorkingDir?: boolean
+    useRawConfigFile?: boolean
+  }
+  const rawAliasCases: Array<[string, RawAliasCase]> = [
     ['CLI root alias and dot-segments', { useRawCliRoot: true }],
     ['working_dir label alias and dot-segments', { useRawWorkingDir: true }],
     ['config_files label symlink alias and dot-segments', { useRawConfigFile: true }],
@@ -54,7 +59,8 @@ describe('web-only-operational-target', () => {
       useRawWorkingDir: true,
       useRawConfigFile: true,
     }],
-  ])('resolves canonical root and config for %s', (_, opts) => {
+  ]
+  it.each(rawAliasCases)('resolves canonical root and config for %s', (_, opts) => {
     sb = createSandbox()
     const aliasRoot = join(sb.dir, 'alias-op-root')
     symlinkSync(sb.opRoot, aliasRoot)
