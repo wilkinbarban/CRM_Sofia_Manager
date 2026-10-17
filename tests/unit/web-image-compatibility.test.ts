@@ -672,6 +672,7 @@ describe('Web Image Compatibility & Dual Tagging', () => {
         return spawnSync(BASH_BIN, [runner, 'plan'], {
           cwd: root,
           env: {
+            NODE_ENV: 'test',
             PATH: isolatedRunnerBin,
             HOME: isolatedRunnerDir,
             TMPDIR: isolatedRunnerDir,
@@ -719,6 +720,7 @@ describe('Web Image Compatibility & Dual Tagging', () => {
       const res = spawnSync(NODE_BIN, [script], {
         cwd: root,
         env: {
+          NODE_ENV: 'test',
           PATH: isolatedRunnerBin,
           HOME: isolatedRunnerDir,
           TMPDIR: isolatedRunnerDir,
@@ -1884,7 +1886,7 @@ res = bw.write_effective_bundle(bdir, (json.dumps(cand) + "\\n").encode(), (json
 print(f"{bdir}\\t{res['manifest_sha256']}\\t{CURR_IMG}\\t{CAND_IMG}")
 `
   const ret = spawnSync(PYTHON_BIN, ['-B', '-c', pyCode], {
-    env: { PATH: '/usr/bin:/bin', PYTHONDONTWRITEBYTECODE: '1', PYTHONPATH: sandboxRoot },
+    env: { NODE_ENV: 'test', PATH: '/usr/bin:/bin', PYTHONDONTWRITEBYTECODE: '1', PYTHONPATH: sandboxRoot },
     encoding: 'utf8',
   })
   if (ret.status !== 0) throw new Error(`v2 fixture setup failed: ${ret.stderr}`)

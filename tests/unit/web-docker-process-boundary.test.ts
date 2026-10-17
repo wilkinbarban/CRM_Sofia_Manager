@@ -29,7 +29,7 @@ export const EXPECTED_TOOLS = [
 ] as const
 
 export const CHILD_ENV_KEYS = [
-  'PATH', 'HOME', 'TMPDIR', 'LC_ALL', 'PYTHONDONTWRITEBYTECODE',
+  'PATH', 'HOME', 'TMPDIR', 'LC_ALL', 'PYTHONDONTWRITEBYTECODE', 'NODE_ENV',
 ] as const
 
 export interface ProcessResult {
@@ -48,7 +48,7 @@ export interface DockerProcessBoundary {
   readonly binDir: string
   readonly opRoot: string
   readonly commandsLog: string
-  readonly childEnv: Readonly<Record<string, string>>
+  readonly childEnv: Readonly<Record<string, string> & { NODE_ENV: 'test' }>
   runDocker: (args: string[], ambientEnv?: NodeJS.ProcessEnv) => ProcessResult
   runCurl: (args: string[], ambientEnv?: NodeJS.ProcessEnv) => ProcessResult
   cleanup: () => void
@@ -201,6 +201,7 @@ describe('web-docker-process-boundary A1b-1: real process boundary, closed bin a
   it('enforces child environment whitelist and proves sentinel absence in child process via safe probe', () => {
     const { createDockerProcessBoundary } = getHelper()
     const sentinelAmbient: NodeJS.ProcessEnv = {
+      NODE_ENV: 'test',
       PATH: '/usr/bin:/bin',
       HOME: '/home/safe',
       TMPDIR: '/tmp',
@@ -240,7 +241,7 @@ describe('web-docker-process-boundary A1b-1: real process boundary, closed bin a
       expect(CHILD_ENV_KEYS).toContain(key)
     }
 
-    boundary.runDocker(['ps'], { CALL_SENTINEL: 'call-secret-abc' })
+    boundary.runDocker(['ps'], { NODE_ENV: 'test', CALL_SENTINEL: 'call-secret-abc' })
     const log = readFileSync(boundary.commandsLog, 'utf8')
     expect(log).not.toContain('CALL_SENTINEL')
     expect(log).not.toContain('call-secret-abc')

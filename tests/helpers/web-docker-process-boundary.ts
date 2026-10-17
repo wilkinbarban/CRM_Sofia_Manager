@@ -38,7 +38,7 @@ export interface DockerProcessBoundary {
   readonly binDir: string
   readonly opRoot: string
   readonly commandsLog: string
-  readonly childEnv: Readonly<Record<string, string>>
+  readonly childEnv: Readonly<Record<string, string> & { NODE_ENV: 'test' }>
   runDocker: (args: string[], ambientEnv?: NodeJS.ProcessEnv) => ProcessResult
   runCurl: (args: string[], ambientEnv?: NodeJS.ProcessEnv) => ProcessResult
   getCurrentImageId?: () => string
@@ -59,9 +59,14 @@ const dispatcherCjs = transpileModule(
   { compilerOptions: { module: ModuleKind.CommonJS } },
 ).outputText
 
-function buildChildEnv(binDir: string, ambient?: NodeJS.ProcessEnv): Record<string, string> {
+function buildChildEnv(
+  binDir: string,
+  ambient?: NodeJS.ProcessEnv,
+): Record<string, string> & { NODE_ENV: 'test' } {
   const src = ambient ?? process.env
-  const env: Record<string, string> = { PATH: binDir }
+  // The child always runs as a test process: NODE_ENV is declared here rather than
+  // inherited from the ambient environment, so the boundary's contract is stable.
+  const env: Record<string, string> & { NODE_ENV: 'test' } = { NODE_ENV: 'test', PATH: binDir }
   for (const key of CHILD_ENV_KEYS) {
     if (key === 'PATH') continue
     const val = src[key]
@@ -135,7 +140,7 @@ process.exit(res.status);
     const env = callEnv ? buildChildEnv(binDir, { ...childEnv, ...callEnv }) : childEnv
     const res = spawnSync(join(binDir, command), args, {
       cwd: opRoot,
-      env: env as NodeJS.ProcessEnv,
+      env,
       timeout: 10000,
       encoding: 'utf8',
     })
