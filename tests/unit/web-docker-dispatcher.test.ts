@@ -8,8 +8,9 @@
  *   dynamic Image/Config.Image reflections).
  *
  * PROVENANCE & DEFERRED ASSERTION LEDGER:
- * Full backup baseline (269 lines, SHA256 ab9aef6f3dbe451a5cfa8f8ef212418e06ab46c69d4278996e0e966e4bb9eefc):
- * /home/wilkin/proyectos/CRM_Sofia_Manager-web-deploy-safety-artifacts/A1a-pre-query-partition-20261007T080614024513/web-docker-dispatcher.test.ts
+ * Full backup baseline (269 lines, SHA256 ab9aef6f3dbe451a5cfa8f8ef212418e06ab46c69d4278996e0e966e4bb9eefc),
+ * consolidated here in 4dd9654 (Unit 1) and d0d024c (Unit 2). The pre-split artifact
+ * directory that held that baseline was retired after verifying this consolidation.
  *
  * 1. Preserved from old 269 test vectors: Case 2 (lines 69-125: mutations, ps filters, compose flags) and Case 4 (lines 205-268: readonly queries & schemas).
  * 2. Deferred to Unit 2: Case 3 (lines 127-203: candidate up, rollback up, manual mutations, dynamic inspect reflections).

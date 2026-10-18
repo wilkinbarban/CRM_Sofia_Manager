@@ -6,8 +6,9 @@
  *   and dynamic Image/Config.Image inspect reflections).
  *
  * RESTORATION & PROVENANCE MAPPING:
- * Full backup baseline (269 lines, SHA256 ab9aef6f3dbe451a5cfa8f8ef212418e06ab46c69d4278996e0e966e4bb9eefc):
- * /home/wilkin/proyectos/CRM_Sofia_Manager-web-deploy-safety-artifacts/A1a-pre-query-partition-20261007T080614024513/web-docker-dispatcher.test.ts
+ * Full backup baseline (269 lines, SHA256 ab9aef6f3dbe451a5cfa8f8ef212418e06ab46c69d4278996e0e966e4bb9eefc),
+ * restored in d0d024c. The pre-split artifact directory that held that baseline was
+ * retired after verifying this consolidation.
  *
  * Old backup lines 127-203 restored completely:
  * - Initial state assertion: getCurrentImageId, getCurrentConfigImage, {{.Image}}, {{.Config.Image}}.
