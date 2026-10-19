@@ -37,6 +37,16 @@ export const SOFIA_PACE_MAX_MS = 6000
 export const SOFIA_PACE_SCAN_LIMIT_UNITS = 500
 
 /**
+ * Canonical batch timing constants across active channels (Telegram, WhatsApp, Web).
+ * Strictly mirrors the database migration 20261018010000_sofia_silence_window_10s_cap_20s.sql
+ * and the scheduler service cadence in ops/sofia-inbound-batch-maintenance-scheduler.sh.
+ */
+export const SOFIA_BATCH_SILENCE_WINDOW_MS = 10_000
+export const SOFIA_BATCH_STARVATION_CAP_MS = 20_000
+export const SOFIA_BATCH_MAINTENANCE_CADENCE_SECONDS = 2
+export const SOFIA_BATCH_MAINTENANCE_CADENCE_MS = SOFIA_BATCH_MAINTENANCE_CADENCE_SECONDS * 1000
+
+/**
  * ECMAScript WhiteSpace + LineTerminator code points, exactly the list the delivered SQL function
  * trims through its `regexp_replace` character class. Every entry is a BMP code point, so trimming
  * can safely operate on UTF-16 code units.

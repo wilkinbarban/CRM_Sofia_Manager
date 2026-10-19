@@ -7,6 +7,10 @@ import {
   SOFIA_PACE_SCAN_LIMIT_UNITS,
   SOFIA_PACE_STEP_MS,
   SOFIA_PACE_TRIM_CODE_POINTS,
+  SOFIA_BATCH_SILENCE_WINDOW_MS,
+  SOFIA_BATCH_STARVATION_CAP_MS,
+  SOFIA_BATCH_MAINTENANCE_CADENCE_SECONDS,
+  SOFIA_BATCH_MAINTENANCE_CADENCE_MS,
   sofiaResponsePaceMinimumMs,
 } from '@/lib/sofia/response-pace'
 
@@ -25,7 +29,12 @@ const CORRECTION_MIGRATION = join(
   process.cwd(),
   'supabase/migrations/20260913010000_sofia_timing_and_pacing_correction.sql'
 )
+const BATCH_TIMING_10S_MIGRATION = join(
+  process.cwd(),
+  'supabase/migrations/20261018010000_sofia_silence_window_10s_cap_20s.sql'
+)
 const PACING_PGTAP = join(process.cwd(), 'supabase/tests/sofia_pacing_core_b.sql')
+const SCHEDULER_SCRIPT = join(process.cwd(), 'ops/sofia-inbound-batch-maintenance-scheduler.sh')
 
 const readUtf8 = (path: string) => readFileSync(path, 'utf8')
 
@@ -155,6 +164,22 @@ describe('sofia response pace — migration contract parity (drift guard)', () =
         SOFIA_PACE_MAX_MS,
         SOFIA_PACE_BASE_MS + (SOFIA_PACE_SCAN_LIMIT_UNITS + 1) * SOFIA_PACE_STEP_MS
       )
+    )
+  })
+
+  it('maintains strict parity between JS batch timing constants, SQL migration, and scheduler', () => {
+    expect(SOFIA_BATCH_SILENCE_WINDOW_MS).toBe(10_000)
+    expect(SOFIA_BATCH_STARVATION_CAP_MS).toBe(20_000)
+    expect(SOFIA_BATCH_MAINTENANCE_CADENCE_SECONDS).toBe(2)
+    expect(SOFIA_BATCH_MAINTENANCE_CADENCE_MS).toBe(2_000)
+
+    const migrationSql = readUtf8(BATCH_TIMING_10S_MIGRATION)
+    expect(migrationSql).toContain(`interval '${SOFIA_BATCH_SILENCE_WINDOW_MS / 1000} seconds'`)
+    expect(migrationSql).toContain(`interval '${SOFIA_BATCH_STARVATION_CAP_MS / 1000} seconds'`)
+
+    const schedulerText = readUtf8(SCHEDULER_SCRIPT)
+    expect(schedulerText).toContain(
+      `: "\${SOFIA_BATCH_MAINTENANCE_INTERVAL_SECONDS:=${SOFIA_BATCH_MAINTENANCE_CADENCE_SECONDS}}"`
     )
   })
 })

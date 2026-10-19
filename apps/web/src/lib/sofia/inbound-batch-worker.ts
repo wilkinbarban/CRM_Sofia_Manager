@@ -4,6 +4,7 @@ import { obterSofiaGlobalChannelConfig } from '@/lib/config/sistema'
 import { verificarHorarioAtendimento } from '@/lib/horarios/verificar'
 import { extrairFatosDoLote, type LoteExtraivel } from '@/lib/sofia/customer-memory-extraction'
 import { inboundBatchRuntimeEnabled } from '@/lib/sofia/inbound-batch-gates'
+import { SOFIA_BATCH_MAINTENANCE_CADENCE_MS } from '@/lib/sofia/response-pace'
 import { enviarAcaoChatTelegram, enviarMensagemTelegram, TELEGRAM_CHAT_ACTION_REASONS, type TelegramChatActionOutcome, type TelegramChatActionReason, type TelegramChatActionReport } from '@/lib/telegram/send'
 import { enviarMensagemWhatsapp } from '@/lib/whatsapp/send'
     import type { EvolutionPresenceEvent } from '@/lib/whatsapp/evolution-presence'
@@ -47,7 +48,7 @@ function startHeartbeat(deps:BatchWorkerDeps,batchId:string,lease:string,attempt
  return {lost:()=>lost,settle:async()=>{await renewal},stop:()=>timer!==undefined&&deps.clearInterval?.(timer)}
 }
 type TypingHandle={stop:()=>void}
-const TELEGRAM_TYPING_RESTART_FLOOR_MS=2_000
+export const TELEGRAM_TYPING_RESTART_FLOOR_MS = SOFIA_BATCH_MAINTENANCE_CADENCE_MS
 export const TELEGRAM_TYPING_TAG='telegram_typing'
 /** Evento de observabilidade com tag fixa e enums seguros: nunca carrega token, IDs ou texto do provedor. */
 export type TelegramTypingObservation={tag:typeof TELEGRAM_TYPING_TAG;event:'attempt'|TelegramChatActionOutcome;reason?:TelegramChatActionReason}

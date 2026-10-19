@@ -3,6 +3,11 @@ import { spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import {
+  SOFIA_BATCH_MAINTENANCE_CADENCE_SECONDS,
+  SOFIA_BATCH_MAINTENANCE_CADENCE_MS,
+} from '@/lib/sofia/response-pace'
+import { TELEGRAM_TYPING_RESTART_FLOOR_MS } from '@/lib/sofia/inbound-batch-worker'
 
 const root = process.cwd()
 const schedulerPath = 'ops/sofia-inbound-batch-maintenance-scheduler.sh'
@@ -132,5 +137,20 @@ describe('Sofia inbound batch maintenance scheduler', () => {
     ]) expect(deploy).toContain(gate)
     expect(compose).toContain('SOFIA_INBOUND_BATCH_RUNTIME_ENABLED=${SOFIA_INBOUND_BATCH_RUNTIME_ENABLED:-false}')
     expect(deploy).toContain('recreate_and_verify "$candidate_ref" "$candidate_id" "$close_operational_gates"')
+  })
+
+  it('aligns scheduler default cadence with worker restart floor and response-pace constants', () => {
+    expect(SOFIA_BATCH_MAINTENANCE_CADENCE_SECONDS).toBe(2)
+    expect(SOFIA_BATCH_MAINTENANCE_CADENCE_MS).toBe(2_000)
+    expect(TELEGRAM_TYPING_RESTART_FLOOR_MS).toBe(SOFIA_BATCH_MAINTENANCE_CADENCE_MS)
+    expect(scheduler).toContain(
+      `: "\${SOFIA_BATCH_MAINTENANCE_INTERVAL_SECONDS:=${SOFIA_BATCH_MAINTENANCE_CADENCE_SECONDS}}"`
+    )
+    expect(compose).toContain(
+      `SOFIA_BATCH_MAINTENANCE_INTERVAL_SECONDS=\${SOFIA_BATCH_MAINTENANCE_INTERVAL_SECONDS:-${SOFIA_BATCH_MAINTENANCE_CADENCE_SECONDS}}`
+    )
+    expect(compose).toContain(
+      `interval=\$\${SOFIA_BATCH_MAINTENANCE_INTERVAL_SECONDS:-${SOFIA_BATCH_MAINTENANCE_CADENCE_SECONDS}};`
+    )
   })
 })
