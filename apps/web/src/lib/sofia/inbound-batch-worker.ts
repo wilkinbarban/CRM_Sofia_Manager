@@ -49,6 +49,7 @@ function startHeartbeat(deps:BatchWorkerDeps,batchId:string,lease:string,attempt
 }
 type TypingHandle={stop:()=>void}
 export const TELEGRAM_TYPING_RESTART_FLOOR_MS = SOFIA_BATCH_MAINTENANCE_CADENCE_MS
+export const TELEGRAM_TYPING_REFRESH_INTERVAL_MS = 4_000
 export const TELEGRAM_TYPING_TAG='telegram_typing'
 /** Evento de observabilidade com tag fixa e enums seguros: nunca carrega token, IDs ou texto do provedor. */
 export type TelegramTypingObservation={tag:typeof TELEGRAM_TYPING_TAG;event:'attempt'|TelegramChatActionOutcome;reason?:TelegramChatActionReason}
@@ -83,6 +84,14 @@ function observeWhatsAppPresence(deps:BatchWorkerDeps,event:unknown){
 }
 function startTelegramTyping(deps:BatchWorkerDeps,conversationId:string):TypingHandle{
  let stopped=false,refreshing=false
+ let timer:unknown=undefined
+ const stop=()=>{
+  stopped=true
+  if(timer!==undefined){
+   deps.clearInterval?.(timer)
+   timer=undefined
+  }
+ }
  const refresh=()=>{
   if(stopped||refreshing)return
   refreshing=true
@@ -101,13 +110,20 @@ function startTelegramTyping(deps:BatchWorkerDeps,conversationId:string):TypingH
    return
   }
   void Promise.resolve(request).then(
-   report=>{refreshing=false;observeTelegramTyping(deps,settledTelegramTyping(report))},
+   report=>{
+    refreshing=false
+    const settled=settledTelegramTyping(report)
+    observeTelegramTyping(deps,settled)
+    if(settled.event==='rejected')stop()
+   },
    ()=>{refreshing=false;observeTelegramTyping(deps,{tag:TELEGRAM_TYPING_TAG,event:'unavailable'})},
   )
  }
  refresh()
- const timer=deps.setInterval?.(()=>{void refresh()},4_000)
- return {stop:()=>{stopped=true;if(timer!==undefined)deps.clearInterval?.(timer)}}
+ if(!stopped){
+  timer=deps.setInterval?.(()=>{void refresh()},TELEGRAM_TYPING_REFRESH_INTERVAL_MS)
+ }
+ return {stop}
 }
 export async function runSofiaBatchMaintenance(d:BatchWorkerDeps,limit=20):Promise<BatchCounts>{
  const out:BatchCounts={claimed:0,completed:0,cancelled:0,failed:0,delivery_attempted:0}
