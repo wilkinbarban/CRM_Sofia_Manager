@@ -105,6 +105,7 @@ export async function admitirMensagemSofiaWeb(
   idempotencyKey: string,
 ): Promise<{ success: true; mensagem: MensagemWebAdmitida | null } | { success: false; error: string }> {
   try {
+    if (!conversaId?.trim()) return { success: false, error: 'CONVERSA_NAO_ENCONTRADA' }
     if (!conteudo) return { success: true, mensagem: null }
     if (!webInboundBatchEnqueueEnabled()) return { success: true, mensagem: null }
     if (!idempotencyKey?.trim()) {
@@ -159,6 +160,10 @@ export async function obterSofiaPresence(conversaId: string): Promise<
   | { success: false; error: string }
 > {
   try {
+    if (!conversaId?.trim()) {
+      return { success: false, error: 'SOFIA_PRESENCE_CONVERSA_INVALIDA' }
+    }
+
     const supabase = await createClient()
     const { data: { user }, error: authError } = await supabase.auth.getUser()
     if (authError || !user) return { success: false, error: 'ACESSO_NEGADO_NAO_AUTENTICADO' }

@@ -6,6 +6,16 @@ type AdminClient = {
   ) => PromiseLike<{ data?: unknown; error: unknown }>;
 };
 
+/**
+ * Canonical idempotency prefix and formatter for the Web channel.
+ * Strictly mirrors the database migration 20260914010000_sofia_web_atomic_admission.sql.
+ */
+export const SOFIA_WEB_IDEMPOTENCY_PREFIX = "sofia-web:" as const;
+
+export function formatSofiaWebExternalId(key: string): string {
+  return `${SOFIA_WEB_IDEMPOTENCY_PREFIX}${key.trim()}`;
+}
+
 export async function attachPersistedSofiaInboundMessage(input: {
   supabase: AdminClient;
   messageId: string;
