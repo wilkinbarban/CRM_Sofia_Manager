@@ -927,6 +927,40 @@ describe('Sofia inbound batch worker', () => {
         expect(JSON.stringify(warn.mock.calls)).not.toContain('provider secret leaked')
       }finally{ warn.mockRestore() }
     })
+    it('drains every completed batch when the delivery loop throws (issue #196)', async () => {
+      vi.stubEnv('SOFIA_INBOUND_BATCH_RUNTIME_ENABLED','true')
+      const second={ ...claim, batch_id:'b2' }
+      const extractFacts=vi.fn().mockResolvedValue(0)
+      const d=deps({
+        ...runtimeOnDeps(),
+        claimBatch:vi.fn().mockResolvedValueOnce(claim).mockResolvedValueOnce(second).mockResolvedValue(null),
+        claimDelivery:vi.fn().mockResolvedValue({ batch_id:'b', conversa_id:'c', canal:'telegram' as const, response_text:'r', lease_token:'dl' }),
+        adoptActivity:vi.fn().mockRejectedValue(Error('activity surface down')),
+        extractFacts,
+      })
+
+      await expect(runSofiaBatchMaintenance(d,4)).rejects.toThrow('activity surface down')
+
+      expect(extractFacts).toHaveBeenCalledTimes(2)
+      expect(extractFacts).toHaveBeenCalledWith({ ...completedLote })
+      expect(extractFacts).toHaveBeenCalledWith({ ...completedLote, batch_id:'b2' })
+    })
+    it('drains completed batches when the delivery failure handler itself rejects', async () => {
+      vi.stubEnv('SOFIA_INBOUND_BATCH_RUNTIME_ENABLED','true')
+      const delivery={ batch_id:'b', conversa_id:'c', canal:'telegram' as const, response_text:'r', lease_token:'dl' }
+      const extractFacts=vi.fn().mockResolvedValue(0)
+      const d=deps({
+        ...runtimeOnDeps(),
+        claimDelivery:vi.fn().mockResolvedValueOnce(delivery).mockResolvedValue(null),
+        adoptActivity:vi.fn().mockRejectedValue(Error('activity surface down')),
+        recordDeliveryFailure:vi.fn().mockRejectedValue(Error('failure ledger down')),
+        extractFacts,
+      })
+
+      await expect(runSofiaBatchMaintenance(d,2)).rejects.toThrow('activity surface down')
+      expect(extractFacts).toHaveBeenCalledTimes(1)
+      expect(extractFacts).toHaveBeenCalledWith({ ...completedLote })
+    })
     it('never extracts a batch before its own delivery attempt in the same pass', async () => {
       vi.stubEnv('SOFIA_INBOUND_BATCH_RUNTIME_ENABLED','true')
       const delivery={ batch_id:'b', conversa_id:'c', canal:'telegram' as const, response_text:'r', lease_token:'dl', remaining_ms:0 }

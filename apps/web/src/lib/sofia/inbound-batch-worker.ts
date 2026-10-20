@@ -227,33 +227,37 @@ export async function runSofiaBatchMaintenance(d:BatchWorkerDeps,limit=20):Promi
     }
    }catch{await d.fail(c.batch_id,c.lease_token,'generation_failed');out.failed++}
   }
-  let workClaimed=out.claimed
-  while(workClaimed<limit){
-   const job=await d.claimDelivery();if(!job)break;workClaimed++
-   let deliveryActivity:Activity|null=null
-   let retainedTyping=false
-   if(runtimeEnabled){
-    deliveryActivity=await d.adoptActivity(job.batch_id,job.lease_token)
-    if(!deliveryActivity){releaseTyping(job.batch_id);continue}
-    if(job.canal==='telegram'){retainedTyping=typingHandles.has(job.batch_id);ensureTyping(job.batch_id,job.conversa_id)}
+  try{
+   let workClaimed=out.claimed
+   while(workClaimed<limit){
+    const job=await d.claimDelivery();if(!job)break;workClaimed++
+    let deliveryActivity:Activity|null=null
+    let retainedTyping=false
+    if(runtimeEnabled){
+     deliveryActivity=await d.adoptActivity(job.batch_id,job.lease_token)
+     if(!deliveryActivity){releaseTyping(job.batch_id);continue}
+     if(job.canal==='telegram'){retainedTyping=typingHandles.has(job.batch_id);ensureTyping(job.batch_id,job.conversa_id)}
+    }
+    try{
+     const remainingMs=job.remaining_ms??pacedRemainders.get(job.batch_id)
+     const waitMs=job.canal==='telegram'&&runtimeEnabled&&!retainedTyping?Math.max(TELEGRAM_TYPING_RESTART_FLOOR_MS,remainingMs??0):remainingMs
+     if(waitMs!==undefined&&waitMs!==null&&(job.canal==='telegram'||job.canal==='whatsapp'))await d.sleep(waitMs)
+     if(!(await d.beginDelivery(job.batch_id,job.lease_token)))continue
+     out.delivery_attempted++
+     const result=job.canal==='telegram'
+      ?await d.sendTelegram(job.conversa_id,job.response_text)
+      :job.canal==='whatsapp'
+        ?await d.sendWhatsApp(job.conversa_id,job.response_text,remainingMs??undefined)
+        :{success:true}
+     if(result&&typeof result==='object'&&(('success'in result&&result.success===false)||('sucesso'in result&&result.sucesso===false)))await d.recordDeliveryFailure(job.batch_id,'provider_rejected')
+    }catch{await d.recordDeliveryFailure(job.batch_id,'provider_unavailable')}
+    finally{releaseTyping(job.batch_id);releasePresence(job.batch_id);if(deliveryActivity)await d.clearActivity?.(job.batch_id,deliveryActivity.attempt_id)}
    }
-   try{
-    const remainingMs=job.remaining_ms??pacedRemainders.get(job.batch_id)
-    const waitMs=job.canal==='telegram'&&runtimeEnabled&&!retainedTyping?Math.max(TELEGRAM_TYPING_RESTART_FLOOR_MS,remainingMs??0):remainingMs
-    if(waitMs!==undefined&&waitMs!==null&&(job.canal==='telegram'||job.canal==='whatsapp'))await d.sleep(waitMs)
-    if(!(await d.beginDelivery(job.batch_id,job.lease_token)))continue
-    out.delivery_attempted++
-    const result=job.canal==='telegram'
-     ?await d.sendTelegram(job.conversa_id,job.response_text)
-     :job.canal==='whatsapp'
-       ?await d.sendWhatsApp(job.conversa_id,job.response_text,remainingMs??undefined)
-       :{success:true}
-    if(result&&typeof result==='object'&&(('success'in result&&result.success===false)||('sucesso'in result&&result.sucesso===false)))await d.recordDeliveryFailure(job.batch_id,'provider_rejected')
-   }catch{await d.recordDeliveryFailure(job.batch_id,'provider_unavailable')}
-   finally{releaseTyping(job.batch_id);releasePresence(job.batch_id);if(deliveryActivity)await d.clearActivity?.(job.batch_id,deliveryActivity.attempt_id)}
+  }finally{
+   // Single drain after the delivery loop: extraction can never delay a customer-visible reply,
+   // and a delivery-loop failure never starves the batches this pass already completed.
+   for(const lote of lotesCompletos)await executarHookExtracao(d,lote)
   }
-  // Single drain after the delivery loop: extraction can never delay a customer-visible reply.
-  for(const lote of lotesCompletos)await executarHookExtracao(d,lote)
   return out
  }finally{
   for(const batchId of [...typingHandles.keys()])releaseTyping(batchId)
@@ -267,9 +271,10 @@ export async function runSofiaBatchMaintenance(d:BatchWorkerDeps,limit=20):Promi
  * selects only `pending` batches or `processing` batches past `claimed_until`, and completion clears the
  * lease, so a completed batch is never re-drained. A crash between completion and this call loses that
  * batch's facts permanently: there is no ledger, no backfill and no compensating write (`23505` counts as
- * already recorded). A failure in a live process is equally final and is never retried, and anything that
- * rejects before the drain (for example a delivery-loop failure) skips the remaining extraction of that
- * pass for the same reason.
+ * already recorded). A failure in a live process is equally final and is never retried. The drain runs in
+ * a `finally` boundary that encloses the delivery loop, so a delivery-loop rejection still drains every
+ * batch this pass completed; only a rejection before that boundary (for example a failed claim in the
+ * generation phase) skips the drain.
  */
 async function executarHookExtracao(d:BatchWorkerDeps,lote:LoteExtraivel):Promise<void>{
  if(!d.extractFacts)return
