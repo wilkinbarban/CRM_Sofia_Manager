@@ -308,11 +308,17 @@ export async function processarRagPipeline(
   let contextoFatosCliente = ''
   if (customerMemoryEnabled()) {
     try {
-      const { data } = await supabase.rpc('buscar_fatos_para_prompt', {
+      const { data, error } = await supabase.rpc('buscar_fatos_para_prompt', {
         p_cliente_id: (conversa as any).cliente_id,
         p_limite: 20,
       })
-      contextoFatosCliente = agruparFatosParaPrompt(data ?? []) ?? ''
+      // PostgREST entrega falha de RPC/permissao como `{ error }` sem lancar. Sem
+      // esta checagem o prompt degradava para o bloco vazio sem nenhum diagnostico.
+      if (error) {
+        console.error('[RAG Pipeline] Erro RPC ao buscar fatos do cliente:', error)
+      } else {
+        contextoFatosCliente = agruparFatosParaPrompt(data ?? []) ?? ''
+      }
     } catch (err) {
       console.error('[RAG Pipeline] Erro ao buscar fatos do cliente:', err)
     }
