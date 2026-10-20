@@ -11,16 +11,36 @@
  *
  * Nunca lanca: qualquer falha (chave ausente, HTTP, timeout, corpo invalido,
  * resposta vazia ou grande demais) devolve `null`, e quem chama decide o que
- * registrar.
+ * registrar. O `timeoutMs` do chamador passa por `resolverTimeoutMs` antes de
+ * chegar ao provedor, de modo que a requisicao sempre tem um limite positivo.
  */
 
-import { chamarDeepSeekChat, isUsableDeepSeekApiKey, resolverChaveDeepSeek, resolverModeloDeepSeek } from '@/lib/ai/deepseek'
+import {
+  chamarDeepSeekChat,
+  DEEPSEEK_CHAT_TIMEOUT_MS,
+  isUsableDeepSeekApiKey,
+  resolverChaveDeepSeek,
+  resolverModeloDeepSeek,
+} from '@/lib/ai/deepseek'
 
 export interface ModeloEconomicoJsonParams {
   system: string
   user: string
   maxTokens: number
   timeoutMs: number
+}
+
+/**
+ * Normaliza o timeout do chamador para o inteiro positivo que
+ * `AbortSignal.timeout` exige. Zero, negativo, fracionario ou nao-finito cai no
+ * default do modulo: esses valores abortariam a requisicao na hora, fariam a
+ * fabrica de signal lancar ou removeriam o limite por completo.
+ */
+function resolverTimeoutMs(timeoutMs: number): number {
+  if (typeof timeoutMs !== 'number' || !Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    return DEEPSEEK_CHAT_TIMEOUT_MS
+  }
+  return Math.max(1, Math.floor(timeoutMs))
 }
 
 /**
@@ -45,7 +65,7 @@ export async function chamarModeloEconomicoJson(
       ],
       temperature: 0,
       maxTokens: params.maxTokens,
-      timeoutMs: params.timeoutMs,
+      timeoutMs: resolverTimeoutMs(params.timeoutMs),
       jsonResponse: true,
     })
 
