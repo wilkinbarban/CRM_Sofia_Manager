@@ -97,3 +97,8 @@ Stop and close the affected capability through declarative configuration plus ap
 ## Delivery governance
 
 Receipt-driven development is `disabled/unmanaged`. This operational evidence is not a review approval. No deployment, recreation, gate opening, replay, restore, purge, cleanup, or permanent enablement is automatic.
+
+## Delivery completion and feature chain consolidation (Issue #32)
+
+The feature branch chain declared under Issue #32 (child PRs #33 through #75, #109, #112, and #209) has completed all implementation, testing, review, and integration phases directly into `main`. All operational gates remain fail-closed (`false`) by default. Full rollout mapping, criteria verification, and quality ledgers are preserved in `odd/tasks/payment-proof-rollout-delivery-summary.md`.
+
