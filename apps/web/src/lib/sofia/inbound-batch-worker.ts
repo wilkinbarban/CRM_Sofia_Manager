@@ -15,9 +15,52 @@ type Channel='telegram'|'whatsapp'|'web'
 type Member={content:string|null;has_attachment:boolean;has_payment_proof:boolean}
 type Activity={attempt_id:string;expires_at:string}
 type PacedCompletion={remaining_ms:number}
-type Claim={batch_id:string;conversa_id:string;cliente_id:string;channel:Channel;lease_token:string;eligibility:{db_eligible:boolean;ia_ativa?:boolean;conversation_status?:string;automation_allowed?:boolean;global_enabled?:boolean;whatsapp_status?:string;whatsapp_sleeping?:boolean};members:Member[]}
+export type BatchEligibility = {
+  db_eligible: boolean
+  ia_ativa?: boolean
+  conversation_status?: string
+  automation_allowed?: boolean
+  global_enabled?: boolean
+  whatsapp_status?: string
+  whatsapp_sleeping?: boolean
+}
+type Claim={batch_id:string;conversa_id:string;cliente_id:string;channel:Channel;lease_token:string;eligibility:BatchEligibility;members:Member[]}
 type Delivery={batch_id:string;conversa_id:string;canal:Channel;response_text:string;lease_token:string;remaining_ms?:number|null}
 export type BatchCounts={claimed:number;completed:number;cancelled:number;failed:number;delivery_attempted:number}
+
+export const SOFIA_BATCH_CANCELLATION_REASONS = [
+  'ia_inactive',
+  'opt_out',
+  'global_disabled',
+  'handoff_or_pause',
+  'sleep_or_cooldown',
+  'outside_business_hours',
+] as const
+
+export type SofiaBatchCancellationReason = typeof SOFIA_BATCH_CANCELLATION_REASONS[number]
+
+export interface BatchCancellationContext {
+  isBusinessHours: boolean
+  isChannelGloballyEnabled: boolean
+  isWhatsAppEligible: boolean
+}
+
+export function evaluateBatchCancellation(
+  claim: { channel: Channel; eligibility: BatchEligibility },
+  context: BatchCancellationContext
+): SofiaBatchCancellationReason | null {
+  const e = claim.eligibility
+  if (e.ia_ativa === false) return 'ia_inactive'
+  if (e.automation_allowed === false || e.whatsapp_status === 'opted_out') return 'opt_out'
+  if (e.global_enabled === false) return 'global_disabled'
+  if (e.conversation_status && e.conversation_status !== 'ia_atendendo') return 'handoff_or_pause'
+  if (e.whatsapp_sleeping) return 'sleep_or_cooldown'
+  if (!e.db_eligible) return 'handoff_or_pause'
+  if (claim.channel !== 'web' && !context.isChannelGloballyEnabled) return 'global_disabled'
+  if (!context.isBusinessHours) return 'outside_business_hours'
+  if (claim.channel === 'whatsapp' && !context.isWhatsAppEligible) return 'sleep_or_cooldown'
+  return null
+}
 export interface BatchWorkerDeps {
  claimBatch():Promise<Claim|null>; cancel(id:string,lease:string,reason:string):Promise<boolean>; fail(id:string,lease:string,error:string):Promise<boolean>
  businessHours():Promise<boolean>; globalEnabled(channel:Channel):Promise<boolean>; whatsappEligible(claim:Claim):Promise<boolean>
@@ -139,9 +182,11 @@ export async function runSofiaBatchMaintenance(d:BatchWorkerDeps,limit=20):Promi
   for(let i=0;i<processingLimit;i++){
    const c=await d.claimBatch();if(!c)break;out.claimed++
    try{
-    const e=c.eligibility
-    let reason:string|null=e.ia_ativa===false?'ia_inactive':e.automation_allowed===false||e.whatsapp_status==='opted_out'?'opt_out':e.global_enabled===false?'global_disabled':e.conversation_status&&e.conversation_status!=='ia_atendendo'?'handoff_or_pause':e.whatsapp_sleeping?'sleep_or_cooldown':!e.db_eligible?'handoff_or_pause':c.channel!=='web'&&!(await d.globalEnabled(c.channel))?'global_disabled':!(await d.businessHours())?'outside_business_hours':null
-    if(!reason&&c.channel==='whatsapp'&&!(await d.whatsappEligible(c)))reason='sleep_or_cooldown'
+    const reason = evaluateBatchCancellation(c, {
+      isBusinessHours: await d.businessHours(),
+      isChannelGloballyEnabled: c.channel === 'web' ? true : await d.globalEnabled(c.channel),
+      isWhatsAppEligible: c.channel === 'whatsapp' ? await d.whatsappEligible(c) : true,
+    })
     if(reason){await d.cancel(c.batch_id,c.lease_token,reason);out.cancelled++;continue}
     if(!runtimeEnabled){
      const contexto=formatBatchContext(c.members)
