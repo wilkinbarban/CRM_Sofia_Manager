@@ -36,6 +36,20 @@ export interface ProvedorWhatsApp {
   iniciarPresenca?(conversaId: string, observe?: (event: EvolutionPresenceEvent) => void | Promise<void>): Promise<{ stop: () => void }>;
 }
 
+/**
+ * Capability detector that avoids class-name or instanceof checks, which production
+ * minification renames (e.g. `EvolutionProvider` minifies to `q`).
+ */
+export function supportsPresence(
+  provider: unknown
+): provider is { iniciarPresenca: NonNullable<ProvedorWhatsApp['iniciarPresenca']> } {
+  return (
+    !!provider &&
+    typeof provider === 'object' &&
+    typeof (provider as ProvedorWhatsApp).iniciarPresenca === 'function'
+  )
+}
+
 export class WhatsAppWindowClosedError extends Error {
   constructor() {
     super('Janela de 24 horas excedida. É obrigatório o envio de um template homologado.')

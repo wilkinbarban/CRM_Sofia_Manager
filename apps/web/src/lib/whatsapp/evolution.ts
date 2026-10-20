@@ -7,7 +7,11 @@ import { validarEnvioWhatsAppSafety } from './safety'
 import { withSafeRetry } from './retry'
 import { calcularDelayDigitacao } from './delays'
 import { whatsappCircuitBreaker } from './circuit-breaker'
-import { createEvolutionPresence, type EvolutionPresenceEvent } from './evolution-presence'
+import {
+  createEvolutionPresence,
+  EVOLUTION_PRESENCE_INTERVAL_MS,
+  type EvolutionPresenceEvent,
+} from './evolution-presence'
 import { evolutionHeaders } from './evolution-headers'
 
 export function evolutionMaxRetries(payload: EnviarMensagemPayload): number {
@@ -208,20 +212,39 @@ export async function startEvolutionPresence(
   const apiKey = await obterConfiguracaoSistema('EVOLUTION_API_KEY')
   const instanceName = await obterConfiguracaoSistema('EVOLUTION_INSTANCE_NAME')
   if (isEvolutionMockMode(apiUrl, apiKey, instanceName)) return { stop: () => undefined }
-  const { telefone } = await validarJanelaEnvio(conversaId, { texto: '', templateName: 'presence' })
-  const cleanUrl = apiUrl!.replace(/\/$/, '')
+  if (!apiUrl || !apiKey || !instanceName) {
+    observe?.({ tag: 'evolution_presence', event: 'unavailable', reason: 'provider_unavailable' })
+    return { stop: () => undefined }
+  }
+  let telefone: string
+  try {
+    const res = await validarJanelaEnvio(conversaId, { texto: '', templateName: 'presence' })
+    telefone = res.telefone
+  } catch {
+    observe?.({ tag: 'evolution_presence', event: 'unavailable', reason: 'provider_unavailable' })
+    return { stop: () => undefined }
+  }
+  const cleanUrl = apiUrl.replace(/\/$/, '')
   return createEvolutionPresence({
     observe,
     setTimeout: (callback, ms) => setTimeout(callback, ms),
     clearTimeout: timer => clearTimeout(timer as ReturnType<typeof setTimeout>),
-    send: async () => {
-      const response = await fetch(`${cleanUrl}/chat/sendPresence/${instanceName}`, {
-        method: 'POST', headers: evolutionHeaders(apiKey!),
-        body: JSON.stringify({ number: telefone, presence: 'composing', delay: 4000 }),
-      })
-      if (!response.ok) return false
-      const body: unknown = await response.json().catch(() => null)
-      return !!body && typeof body === 'object' && (body as { presence?: unknown }).presence === 'composing'
+    send: async (signal?: AbortSignal) => {
+      try {
+        const response = await fetch(`${cleanUrl}/chat/sendPresence/${instanceName}`, {
+          method: 'POST',
+          headers: evolutionHeaders(apiKey),
+          body: JSON.stringify({ number: telefone, presence: 'composing', delay: EVOLUTION_PRESENCE_INTERVAL_MS }),
+          signal,
+        })
+        if (!response.ok) return false
+        const body: unknown = await response.json().catch(() => null)
+        if (!body || typeof body !== 'object') return false
+        const rec = body as Record<string, unknown>
+        return rec.presence === 'composing' || rec.success === true || (rec.error === false && rec.message !== undefined)
+      } catch {
+        return false
+      }
     },
   })
 }

@@ -20,7 +20,13 @@ vi.mock('@/lib/whatsapp/evolution', () => ({
   EvolutionProvider: presenceMocks.EvolutionProvider,
   startEvolutionPresence: presenceMocks.startEvolutionPresence,
 }))
-vi.mock('@/lib/whatsapp/provider', () => ({ obterProvedorAtivo: presenceMocks.obterProvedorAtivo }))
+vi.mock('@/lib/whatsapp/provider', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/whatsapp/provider')>()
+  return {
+    ...actual,
+    obterProvedorAtivo: presenceMocks.obterProvedorAtivo,
+  }
+})
 
 import {
   createSofiaBatchWorkerDeps,
