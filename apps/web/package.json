@@ -7,7 +7,7 @@
   },
   "scripts": {
     "dev": "next dev",
-    "build": "node --max-old-space-size=4096 ../../node_modules/next/dist/bin/next build",
+    "build": "node_modules/.bin/next build --webpack",
     "start": "next start"
   },
   "dependencies": {
