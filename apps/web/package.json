@@ -7,7 +7,7 @@
   },
   "scripts": {
     "dev": "next dev",
-    "build": "node_modules/.bin/next build --webpack",
+    "build": "next build --webpack",
     "start": "next start"
   },
   "dependencies": {
